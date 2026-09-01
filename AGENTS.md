@@ -36,6 +36,11 @@ schema/tracks.schema.json   the contract, frozen before the CV works (D3)
 src/football_tracks/
   config.py                 pitch dimensions and work paths — the one source
   stage0_segment.py         cuts -> score by green and motion -> the tactical camera
+  soccernet.py              GSR fetch and ground truth -> Tracks
+  tracks.py                 the tracks.json writer, shared by every producer
+  pitch.py                  top-down markings, for looking at only
+  render.py                 a tracks file -> a video of coloured dots
+  score.py                  a prediction diffed against ground truth
   cli.py                    one command per stage
 tests/                      the pure helpers only
 data/clips/                 source video, never committed
@@ -73,6 +78,14 @@ work/<clip>/                every stage's artefacts, all reproducible
 - **A single homography assumes z = 0.** Ball height is not recoverable from one camera, so
   a chip and a ground pass are the same measurement. Pitchboard's `loft` cannot be filled in
   from this data, and guessing it is worse than leaving it false.
+- **Ground truth is `truth.json`, a prediction is `tracks.json`** (D14). Same format, two
+  names, so a stage cannot overwrite the yardstick it is about to be scored against.
+- **Recall cannot see an identity switch.** A tracker that swaps two players still finds
+  everybody. Purity and the switch count are what show it, which is why `score` reports
+  them beside recall rather than folding everything into one number (D15).
+- **`pitch.py` is for looking, never for measuring.** It exists to draw a picture. The
+  moment anything reads geometry out of it there are two answers to where the penalty spot
+  is, and they drift the way preview and export do in Pitchboard.
 - **The stands are green too, sometimes.** The pitch test leans on the saturation floor, not
   the hue: grey has no meaningful hue, so hue alone calls it green.
 - **Ultralytics YOLO is AGPL-3.0** (D9) while this repo is MIT. Fine for a local proof that

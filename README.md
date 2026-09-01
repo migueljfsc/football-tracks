@@ -19,13 +19,18 @@ uv sync --extra data                 # stage 0 plus the SoccerNet fetcher
 
 uv run ft clips --split test         # 49 clips, downloads nothing
 uv run ft fetch SNGS-147             # one clip, ~150MB out of an 8.85GB split
-uv run ft truth SNGS-147             # ground truth -> work/SNGS-147/tracks.json
+uv run ft truth SNGS-147             # ground truth -> work/SNGS-147/truth.json
+uv run ft render work/SNGS-147/truth.json          # top-down mp4 of coloured dots
+uv run ft render work/SNGS-147/truth.json --still 220
+uv run ft score work/SNGS-147/tracks.json          # diff a prediction against the truth
 
 uv run ft segment data/clips/foo.mp4 # stage 0, for arbitrary broadcast footage
 ```
 
-`ft truth` produces a real `tracks.json` with no CV in the loop. It is the yardstick every
+`ft truth` produces a real tracks file with no CV in the loop. It is the yardstick every
 stage is scored against, and it is what Pitchboard's importer is built against today.
+Ground truth is `truth.json` and a prediction is `tracks.json` — same format, two names, so
+a stage cannot overwrite what it is about to be measured against.
 
 Artefacts land in `work/<clip>/`, one directory per clip. Everything in there is reproducible
 from the clip plus a stage, so `make clean` is always safe.
@@ -41,7 +46,7 @@ uv sync --extra ocr      # shirt numbers
 
 | stage | | |
 |---|---|---|
-| — | SoccerNet fetch + ground truth | working |
+| — | SoccerNet fetch, ground truth, render, score | **done** |
 | 0 | segment — find the tactical camera | built, unproven |
 | 1 | registration — pixels to metres | not started |
 | 2 | detect and track | not started |

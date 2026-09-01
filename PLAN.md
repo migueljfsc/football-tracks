@@ -152,8 +152,13 @@ Two things fell out of reading it that change what we expect:
 
 **Their origin is the centre spot, ours is the top-left corner.** `x + 52.5`, `y + 34`.
 The open question in the first draft of this plan is answered: the conventions do *not*
-match. The conversion lives in `soccernet.py` and nowhere else. The y *direction* is still
-unverified — a flip mirrors the board, and the top-down render at M4 is what shows it.
+match. The conversion lives in `soccernet.py` and nowhere else.
+
+**The y direction is measured, and it needs no flip.** Reading frame 1 of SNGS-147 against
+its own labels, pitch y and image y move together — keeper 5.5 → 538 px, ball 8.1 → 595 px,
+outfielders ~20 → ~1050 px. So higher SoccerNet y is nearer the camera, and since both axes
+map with a positive scale the handedness survives: the top-down render is the pitch seen
+from above with the broadcast camera at the bottom, not its mirror.
 
 **The ground truth has 230-metre outliers.** A homography extrapolates without bound for
 anyone near the horizon, so SoccerNet's own positions run to x = −230, y = −430. This is
@@ -165,11 +170,27 @@ and that is *human annotators with the whole clip in front of them*. Stage 5's O
 beat it and should not be measured as if it could. It also confirms the estimate this plan
 started with: expect roughly half the squad, and generic tokens for the rest.
 
+### The ground-truth path is complete
+
+Three commands, and between them they close invariant 3 and D12 for this stage:
+
+* `ft truth` writes `work/<clip>/truth.json` — real positions, teams and numbers, no CV.
+* `ft render` draws any tracks-format file as a top-down video of coloured dots. Not
+  specific to ground truth: it is stage 4's proof reused, and it is how the y direction
+  above was settled.
+* `ft score` diffs a prediction against the truth — recall, precision, position error,
+  team accuracy, identity purity, switches, and the jersey breakdown.
+
+Scoring `truth.json` against itself returns a perfect card, which is the only check that
+the harness measures what it claims. Scoring a deliberately degraded copy (12% of samples
+dropped, 0.6 m of gaussian noise) returns 87.2% recall, 0.70 m median error and 110
+switches — the numbers the noise implies.
+
 ## Milestones
 
 | # | done when | est. |
 |---|---|---|
-| M0 | scaffold, stage 0, and `ft truth` writing a real `tracks.json` | **done** |
+| M0 | scaffold, stage 0, and the ground-truth path: `ft truth`, `ft render`, `ft score` | **done** |
 | M1 | reprojected pitch lines sit on the real lines | 2–3 evenings |
 | M2 | tracks survive 10s with few enough id switches to count | 1–2 evenings |
 | M3 | teams cluster cleanly | 1 evening |
@@ -250,6 +271,19 @@ later stage is scored by diffing two files of the same shape. A separate ground-
 format would have made the comparison a translation exercise, which is where a scoring
 harness quietly starts measuring itself.
 
+**D14 — ground truth is `truth.json`, a prediction is `tracks.json`.** The same format
+written by the same writer, given two names so that a stage cannot overwrite the yardstick
+it is about to be measured against. `ft score` defaults to the `truth.json` beside its
+argument.
+
+**D15 — the scorecard separates the failures the averages hide.** Recall cannot see an
+identity switch: a tracker that swaps two players halfway through still finds everybody, so
+purity and the switch count are reported beside it. And a wrong shirt number is reported
+apart from an unread one, because they are not the same mistake — unread imports as a
+generic token and costs nothing, wrong attaches a run to the wrong player where no one
+downstream can see it (D5). A single "jersey accuracy" percentage would average the free
+error together with the expensive one.
+
 **D13 — an off-pitch position is dropped, never clamped.** A position 200 m out is not a
 player near the touchline, it is a homography that failed. Clamping launders that failure
 into a plausible coordinate the reduction then fits a curve through, and the resulting run
@@ -265,9 +299,6 @@ locally, from a terminal, on files.
 
 ## Open questions
 
-- Does SoccerNet's +y run the same way as Pitchboard's? The origin question is answered
-  (centre spot vs top-left corner, handled in `soccernet.py`), but a sign flip mirrors the
-  board and only the M4 render will show it. One constant either way.
 - How short is short enough for stage 2? Measure id switches against clip length rather than
   guessing at 10s.
 - Does the keypoint model cope with a half-pitch framing, or only wide shots?

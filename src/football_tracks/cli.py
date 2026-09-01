@@ -7,6 +7,8 @@ from typing import Annotated
 
 import typer
 
+from . import render as render_mod
+from . import score as score_mod
 from . import soccernet, stage0_segment, tracks
 from .config import CLIPS, work_dir
 
@@ -117,7 +119,7 @@ def truth(
 
     out = work_dir(Path(clip))
     path = tracks.write(
-        out / "tracks.json",
+        out / "truth.json",
         clip=clip,
         fps=float(info["frame_rate"]),
         start_frame=min(frames),
@@ -131,6 +133,49 @@ def truth(
     total_samples = sum(len(t.samples) for t in built)
     typer.echo(f"{len(built)} tracks, {total_samples} samples, {named} with a shirt number")
     typer.echo(f"wrote {path}")
+
+
+@app.command()
+def render(
+    path: Annotated[
+        Path, typer.Argument(exists=True, dir_okay=False, help="A tracks.json or truth.json.")
+    ],
+    scale: Annotated[float, typer.Option(help="Pixels per metre.")] = 10.0,
+    still: Annotated[int | None, typer.Option(help="Render one frame as a PNG instead.")] = None,
+) -> None:
+    """Draw a tracks file as a top-down video of coloured dots.
+
+    The picture invariant 3 asks for. If the dots move like a football team the
+    positions are right, and nothing in the numbers can tell you that.
+    """
+    doc = render_mod.load(path)
+    if still is not None:
+        out = render_mod.still(doc, still, path.with_suffix(f".f{still}.png"), scale=scale)
+    else:
+        out = render_mod.video(doc, path.with_suffix(".mp4"), scale=scale)
+    typer.echo(f"wrote {out}")
+
+
+@app.command()
+def score(
+    prediction: Annotated[
+        Path, typer.Argument(exists=True, dir_okay=False, help="A produced tracks.json.")
+    ],
+    truth_path: Annotated[
+        Path | None,
+        typer.Option("--truth", help="Ground truth. Defaults to truth.json beside it."),
+    ] = None,
+    radius: Annotated[float, typer.Option(help="Match radius in metres.")] = score_mod.MATCH_RADIUS,
+) -> None:
+    """Diff a produced tracks.json against ground truth."""
+    gt = truth_path or prediction.parent / "truth.json"
+    if not gt.exists():
+        raise typer.BadParameter(f"no ground truth at {gt} - run `ft truth <clip>` first")
+    typer.echo(
+        score_mod.report(
+            score_mod.score(render_mod.load(gt), render_mod.load(prediction), radius=radius)
+        )
+    )
 
 
 if __name__ == "__main__":
