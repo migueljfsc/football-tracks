@@ -7,9 +7,10 @@ from typing import Annotated
 
 import typer
 
+from . import overlay as overlay_mod
 from . import render as render_mod
 from . import score as score_mod
-from . import soccernet, stage0_segment, tracks
+from . import soccernet, stage0_segment, stage1_register, tracks
 from .config import CLIPS, work_dir
 
 app = typer.Typer(add_completion=False, help="Broadcast clip -> player tracks in pitch metres.")
@@ -176,6 +177,74 @@ def score(
             score_mod.score(render_mod.load(gt), render_mod.load(prediction), radius=radius)
         )
     )
+
+
+@app.command()
+def calibrate(
+    clip: Annotated[str, typer.Argument(help="A clip already fetched into data/clips/.")],
+    frame: Annotated[
+        int | None, typer.Option(help="Draw the overlay for this frame instead of measuring.")
+    ] = None,
+    video: Annotated[
+        bool, typer.Option(help="Draw the overlay for every frame, as an mp4.")
+    ] = False,
+) -> None:
+    """Stage 1 - fit a homography per frame from the pitch lines, and check it.
+
+    With no options this MEASURES: ground-truth boxes are pushed through the fitted
+    homography and compared with the position SoccerNet recorded for them, which
+    isolates the camera model from detection and gives the pipeline's error ceiling.
+
+    With --frame or --video it draws the picture, which is the only way to see a
+    homography that is wrong in a way the averages survive.
+    """
+    c = soccernet.Clip(name=clip, root=CLIPS / clip)
+    if not c.labels_path.exists():
+        raise typer.BadParameter(f"no labels at {c.labels_path} - run `ft fetch {clip}` first")
+
+    labels = c.labels()
+    homs = stage1_register.fit_all(labels)
+    out = work_dir(Path(clip))
+
+    if frame is not None or video:
+        import cv2
+
+        frames = sorted(homs) if video else [frame] if frame is not None else []
+        writer = None
+        for f in frames:
+            src = c.frames_dir / f"{f:06d}.jpg"
+            if not src.exists():
+                if not video:
+                    raise typer.BadParameter(f"no frame at {src} - fetch the clip without --limit")
+                continue
+            raw = cv2.imread(str(src))
+            if raw is None:
+                continue
+            img = overlay_mod.draw(raw, homs[f])
+            overlay_mod.annotate(
+                img, f"f{f}" if homs[f] is not None else f"f{f} unsolved", ok=homs[f] is not None
+            )
+            if not video:
+                dest = out / f"calib.f{f}.png"
+                cv2.imwrite(str(dest), img)
+                typer.echo(f"wrote {dest}")
+            else:
+                if writer is None:
+                    h, w = img.shape[:2]
+                    dest = out / "calib.mp4"
+                    writer = cv2.VideoWriter(
+                        str(dest),
+                        cv2.VideoWriter.fourcc(*"mp4v"),
+                        float(labels["info"]["frame_rate"]),
+                        (w, h),
+                    )
+                writer.write(img)
+        if writer is not None:
+            writer.release()
+            typer.echo(f"wrote {out / 'calib.mp4'}")
+        return
+
+    typer.echo(stage1_register.report(stage1_register.evaluate(labels, homs)))
 
 
 if __name__ == "__main__":

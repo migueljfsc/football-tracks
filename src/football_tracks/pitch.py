@@ -11,9 +11,13 @@ from __future__ import annotations
 
 import cv2
 import numpy as np
+import numpy.typing as npt
 from cv2.typing import MatLike
 
 from .config import PITCH_LENGTH, PITCH_WIDTH
+
+Poly = npt.NDArray[np.float64]
+Point2 = tuple[float, float]
 
 GRASS = (58, 122, 48)
 LINE = (235, 235, 235)
@@ -26,6 +30,68 @@ GOAL_AREA_DEPTH = 5.5
 GOAL_AREA_HALF_WIDTH = 9.16
 PENALTY_SPOT = 11.0
 CORNER_R = 1.0
+
+
+def _arc(cx: float, cy: float, r: float, a0: float, a1: float, n: int = 40) -> Poly:
+    a = np.linspace(np.radians(a0), np.radians(a1), n)
+    return np.stack([cx + r * np.cos(a), cy + r * np.sin(a)], axis=1)
+
+
+def model() -> list[Poly]:
+    """The markings as polylines in METRES.
+
+    The one description of pitch geometry in this repo. `draw` renders it top-down and
+    `overlay` reprojects it onto a video frame; neither restates it.
+    """
+    mid = PITCH_WIDTH / 2
+    polys: list[Poly] = [
+        np.array(
+            [[0, 0], [PITCH_LENGTH, 0], [PITCH_LENGTH, PITCH_WIDTH], [0, PITCH_WIDTH], [0, 0]],
+            dtype=np.float64,
+        ),
+        np.array([[PITCH_LENGTH / 2, 0], [PITCH_LENGTH / 2, PITCH_WIDTH]], dtype=np.float64),
+        _arc(PITCH_LENGTH / 2, mid, CENTRE_R, 0, 360),
+    ]
+
+    for near, sign in ((0.0, 1.0), (PITCH_LENGTH, -1.0)):
+        for depth, half in (
+            (PENALTY_DEPTH, PENALTY_HALF_WIDTH),
+            (GOAL_AREA_DEPTH, GOAL_AREA_HALF_WIDTH),
+        ):
+            far = near + sign * depth
+            polys.append(
+                np.array(
+                    [[near, mid - half], [far, mid - half], [far, mid + half], [near, mid + half]],
+                    dtype=np.float64,
+                )
+            )
+
+        # The penalty arc is the part of a 9.15 m circle centred on the SPOT that falls
+        # outside the box - not an arc on the box edge.
+        spot_x = near + sign * PENALTY_SPOT
+        half_deg = np.degrees(np.arccos((PENALTY_DEPTH - PENALTY_SPOT) / CENTRE_R))
+        start = 0.0 if sign > 0 else 180.0
+        polys.append(_arc(spot_x, mid, CENTRE_R, start - half_deg, start + half_deg))
+
+    for cx, cy, a0 in (
+        (0.0, 0.0, 0.0),
+        (PITCH_LENGTH, 0.0, 90.0),
+        (PITCH_LENGTH, PITCH_WIDTH, 180.0),
+        (0.0, PITCH_WIDTH, 270.0),
+    ):
+        polys.append(_arc(cx, cy, CORNER_R, a0, a0 + 90.0))
+
+    return polys
+
+
+def spots() -> list[Point2]:
+    """The centre spot and both penalty spots, in metres."""
+    mid = PITCH_WIDTH / 2
+    return [
+        (PITCH_LENGTH / 2, mid),
+        (PENALTY_SPOT, mid),
+        (PITCH_LENGTH - PENALTY_SPOT, mid),
+    ]
 
 
 def to_px(x: float, y: float, scale: float, margin: float) -> tuple[int, int]:
@@ -41,80 +107,18 @@ def canvas_size(scale: float, margin: float) -> tuple[int, int]:
 
 
 def draw(scale: float = 10.0, margin: float = 3.0) -> MatLike:
-    """A fresh pitch, ready to have dots put on it."""
+    """A fresh pitch, ready to have dots put on it. Renders `model()` and nothing else."""
     w, h = canvas_size(scale, margin)
     img = np.full((h, w, 3), GRASS, dtype=np.uint8)
     t = max(1, round(scale / 8))
 
-    def line(x1: float, y1: float, x2: float, y2: float) -> None:
-        cv2.line(
-            img, to_px(x1, y1, scale, margin), to_px(x2, y2, scale, margin), LINE, t, cv2.LINE_AA
-        )
+    for poly in model():
+        pts = np.array([to_px(x, y, scale, margin) for x, y in poly], dtype=np.int32)
+        cv2.polylines(img, [pts], False, LINE, t, cv2.LINE_AA)
 
-    def circle(cx: float, cy: float, r: float, thickness: int = -1) -> None:
+    for sx, sy in spots():
         cv2.circle(
-            img, to_px(cx, cy, scale, margin), round(r * scale), LINE, thickness, cv2.LINE_AA
-        )
-
-    def box(x1: float, y1: float, x2: float, y2: float) -> None:
-        cv2.rectangle(
-            img, to_px(x1, y1, scale, margin), to_px(x2, y2, scale, margin), LINE, t, cv2.LINE_AA
-        )
-
-    box(0, 0, PITCH_LENGTH, PITCH_WIDTH)
-    line(PITCH_LENGTH / 2, 0, PITCH_LENGTH / 2, PITCH_WIDTH)
-    circle(PITCH_LENGTH / 2, PITCH_WIDTH / 2, CENTRE_R, t)
-    circle(PITCH_LENGTH / 2, PITCH_WIDTH / 2, 0.3)
-
-    mid = PITCH_WIDTH / 2
-    for near, sign in ((0.0, 1.0), (PITCH_LENGTH, -1.0)):
-        box(
-            near,
-            mid - PENALTY_HALF_WIDTH,
-            near + sign * PENALTY_DEPTH,
-            mid + PENALTY_HALF_WIDTH,
-        )
-        box(
-            near,
-            mid - GOAL_AREA_HALF_WIDTH,
-            near + sign * GOAL_AREA_DEPTH,
-            mid + GOAL_AREA_HALF_WIDTH,
-        )
-        spot_x = near + sign * PENALTY_SPOT
-        circle(spot_x, mid, 0.3)
-
-        # The penalty arc is the part of a 9.15 m circle centred on the SPOT that falls
-        # outside the box - not an arc on the box edge.
-        half = np.degrees(np.arccos((PENALTY_DEPTH - PENALTY_SPOT) / CENTRE_R))
-        start = 0.0 if sign > 0 else 180.0
-        cv2.ellipse(
-            img,
-            to_px(spot_x, mid, scale, margin),
-            (round(CENTRE_R * scale), round(CENTRE_R * scale)),
-            0.0,
-            start - half,
-            start + half,
-            LINE,
-            t,
-            cv2.LINE_AA,
-        )
-
-    for cx, cy, a0 in (
-        (0.0, 0.0, 0.0),
-        (PITCH_LENGTH, 0.0, 90.0),
-        (PITCH_LENGTH, PITCH_WIDTH, 180.0),
-        (0.0, PITCH_WIDTH, 270.0),
-    ):
-        cv2.ellipse(
-            img,
-            to_px(cx, cy, scale, margin),
-            (round(CORNER_R * scale), round(CORNER_R * scale)),
-            0.0,
-            a0,
-            a0 + 90.0,
-            LINE,
-            t,
-            cv2.LINE_AA,
+            img, to_px(sx, sy, scale, margin), max(2, round(0.3 * scale)), LINE, -1, cv2.LINE_AA
         )
 
     return img

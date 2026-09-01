@@ -38,7 +38,10 @@ src/football_tracks/
   stage0_segment.py         cuts -> score by green and motion -> the tactical camera
   soccernet.py              GSR fetch and ground truth -> Tracks
   tracks.py                 the tracks.json writer, shared by every producer
-  pitch.py                  top-down markings, for looking at only
+  calibration.py            named pitch lines -> a homography
+  stage1_register.py        fit per frame, and measure what it costs
+  overlay.py                the markings reprojected onto a frame - stage 1's picture
+  pitch.py                  the markings in metres; `model()` is the one description
   render.py                 a tracks file -> a video of coloured dots
   score.py                  a prediction diffed against ground truth
   cli.py                    one command per stage
@@ -83,6 +86,19 @@ work/<clip>/                every stage's artefacts, all reproducible
 - **Recall cannot see an identity switch.** A tracker that swaps two players still finds
   everybody. Purity and the switch count are what show it, which is why `score` reports
   them beside recall rather than folding everything into one number (D15).
+- **A homography fitted from four lines is exactly determined, so it has no residual and
+  cannot be checked** (D17). It fits its own points perfectly whatever the noise. Never
+  treat a small residual as evidence a fit is good without first asking whether the system
+  was over-determined.
+- **Two perpendicular pitch lines project to nearly parallel image lines under an oblique
+  camera**, which is what makes their intersection useless and why the fit is point-on-line
+  (D16). Anything reaching for line crossings is reaching for the approach that produced a
+  0.00 m residual and a 100 m error.
+- **A goal post is not on the ground plane.** `PITCH_LINES` lists only ground markings, and
+  crossbars and posts are deliberately absent — a ground homography puts them metres from
+  where they are. Circles are absent too, for the different reason that they are not lines.
+- **`pitch.model()` is the one description of the markings.** `draw` renders it top-down and
+  `overlay` reprojects it onto a frame. A second copy is two answers that drift.
 - **`pitch.py` is for looking, never for measuring.** It exists to draw a picture. The
   moment anything reads geometry out of it there are two answers to where the penalty spot
   is, and they drift the way preview and export do in Pitchboard.

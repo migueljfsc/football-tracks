@@ -48,22 +48,34 @@ to-frame motion. The main tactical camera is long, very green, and moves smoothl
 - *Check:* the reported segment boundaries match where the cuts are.
 - *Difficulty:* low. This will not be what fails.
 
-### Stage 1 — registration `homography.json`
+### Stage 1 — registration — **the solver works; the detector is next**
 
 Per-frame 3 × 3 matrix mapping image pixels to pitch metres. Broadcast pans and zooms, so
 this is solved per frame, not once.
 
-Automatic first: a pitch-keypoint model detects line intersections, penalty-box corners, the
-centre circle, and a solver fits the homography. Roboflow's `sports` package publishes a
-keypoint model trained on broadcast football; verify it still works before building anything.
+The stage splits into a solver (named lines → homography) and a detector (frame → named
+lines). **The solver is built and measured**; the detector is still ground truth, and
+swapping in a keypoint model is what remains. Nothing else in the module changes when it is:
+`calibration.homography` takes named polylines and does not care who found them.
 
-Fallback if that disappoints: seed frame 1 by hand — click four or more pitch landmarks —
-and propagate the matrix forward by optical flow. Robust, ~2h of work, but needs a human per
-clip. See D7.
+Measured on SNGS-147, feeding it the ground-truth lines:
 
-- *Check:* **reproject the pitch model back onto the video.** Lines land on lines or they do
-  not. Nothing else in this repo is as easy to verify or as easy to get subtly wrong.
-- *Difficulty:* the highest of any stage. Budget most of the time here.
+```
+frames solved     606/750  (80.8%)
+position error    0.67 m median, 2.65 m p90, 12.14 m p99
+thrown off pitch  0
+```
+
+That is the **ceiling** for the whole pipeline. It is measured by pushing ground-truth
+bounding boxes through the fitted homography and comparing with the position SoccerNet
+recorded for that same box, which holds detection and tracking fixed so the number is the
+camera model's alone. No detector gets a position closer than this.
+
+- *Check:* **reproject the pitch model back onto the video** (`ft calibrate --frame N`, or
+  `--video`). Lines land on lines or they do not. Nothing else in this repo is as easy to
+  verify or as easy to get subtly wrong — and it is what caught D16.
+- *Difficulty:* the highest of any stage. The solver took the time; the detector is a model
+  download and an adapter.
 
 ### Stage 2 — detect and track `detections.json`
 
@@ -191,7 +203,7 @@ switches — the numbers the noise implies.
 | # | done when | est. |
 |---|---|---|
 | M0 | scaffold, stage 0, and the ground-truth path: `ft truth`, `ft render`, `ft score` | **done** |
-| M1 | reprojected pitch lines sit on the real lines | 2–3 evenings |
+| M1 | reprojected pitch lines sit on the real lines | **solver done**; detector next |
 | M2 | tracks survive 10s with few enough id switches to count | 1–2 evenings |
 | M3 | teams cluster cleanly | 1 evening |
 | M4 | **the top-down dot video looks like football** | 1 evening |
@@ -253,6 +265,30 @@ carries its own frame index; gaps are expected and the consumer interpolates or 
 the moment this graduates into a product. RT-DETR and RF-DETR are Apache-licensed and are the
 swap to make if that day comes — which is another reason the detector lives behind a stage
 boundary and not in the middle of everything.
+
+**D16 — the homography is fitted from POINT-ON-LINE constraints, not from line
+intersections.** Every annotated point is known to lie on a named pitch line, which gives
+one linear equation `l · (H p) = 0`; stacking them is an ordinary DLT.
+
+Intersections were the first approach and they fail on exactly the footage that matters.
+Under an oblique camera two pitch lines meeting at a right angle project to nearly parallel
+image lines, so their crossing flies off and a pixel of error becomes tens of metres. On
+SNGS-147's most line-rich frame it produced four usable correspondences out of nine lines,
+three of them on the same touchline — a degenerate configuration that fitted its own points
+with **0.00 m residual** while placing players 100 m away. The residual could not see it;
+only the reprojection picture could. Median error across the clip was 13 m.
+
+Point-on-line uses every point of every visible marking, so a line seen edge-on contributes
+what it can instead of being thrown away or, worse, being crossed with its neighbour.
+
+**D17 — a frame must show MORE lines than the fit strictly needs.** Four lines is eight
+constraints for eight degrees of freedom: exactly determined, fits perfectly whatever the
+noise, and leaves nothing over to notice it is wrong with. Measured, four-line frames land
+21.7 m out at the median while every over-determined configuration is inside 3 m. Refusing
+them costs 7% of coverage and takes p90 from 19.1 m to 2.65 m.
+
+This is D13's argument again one level up: a homography that cannot be checked is not a
+cheaper homography, it is a wrong answer nobody can see.
 
 **D10 — SoccerNet enters at stage 1.** Its clips are single-camera JPEG sequences with no
 cuts in them, so stage 0 has nothing to do on this path. Stage 0 is not dead code: it is

@@ -24,6 +24,10 @@ uv run ft render work/SNGS-147/truth.json          # top-down mp4 of coloured do
 uv run ft render work/SNGS-147/truth.json --still 220
 uv run ft score work/SNGS-147/tracks.json          # diff a prediction against the truth
 
+uv run ft calibrate SNGS-147         # stage 1: fit per frame, and measure the error
+uv run ft calibrate SNGS-147 --frame 288   # the overlay - do lines land on lines?
+uv run ft calibrate SNGS-147 --video
+
 uv run ft segment data/clips/foo.mp4 # stage 0, for arbitrary broadcast footage
 ```
 
@@ -48,7 +52,7 @@ uv sync --extra ocr      # shirt numbers
 |---|---|---|
 | — | SoccerNet fetch, ground truth, render, score | **done** |
 | 0 | segment — find the tactical camera | built, unproven |
-| 1 | registration — pixels to metres | not started |
+| 1 | registration — pixels to metres | solver done, detector next |
 | 2 | detect and track | not started |
 | 3 | teams | not started |
 | 4 | project — **the proof** | not started |
