@@ -1,0 +1,51 @@
+name: release
+
+# Bumps the version from conventional commits, updates CHANGELOG.md, tags, and opens
+# a GitHub Release. Runs after a push to main; the bump commit itself carries
+# [skip ci] (see .cz.yaml) so it cannot retrigger this.
+#
+# Falls back to GITHUB_TOKEN when CZ_TOKEN is absent, which works only while main is
+# unprotected - the built-in token cannot push to a protected branch. Protecting main
+# means adding a CZ_TOKEN PAT with `contents: write`.
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+# Two bumps racing would fight over the tag.
+concurrency:
+  group: release
+  cancel-in-progress: false
+
+jobs:
+  bump:
+    if: ${{ !contains(github.event.head_commit.message, '[skip ci]') }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          token: ${{ secrets.CZ_TOKEN || github.token }}
+          # commitizen reads the whole history to work out the increment.
+          fetch-depth: 0
+
+      - id: cz
+        uses: commitizen-tools/commitizen-action@0.27.1
+        with:
+          github_token: ${{ secrets.CZ_TOKEN || github.token }}
+          changelog_increment_filename: body.md
+
+      # Only when cz actually bumped - a push with no feat/fix produces no tag.
+      - if: ${{ env.REVISION != '' }}
+        uses: ncipollo/release-action@v1
+        with:
+          tag: ${{ env.REVISION }}
+          bodyFile: body.md
+          skipIfReleaseExists: true
+        env:
+          GITHUB_TOKEN: ${{ secrets.CZ_TOKEN || github.token }}
+
+      - if: ${{ env.REVISION != '' }}
+        run: echo "Released ${{ steps.cz.outputs.version }}" >> "$GITHUB_STEP_SUMMARY"

@@ -1,0 +1,44 @@
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: astral-sh/setup-uv@v6
+        with:
+          enable-cache: true
+
+      # Stage 0 deps plus the dev group. The vision and ocr extras pull torch, which
+      # is ~2GB and is needed by neither the linters nor the pure helpers under test.
+      # CI installs them once a stage that uses them has tests worth running.
+      - run: uv sync --frozen
+      - run: uv run ruff format --check .
+      - run: uv run ruff check .
+      - run: uv run mypy
+      - run: uv run pytest -q
+
+  commits:
+    # Conventional-commit check via commitizen, same ruleset as the release bump
+    # (cz_conventional_commits). PR-only: on main the commits are already merged.
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.x"
+      - run: pip install commitizen
+      - name: check conventional commits
+        run: cz check --rev-range ${{ github.event.pull_request.base.sha }}..${{ github.event.pull_request.head.sha }}

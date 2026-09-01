@@ -1,0 +1,76 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/mindera/football-tracks/schema/tracks.schema.json",
+  "title": "tracks.json",
+  "description": "Player tracks in pitch metres. The contract between football-tracks and Pitchboard. Positions use the same space as BoardDoc: origin at the top-left corner of a 105 x 68 pitch, x along the length, y across the width. No pixels appear in this file.",
+  "type": "object",
+  "required": ["version", "source", "pitch", "tracks"],
+  "additionalProperties": false,
+  "properties": {
+    "version": { "const": 1 },
+    "source": {
+      "type": "object",
+      "required": ["clip", "fps", "startFrame", "endFrame"],
+      "additionalProperties": false,
+      "properties": {
+        "clip": { "type": "string", "description": "Basename of the source video." },
+        "fps": { "type": "number", "exclusiveMinimum": 0 },
+        "startFrame": { "type": "integer", "minimum": 0, "description": "First frame of the segment, in the SOURCE video's numbering. Sample frame indices are absolute, not segment-relative." },
+        "endFrame": { "type": "integer", "minimum": 0 },
+        "width": { "type": "integer" },
+        "height": { "type": "integer" }
+      }
+    },
+    "pitch": {
+      "type": "object",
+      "required": ["length", "width"],
+      "additionalProperties": false,
+      "properties": {
+        "length": { "type": "number", "default": 105 },
+        "width": { "type": "number", "default": 68 }
+      }
+    },
+    "tracks": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["id", "team", "samples"],
+        "additionalProperties": false,
+        "properties": {
+          "id": { "type": "integer", "description": "Tracker id. Stable within this file only; it means nothing in another clip." },
+          "team": {
+            "enum": ["home", "away", "gkHome", "gkAway", "referee", "unknown"],
+            "description": "Referees are normally dropped before this file is written; the value exists so a debug dump can keep them."
+          },
+          "number": {
+            "type": ["integer", "null"],
+            "minimum": 1,
+            "maximum": 99,
+            "description": "Shirt number, or null when it could not be read. NEVER a guess (D5) - null imports as a generic token, a wrong number attaches a run to the wrong player invisibly."
+          },
+          "numberConfidence": { "type": "number", "minimum": 0, "maximum": 1 },
+          "samples": {
+            "type": "array",
+            "description": "Sparse and ordered by frame. A player occluded for twenty frames has no sample for them; gaps are expected and must not be invented (D8).",
+            "items": {
+              "type": "object",
+              "required": ["f", "x", "y"],
+              "additionalProperties": false,
+              "properties": {
+                "f": { "type": "integer", "minimum": 0, "description": "Absolute frame index in the source video." },
+                "x": { "type": "number", "description": "Metres along the pitch length, 0..105." },
+                "y": { "type": "number", "description": "Metres across the pitch width, 0..68." },
+                "conf": { "type": "number", "minimum": 0, "maximum": 1, "description": "Detection confidence, carried through so the reduction can weight a fit." }
+              }
+            }
+          }
+        }
+      }
+    },
+    "ball": {
+      "type": ["object", "null"],
+      "default": null,
+      "description": "Always null in v0 (D4). Shaped like a track so adding it later is not a schema change."
+    }
+  }
+}

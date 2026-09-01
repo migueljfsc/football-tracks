@@ -1,0 +1,53 @@
+[project]
+name = "football-tracks"
+version = "0.1.0"
+description = "Broadcast football clip -> player tracks in pitch metres, for import into Pitchboard."
+requires-python = ">=3.12,<3.13"
+license = "MIT"
+dependencies = [
+    "typer>=0.15",
+    "numpy>=2.1",
+    "opencv-python>=4.10",
+    "scenedetect>=0.6.4",
+]
+
+# Installed per stage rather than all at once: stage 0 needs none of this, and a
+# torch install that fails should not block the stage that does not use torch.
+[project.optional-dependencies]
+vision = ["torch>=2.5", "torchvision>=0.20", "ultralytics>=8.3", "supervision>=0.25"]
+ocr = ["easyocr>=1.7"]
+data = ["SoccerNet>=0.1.60"]
+
+[dependency-groups]
+dev = ["ruff>=0.8", "mypy>=1.13", "pytest>=8.3"]
+
+[project.scripts]
+ft = "football_tracks.cli:app"
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/football_tracks"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py312"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B", "SIM", "RUF"]
+
+[tool.mypy]
+files = ["src", "tests"]
+python_version = "3.12"
+strict = true
+
+# scenedetect ships no stubs. Confined to it, so a missing stub anywhere else is
+# still an error rather than a silent Any. cv2 5.x types itself - see MatLike.
+[[tool.mypy.overrides]]
+module = ["scenedetect.*"]
+ignore_missing_imports = true
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

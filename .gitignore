@@ -1,0 +1,19 @@
+__pycache__/
+*.py[cod]
+.venv/
+.ruff_cache/
+*.egg-info/
+
+# Clips and derived artefacts. Video does not belong in git, and every file under
+# work/ is reproducible from a clip plus a stage.
+data/clips/*
+!data/clips/.gitkeep
+work/*
+!work/.gitkeep
+
+# Model weights, downloaded on first run.
+models/
+*.pt
+
+# SoccerNet credentials. Under NDA - never committed, never pasted into a transcript.
+.env
