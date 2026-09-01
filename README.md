@@ -15,9 +15,17 @@ worth starting, and the decisions behind the shape of all this.
 ## Running it
 
 ```sh
-uv sync                              # stage 0 deps only
-uv run ft segment data/clips/foo.mp4 # or: make segment CLIP=data/clips/foo.mp4
+uv sync --extra data                 # stage 0 plus the SoccerNet fetcher
+
+uv run ft clips --split test         # 49 clips, downloads nothing
+uv run ft fetch SNGS-147             # one clip, ~150MB out of an 8.85GB split
+uv run ft truth SNGS-147             # ground truth -> work/SNGS-147/tracks.json
+
+uv run ft segment data/clips/foo.mp4 # stage 0, for arbitrary broadcast footage
 ```
+
+`ft truth` produces a real `tracks.json` with no CV in the loop. It is the yardstick every
+stage is scored against, and it is what Pitchboard's importer is built against today.
 
 Artefacts land in `work/<clip>/`, one directory per clip. Everything in there is reproducible
 from the clip plus a stage, so `make clean` is always safe.
@@ -33,12 +41,16 @@ uv sync --extra ocr      # shirt numbers
 
 | stage | | |
 |---|---|---|
+| — | SoccerNet fetch + ground truth | working |
 | 0 | segment — find the tactical camera | built, unproven |
 | 1 | registration — pixels to metres | not started |
 | 2 | detect and track | not started |
 | 3 | teams | not started |
 | 4 | project — **the proof** | not started |
 | 5 | shirt numbers | not started |
+
+SoccerNet clips are single-camera and already trimmed, so they enter at stage 1 — stage 0
+is for arbitrary broadcast footage (D10).
 
 ## Requirements
 

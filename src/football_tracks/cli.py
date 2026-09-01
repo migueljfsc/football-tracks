@@ -7,8 +7,8 @@ from typing import Annotated
 
 import typer
 
-from . import stage0_segment
-from .config import work_dir
+from . import soccernet, stage0_segment, tracks
+from .config import CLIPS, work_dir
 
 app = typer.Typer(add_completion=False, help="Broadcast clip -> player tracks in pitch metres.")
 
@@ -61,6 +61,76 @@ def segment(
         if chosen is None:
             raise typer.BadParameter(f"no segment {extract}")
         typer.echo(f"wrote {stage0_segment.extract(clip, chosen, out)}")
+
+
+@app.command()
+def clips(
+    split: Annotated[str, typer.Option(help="train, valid, test or challenge.")] = "test",
+) -> None:
+    """List the clips in a SoccerNet GSR split, without downloading any of them."""
+    with soccernet.open_split(split) as zf:
+        names = soccernet.list_clips(zf)
+    typer.echo(f"{len(names)} clips in {split}")
+    typer.echo("  ".join(names))
+
+
+@app.command()
+def fetch(
+    clip: Annotated[str, typer.Argument(help="Clip name, e.g. SNGS-147.")],
+    split: Annotated[str, typer.Option(help="train, valid, test or challenge.")] = "test",
+    limit: Annotated[
+        int | None, typer.Option(help="Fetch only the first N frames, for a quick look.")
+    ] = None,
+) -> None:
+    """Download one SoccerNet GSR clip - labels and frames - into data/clips/.
+
+    Pulls a single clip out of the split's multi-gigabyte zip by range request, so
+    this costs about 150 MB rather than the whole 8.85 GB.
+    """
+    with soccernet.open_split(split) as zf:
+        typer.echo(f"fetching {clip} from {split} ...")
+        out = soccernet.fetch(zf, clip, CLIPS, limit=limit)
+    n = len(list((out / "img1").glob("*.jpg")))
+    typer.echo(f"wrote {out}  ({n} frames)")
+
+
+@app.command()
+def truth(
+    clip: Annotated[str, typer.Argument(help="A clip already fetched into data/clips/.")],
+    referees: Annotated[
+        bool, typer.Option(help="Keep referees rather than dropping them.")
+    ] = False,
+) -> None:
+    """Ground-truth labels -> tracks.json, with no CV in the loop.
+
+    The yardstick every later stage is scored against, and a real file for
+    Pitchboard's importer to be built against before any of the vision works.
+    """
+    c = soccernet.Clip(name=clip, root=CLIPS / clip)
+    if not c.labels_path.exists():
+        raise typer.BadParameter(f"no labels at {c.labels_path} - run `ft fetch {clip}` first")
+
+    labels = c.labels()
+    built = soccernet.to_tracks(labels, keep_referees=referees)
+    info = labels["info"]
+    frames = [int(img["file_name"].split(".")[0]) for img in labels["images"]]
+
+    out = work_dir(Path(clip))
+    path = tracks.write(
+        out / "tracks.json",
+        clip=clip,
+        fps=float(info["frame_rate"]),
+        start_frame=min(frames),
+        end_frame=max(frames),
+        tracks=built,
+        width=labels["images"][0]["width"],
+        height=labels["images"][0]["height"],
+    )
+
+    named = sum(1 for t in built if t.number is not None)
+    total_samples = sum(len(t.samples) for t in built)
+    typer.echo(f"{len(built)} tracks, {total_samples} samples, {named} with a shirt number")
+    typer.echo(f"wrote {path}")
 
 
 if __name__ == "__main__":

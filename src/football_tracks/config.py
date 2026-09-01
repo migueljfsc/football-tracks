@@ -14,6 +14,7 @@ PITCH_WIDTH = 68.0
 
 ROOT = Path(__file__).resolve().parents[2]
 WORK = ROOT / "work"
+CLIPS = ROOT / "data" / "clips"
 
 
 def work_dir(clip: Path, *, create: bool = True) -> Path:

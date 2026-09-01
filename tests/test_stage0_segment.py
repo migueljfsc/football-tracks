@@ -114,3 +114,10 @@ def test_write_records_the_pick(tmp_path: object) -> None:
     data = json.loads(path.read_text())
     assert data["best"] == 1
     assert len(data["segments"]) == 2
+
+
+def test_module_boundary_is_stage_zero_only() -> None:
+    """Stage 0 must not learn about SoccerNet, or the seam stops being a seam."""
+    import football_tracks.stage0_segment as s0
+
+    assert not hasattr(s0, "soccernet")

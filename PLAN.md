@@ -121,20 +121,70 @@ Expect roughly half the squad to resolve. See D5.
 
 Deferred to v1. See D4.
 
+## What SoccerNet turned out to be
+
+Measured, not assumed — `SN-GSR-2025`, split `test`, clip `SNGS-147`.
+
+**It is not gated and needs no NDA password.** GSR-2025 is served from HuggingFace
+ungated. The password matters only for the tasks still on SoccerNet's own mirror
+(`tracking`, `calibration`). It stays in `.env` for those; nothing in the GSR path reads it.
+
+**Clips are JPEG frames, not video.** 750 frames at 25 fps — 30 s — 1920 × 1080, one
+continuous camera, already trimmed. **So stage 0 does not apply to SoccerNet at all: the
+SoccerNet path enters at stage 1.** Stage 0 earns its place for arbitrary broadcast
+footage, which is still where this has to work in the end.
+
+**One clip costs ~150 MB, not 8.85 GB.** A zip's index sits at its end and HuggingFace
+serves range requests, so the split's zip is opened remotely and a single clip read out
+of it. `ft clips` lists 49 clips in `test` without downloading anything.
+
+**The labels answer every stage at once:**
+
+| field | what it grounds |
+|---|---|
+| pitch-line annotations, per frame | stage 1 |
+| `track_id` | stage 2 |
+| `attributes.role`, `attributes.team` | stage 3 |
+| `bbox_pitch.{x,y}_bottom_middle` | stage 4 |
+| `attributes.jersey` | stage 5 |
+
+Two things fell out of reading it that change what we expect:
+
+**Their origin is the centre spot, ours is the top-left corner.** `x + 52.5`, `y + 34`.
+The open question in the first draft of this plan is answered: the conventions do *not*
+match. The conversion lives in `soccernet.py` and nowhere else. The y *direction* is still
+unverified — a flip mirrors the board, and the top-down render at M4 is what shows it.
+
+**The ground truth has 230-metre outliers.** A homography extrapolates without bound for
+anyone near the horizon, so SoccerNet's own positions run to x = −230, y = −430. This is
+the same failure stage 1 will have, and it is why `tracks.on_pitch` drops rather than
+clamps — see D13.
+
+**The jersey ceiling is about 40%.** Nine of 22 tracks in SNGS-147 carry a shirt number,
+and that is *human annotators with the whole clip in front of them*. Stage 5's OCR cannot
+beat it and should not be measured as if it could. It also confirms the estimate this plan
+started with: expect roughly half the squad, and generic tokens for the rest.
+
 ## Milestones
 
 | # | done when | est. |
 |---|---|---|
-| M0 | scaffold runs, stage 0 finds the main camera in a SoccerNet clip | done / 1 evening |
+| M0 | scaffold, stage 0, and `ft truth` writing a real `tracks.json` | **done** |
 | M1 | reprojected pitch lines sit on the real lines | 2–3 evenings |
 | M2 | tracks survive 10s with few enough id switches to count | 1–2 evenings |
 | M3 | teams cluster cleanly | 1 evening |
 | M4 | **the top-down dot video looks like football** | 1 evening |
-| M5 | numbers resolve for ~half the outfield | 1 evening |
+| M5 | numbers resolve for ~40% of tracks, matching the label ceiling | 1 evening |
 | M6 | Pitchboard's `src/import/` turns `tracks.json` into a `BoardDoc` | 1–2 weeks, other repo |
 
-M6 does not wait for M4. The contract is fixed, so the TypeScript side is built and tested
-against hand-written `tracks.json` fixtures while the CV is still failing.
+**M6 no longer waits for anything.** `ft truth` emits a real, correct `tracks.json` from
+ground truth with no CV in the loop, so the TypeScript reduction is built against genuine
+30-second passages of play rather than hand-written fixtures — and its output can be looked
+at in Pitchboard while stage 1 is still failing.
+
+That also inverts how the CV is judged. Every later stage is scored against the same file
+in the same format, so "70%" becomes a diff against a known-good baseline rather than a
+feeling about a video.
 
 ## Decisions
 
@@ -183,6 +233,30 @@ the moment this graduates into a product. RT-DETR and RF-DETR are Apache-license
 swap to make if that day comes — which is another reason the detector lives behind a stage
 boundary and not in the middle of everything.
 
+**D10 — SoccerNet enters at stage 1.** Its clips are single-camera JPEG sequences with no
+cuts in them, so stage 0 has nothing to do on this path. Stage 0 is not dead code: it is
+what the arbitrary-broadcast path needs, and that is the case this has to work on
+eventually. But it must not sit in SoccerNet's way, and no later stage may assume it ran.
+
+**D11 — a clip is fetched by range request, never a split download.** The zip index is at
+the end of the file and HuggingFace serves ranges, so one clip costs ~150 MB against the
+split's 8.85 GB. Members are read in header order rather than name order, which turns 750
+random reads into a near-sequential scan.
+
+**D12 — ground truth is written through the same writer as the CV path.** `ft truth` builds
+`Track` objects and hands them to `tracks.write`, exactly as stage 4 will. Two consequences,
+both wanted: the contract is exercised by real data before any vision exists, and every
+later stage is scored by diffing two files of the same shape. A separate ground-truth
+format would have made the comparison a translation exercise, which is where a scoring
+harness quietly starts measuring itself.
+
+**D13 — an off-pitch position is dropped, never clamped.** A position 200 m out is not a
+player near the touchline, it is a homography that failed. Clamping launders that failure
+into a plausible coordinate the reduction then fits a curve through, and the resulting run
+looks like a real one. Rejecting loses a sample; clamping invents one. The guard is
+`tracks.on_pitch`, so the CV path and the ground-truth path cannot disagree about what
+counts as credible.
+
 ## Non-goals
 
 Real-time. Multi-camera. Player identity across clips. Event detection (tackles, fouls).
@@ -191,8 +265,9 @@ locally, from a terminal, on files.
 
 ## Open questions
 
-- SoccerNet's calibration labels use their own pitch convention; confirm the origin and axis
-  order match Pitchboard's top-left / 105 × 68 before trusting any reprojection.
+- Does SoccerNet's +y run the same way as Pitchboard's? The origin question is answered
+  (centre spot vs top-left corner, handled in `soccernet.py`), but a sign flip mirrors the
+  board and only the M4 render will show it. One constant either way.
 - How short is short enough for stage 2? Measure id switches against clip length rather than
   guessing at 10s.
 - Does the keypoint model cope with a half-pitch framing, or only wide shots?
