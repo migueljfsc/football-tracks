@@ -305,9 +305,24 @@ jitters two metres between frames throws every player at once and every track br
 together. Frame-to-frame consistency is the property, and no number in `Registration`
 measures it.
 
-Recorded rather than fixed. The fix is to associate in a stabilised image space — using the
-frame-to-frame transform, which is measured per pair and never accumulated — rather than in
-pitch metres. Until then, `--carry 0` is the setting that tracks best.
+**Fixed, and the fix corrected the diagnosis.** Association moved to stabilised image space,
+using the frame-to-frame transform, which is measured per pair and never accumulated.
+Stage 2 now produces the *identical* 128 raw tracks whether carrying is on or off, so it is
+genuinely independent of stage 1.
+
+The score gap survived that (77.9% purity with carrying off against 66.2% on), which says
+the original reading was half wrong. Carried homographies no longer damage the TRACKS — they
+damage the POSITIONS, and a sample placed five metres out is matched to a different player
+and counted as an identity error. What remains is a registration problem wearing a tracking
+problem's clothes. `--carry 0` is still the better setting, for that reason and not the one
+first recorded here.
+
+**D22 — stage 2 does not depend on stage 1.** The gate is a speed — a footballer covers at
+most MAX_SPEED metres in a second — and it reaches pixels through the only local scale that
+needs no camera model: a detection box is about 1.8 m tall, so it says how many pixels a
+metre is right there. Camera motion is removed with the frame-to-frame transform rather than
+by projecting to the pitch. Both halves matter: raw pixels lose a panning camera, and pitch
+metres inherit every wobble in the homography.
 
 **D20 — the tracker is ours.** supervision's ByteTrack is deprecated and disappears in 0.31,
 and this regime has a signal a general tracker does not use: a team wears one colour, which

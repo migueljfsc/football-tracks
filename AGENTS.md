@@ -98,9 +98,13 @@ work/<clip>/                every stage's artefacts, all reproducible
 - **A homography good enough for stage 1 can be useless for stage 2** (D19). Tracking needs
   frame-to-frame CONSISTENCY, not absolute accuracy, and nothing in `Registration` measures
   that. Carrying improves stage 1's card and halves identity purity.
-- **Track association happens in metres, and projection therefore comes BEFORE tracking.**
-  The gate is a claim about how far a footballer runs in a second. In pixels the same number
-  is really a claim about how fast the camera pans.
+- **Track association happens in STABILISED PIXELS, and projection comes after** (D22). Raw
+  pixels lose a panning camera; pitch metres inherit every wobble in the homography. The gate
+  is a speed converted through the box height, so stage 2 needs no camera model at all.
+- **A bad homography now shows up as an identity error, not a tracking error.** The tracker
+  is independent of it, but a sample projected five metres out matches a different player and
+  scores as a switch. Do not read a purity drop as a tracker regression without checking what
+  the positions did.
 - **Retire stale tracks before associating, not after** — the gate grows with the gap, so the
   other order lets an already-dead track match anyway, and whether it does depends on whether
   the caller's frame list is contiguous.

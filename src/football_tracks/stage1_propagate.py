@@ -20,6 +20,7 @@ Two things this cannot do, and both are measured rather than assumed:
 
 from __future__ import annotations
 
+import json
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -104,6 +105,39 @@ def between(prev_bgr: MatLike, next_bgr: MatLike) -> H | None:
     return np.asarray(d, dtype=np.float64)
 
 
+def motions(frames_dir: Path, frames: list[int], *, cache: Path | None = None) -> dict[int, H]:
+    """Frame-to-frame ground-plane transforms, keyed by the LATER frame.
+
+    `motions[f]` maps image f-1 onto image f. Measured per pair and never accumulated,
+    so unlike a carried homography this does not drift - which is what makes it safe
+    for the tracker to lean on (D19).
+
+    Computed once and cached: both propagation and stage 2 want the same transforms,
+    and optical flow over a whole clip is the slowest thing in the pipeline.
+    """
+    if cache is not None and cache.exists():
+        stored = json.loads(cache.read_text())
+        return {int(k): np.array(v, dtype=np.float64) for k, v in stored["motions"].items()}
+
+    out: dict[int, H] = {}
+    prev_img: MatLike | None = None
+    prev_f: int | None = None
+    for f in frames:
+        img = _read(frames_dir, f)
+        if img is not None and prev_img is not None and prev_f == f - 1:
+            d = between(prev_img, img)
+            if d is not None:
+                out[f] = d
+        prev_img, prev_f = img, f
+
+    if cache is not None:
+        cache.write_text(
+            json.dumps({"version": 1, "motions": {str(k): v.tolist() for k, v in out.items()}})
+            + "\n"
+        )
+    return out
+
+
 def carry(h_prev: H, d: H) -> H | None:
     """Move a homography onto the next frame.
 
@@ -152,7 +186,11 @@ DEFAULT_MAX_CARRY = 50
 
 
 def fill(
-    frames_dir: Path, direct: dict[int, H | None], *, max_carry: int | None = DEFAULT_MAX_CARRY
+    frames_dir: Path,
+    direct: dict[int, H | None],
+    *,
+    max_carry: int | None = DEFAULT_MAX_CARRY,
+    motion: dict[int, H] | None = None,
 ) -> Chain:
     """Walk the clip forwards, using the direct fit where there is one and carrying otherwise.
 
@@ -180,7 +218,7 @@ def fill(
             and out.get(prev_f) is not None
             and (max_carry is None or since_direct < max_carry)
         ):
-            d = between(prev_img, img)
+            d = motion.get(f) if motion is not None else between(prev_img, img)
             previous = out[prev_f]
             if d is not None and previous is not None:
                 current = carry(previous, d)

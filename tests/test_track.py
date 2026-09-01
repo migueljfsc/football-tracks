@@ -1,7 +1,12 @@
 """Association and team clustering - the pure parts.
 
+Coordinates here are IMAGE PIXELS, because that is the space the tracker works in. The
+gate is a speed in metres per second converted to pixels through the box height, so a
+box 20px tall stands for a player 1.8m tall and everything scales from that.
+
 The tracker's real failure is the id switch, which needs a clip to see and is measured
-by `ft score`. What is testable here is the gate and the tie-breaks it rests on.
+by `ft score`. What is testable here is the gate, the camera compensation, and the
+tie-breaks they rest on.
 """
 
 from __future__ import annotations
@@ -21,57 +26,99 @@ from football_tracks.stage3_teams import assign, kmeans2
 FPS = 25.0
 
 
-def det(f: int) -> Detection:
-    return Detection(f=f, x1=0, y1=0, x2=10, y2=20, score=0.9)
+BOX_H = 20.0  # px, so px_per_metre = 20 / 1.8 = 11.1
+
+
+def det(f: int, height: float = BOX_H) -> Detection:
+    return Detection(f=f, x1=0, y1=0, x2=10, y2=height, score=0.9)
 
 
 def obs(f: int, x: float, y: float) -> Observation:
     return Observation(f=f, x=x, y=y, det=det(f))
 
 
-def track_over(points: dict[int, list[tuple[float, float]]]) -> list[Track]:
+def track_over(
+    points: dict[int, list[tuple[float, float]]],
+    motions: dict[int, np.ndarray] | None = None,
+) -> list[Track]:
     frames = sorted(points)
     observations = {f: [obs(f, x, y) for x, y in pts] for f, pts in points.items()}
-    return run(observations, frames, lambda _f: None, fps=FPS)
+    return run(observations, frames, lambda _f: None, fps=FPS, motions=motions)
+
+
+def pan(dx: float, dy: float = 0.0) -> np.ndarray:
+    """A camera translation, as the frame-to-frame transform the tracker is handed."""
+    return np.array([[1.0, 0.0, dx], [0.0, 1.0, dy], [0.0, 0.0, 1.0]])
+
+
+PX_PER_M = BOX_H / 1.8
+STEP_AT_MAX_SPEED = MAX_SPEED / FPS * PX_PER_M
 
 
 def test_a_walking_player_stays_one_track() -> None:
-    pts = {f: [(10.0 + 0.1 * f, 20.0)] for f in range(1, 30)}
+    pts = {f: [(100.0 + 1.0 * f, 200.0)] for f in range(1, 30)}
     tracks = track_over(pts)
     assert len(tracks) == 1
     assert len(tracks[0].observations) == 29
 
 
 def test_two_players_apart_stay_two_tracks() -> None:
-    pts = {f: [(10.0, 20.0), (60.0, 50.0)] for f in range(1, 30)}
+    pts = {f: [(100.0, 200.0), (600.0, 500.0)] for f in range(1, 30)}
     assert len(track_over(pts)) == 2
 
 
 def test_a_jump_across_the_pitch_starts_a_new_track() -> None:
-    # The gate is a physical claim: nobody covers 60 m between two frames. Made in
-    # metres precisely so it means that, rather than meaning something about how fast
-    # the camera happens to be panning.
-    pts = {f: [(10.0, 20.0)] for f in range(1, 15)}
-    pts.update({f: [(80.0, 20.0)] for f in range(15, 30)})
-    tracks = track_over(pts)
-    assert len(tracks) == 2
+    # The gate is a physical claim - nobody covers 60m between two frames - expressed
+    # in pixels through the box height, so it means the same at any resolution or
+    # distance from the camera.
+    pts = {f: [(100.0, 200.0)] for f in range(1, 15)}
+    pts.update({f: [(900.0, 200.0)] for f in range(15, 30)})
+    assert len(track_over(pts)) == 2
 
 
 def test_the_gate_allows_a_genuine_sprint() -> None:
-    step = MAX_SPEED / FPS * 0.9
-    pts = {f: [(10.0 + step * f, 20.0)] for f in range(1, 30)}
+    step = STEP_AT_MAX_SPEED * 0.9
+    pts = {f: [(100.0 + step * f, 200.0)] for f in range(1, 30)}
     assert len(track_over(pts)) == 1
 
 
+def test_a_camera_pan_does_not_break_a_standing_player() -> None:
+    # THE point of stabilising. The pan moves the player across the frame far faster
+    # than they could run; without compensation the gate rejects every match and the
+    # track shatters into one fragment per frame.
+    shift = STEP_AT_MAX_SPEED * 4
+    pts = {f: [(100.0 + shift * f, 200.0)] for f in range(1, 30)}
+    # Unstabilised it shatters so badly that every fragment falls under
+    # MIN_TRACK_LENGTH and nothing survives at all.
+    assert not any(len(t.observations) == 29 for t in track_over(pts))
+
+    motions = {f: pan(shift) for f in range(2, 30)}
+    tracks = track_over(pts, motions)
+    assert len(tracks) == 1
+    assert len(tracks[0].observations) == 29
+
+
+def test_a_pan_is_not_recorded_as_the_player_running() -> None:
+    # Velocity must be what is left AFTER the camera is accounted for. Storing the pan
+    # as the player's speed makes the next prediction overshoot by the same amount
+    # again, and the error compounds the moment the camera stops.
+    shift = STEP_AT_MAX_SPEED * 3
+    pts = {f: [(100.0 + shift * f, 200.0)] for f in range(1, 10)}
+    motions = {f: pan(shift) for f in range(2, 10)}
+    track = track_over(pts, motions)[0]
+    assert abs(track.velocity[0]) < 1e-6
+    assert abs(track.velocity[1]) < 1e-6
+
+
 def test_a_brief_occlusion_does_not_break_a_track() -> None:
-    pts = {f: [(10.0 + 0.05 * f, 20.0)] for f in range(1, 40) if not 12 <= f <= 18}
+    pts = {f: [(100.0 + 0.5 * f, 200.0)] for f in range(1, 40) if not 12 <= f <= 18}
     tracks = track_over(pts)
     assert len(tracks) == 1
 
 
 def test_a_long_absence_does_break_it() -> None:
-    pts = {f: [(10.0, 20.0)] for f in range(1, 12)}
-    pts.update({f: [(10.0, 20.0)] for f in range(60, 75)})
+    pts = {f: [(100.0, 200.0)] for f in range(1, 12)}
+    pts.update({f: [(100.0, 200.0)] for f in range(60, 75)})
     assert len(track_over(pts)) == 2
 
 

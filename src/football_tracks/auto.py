@@ -39,12 +39,19 @@ class Result:
 
 
 def homographies(
-    labels: dict[str, Any], frames_dir: Path, mode: Mode, *, max_carry: int | None
+    labels: dict[str, Any],
+    frames_dir: Path,
+    mode: Mode,
+    *,
+    max_carry: int | None,
+    motions: dict[int, Any] | None = None,
 ) -> dict[int, Any]:
     """Per-frame homographies, either from every frame's lines or from frame one's."""
     direct = stage1_register.fit_all(labels)
     if mode == "truth":
-        return stage1_propagate.fill(frames_dir, direct, max_carry=max_carry).homographies
+        return stage1_propagate.fill(
+            frames_dir, direct, max_carry=max_carry, motion=motions
+        ).homographies
 
     # Everything except the first solvable frame is thrown away, which is what a
     # human clicking once actually leaves you with.
@@ -52,7 +59,9 @@ def homographies(
     seeded: dict[int, Any] = dict.fromkeys(direct)
     if first is not None:
         seeded[first] = direct[first]
-    return stage1_propagate.fill(frames_dir, seeded, max_carry=max_carry).homographies
+    return stage1_propagate.fill(
+        frames_dir, seeded, max_carry=max_carry, motion=motions
+    ).homographies
 
 
 def build(
@@ -62,12 +71,14 @@ def build(
     homs: dict[int, Any],
     *,
     fps: float,
+    motions: dict[int, Any] | None = None,
 ) -> Result:
     """Detections plus a camera model -> tracks in pitch metres.
 
-    Projection happens BEFORE association, not after. The tracker gates on how far a
-    player can run, which is a claim about metres and seconds; in image pixels the same
-    gate is really a claim about how fast the camera pans.
+    Tracking runs FIRST, in stabilised image pixels, and projection happens after. The
+    other order made stage 2 inherit every wobble in stage 1's homography, which is
+    what breaks tracks all at once (D19). This way a drifting homography moves the
+    positions and leaves the identities intact.
     """
     cache: dict[int, Any] = {}
 
@@ -78,24 +89,29 @@ def build(
         return cache[f]
 
     observations: dict[int, list[stage2_track.Observation]] = {}
-    dropped = 0
     for d in detections:
-        h = homs.get(d.f)
-        if h is None:
-            continue
-        x, y = calibration.to_pitch(h, *d.foot)
-        if not on_pitch(x, y):
-            dropped += 1  # crowd, dugout, ballboys behind the hoardings
-            continue
-        observations.setdefault(d.f, []).append(stage2_track.Observation(f=d.f, x=x, y=y, det=d))
+        observations.setdefault(d.f, []).append(stage2_track.Observation.of(d))
 
-    raw = stage2_track.run(observations, frames, read_frame, fps=fps)
+    raw = stage2_track.run(observations, frames, read_frame, fps=fps, motions=motions)
 
-    positions = {
-        t.id: [Sample(f=o.f, x=o.x, y=o.y, conf=o.det.score) for o in t.observations] for t in raw
-    }
+    positions: dict[int, list[Sample]] = {}
+    dropped = 0
+    for t in raw:
+        samples: list[Sample] = []
+        for o in t.observations:
+            h = homs.get(o.f)
+            if h is None:
+                continue
+            x, y = calibration.to_pitch(h, o.x, o.y)
+            if not on_pitch(x, y):
+                dropped += 1  # crowd, dugout, ballboys behind the hoardings
+                continue
+            samples.append(Sample(f=o.f, x=x, y=y, conf=o.det.score))
+        if samples:
+            positions[t.id] = samples
+
     mean_x = {tid: float(np.mean([s.x for s in ss])) for tid, ss in positions.items()}
-    teams = assign(raw, mean_x)
+    teams = assign([t for t in raw if t.id in positions], mean_x)
 
     return Result(
         tracks=[

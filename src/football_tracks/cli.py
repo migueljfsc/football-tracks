@@ -321,11 +321,17 @@ def auto(
     frames = sorted(int(p.stem) for p in c.frames_dir.glob("*.jpg"))
     detections = detect_mod.read(dets_path)
 
+    motions = stage1_propagate.motions(c.frames_dir, frames, cache=out / "motions.json")
     homs = auto_mod.homographies(
-        labels, c.frames_dir, picked, max_carry=None if carry < 0 else carry
+        labels, c.frames_dir, picked, max_carry=None if carry < 0 else carry, motions=motions
     )
     result = auto_mod.build(
-        c.frames_dir, frames, detections, homs, fps=float(labels["info"]["frame_rate"])
+        c.frames_dir,
+        frames,
+        detections,
+        homs,
+        fps=float(labels["info"]["frame_rate"]),
+        motions=motions,
     )
 
     path = tracks.write(
