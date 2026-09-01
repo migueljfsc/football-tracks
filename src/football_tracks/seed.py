@@ -26,9 +26,12 @@ from .config import PITCH_LENGTH, PITCH_WIDTH
 # goal is seeded with the same names mirrored, which `mirrored()` does, so a coach
 # never has to think about which end the pitch model calls zero.
 MID = PITCH_WIDTH / 2
+# FAR means away from the camera and NEAR means toward it - never left and right,
+# which depend on where the camera is standing and are ambiguous on a screen. The
+# broadcast camera sits on one touchline, so "near" is always the bottom of the frame.
 LANDMARKS: dict[str, tuple[float, float]] = {
-    "goal post left": (0.0, MID - 3.66),
-    "goal post right": (0.0, MID + 3.66),
+    "goal post far": (0.0, MID - 3.66),
+    "goal post near": (0.0, MID + 3.66),
     "6yd box far corner": (0.0, MID - 9.16),
     "6yd box near corner": (0.0, MID + 9.16),
     "6yd front far": (5.5, MID - 9.16),

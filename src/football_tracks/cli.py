@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Annotated
+from typing import Annotated, Any
 
 import typer
 
@@ -18,6 +18,13 @@ from . import video as video_mod
 from .config import CLIPS, work_dir
 
 app = typer.Typer(add_completion=False, help="Broadcast clip -> player tracks in pitch metres.")
+
+
+def _fps(root: Path, labels: dict[str, Any] | None) -> float:
+    """SoccerNet states it; a recording carries it in clip.json (and the container lies)."""
+    if labels is not None:
+        return float(labels["info"]["frame_rate"])
+    return video_mod.load(root).fps
 
 
 @app.command()
@@ -210,16 +217,38 @@ def calibrate(
     homography that is wrong in a way the averages survive.
     """
     c = soccernet.Clip(name=clip, root=CLIPS / clip)
-    if not c.labels_path.exists():
-        raise typer.BadParameter(f"no labels at {c.labels_path} - run `ft fetch {clip}` first")
-
-    labels = c.labels()
-    homs = stage1_register.fit_all(labels)
     out = work_dir(Path(clip))
+    frames_all = sorted(int(p.stem) for p in c.frames_dir.glob("*.jpg"))
+    if not frames_all:
+        raise typer.BadParameter(f"no frames in {c.frames_dir}")
+
+    motions = stage1_propagate.motions(c.frames_dir, frames_all, cache=out / "motions.json")
+    seed_path = out / "seed.json"
+    labels: dict[str, object] | None = None
+
+    if c.labels_path.exists():
+        # SoccerNet: every frame carries its own pitch lines.
+        labels = c.labels()
+        homs = stage1_register.fit_all(labels)
+    elif seed_path.exists():
+        # A clip nobody annotated: one clicked frame, carried both ways.
+        homs = auto_mod.from_seed(
+            seed_mod.read(seed_path),
+            frames_all,
+            c.frames_dir,
+            max_carry=None,
+            motions=motions,
+        )
+    else:
+        raise typer.BadParameter(
+            f"{clip} has neither SoccerNet labels nor {seed_path} - run `ft seed {clip}` first"
+        )
 
     chain = None
-    if carry != 0:
-        chain = stage1_propagate.fill(c.frames_dir, homs, max_carry=None if carry < 0 else carry)
+    if carry != 0 and labels is not None:
+        chain = stage1_propagate.fill(
+            c.frames_dir, homs, max_carry=None if carry < 0 else carry, motion=motions
+        )
         homs = chain.homographies
 
     if frame is not None or video:
@@ -251,7 +280,7 @@ def calibrate(
                     writer = cv2.VideoWriter(
                         str(dest),
                         cv2.VideoWriter.fourcc(*"mp4v"),
-                        float(labels["info"]["frame_rate"]),
+                        _fps(CLIPS / clip, labels),
                         (w, h),
                     )
                 writer.write(img)
@@ -265,6 +294,11 @@ def calibrate(
             f"carried           {chain.carried} frames across gaps"
             f" ({chain.solved_directly} solved directly, {chain.gaps} left unsolved)"
         )
+    if labels is None:
+        solved = sum(1 for h in homs.values() if h is not None)
+        typer.echo(f"frames solved     {solved}/{len(homs)}  ({solved / max(1, len(homs)):.1%})")
+        typer.echo("no ground truth here - check the overlay with --frame or --video")
+        return
     typer.echo(stage1_register.report(stage1_register.evaluate(labels, homs)))
 
 

@@ -159,6 +159,22 @@ def carry(h_prev: H, d: H) -> H | None:
     return np.asarray(out / out[2, 2], dtype=np.float64)
 
 
+def carry_back(h_next: H, d: H) -> H | None:
+    """Move a homography onto the PREVIOUS frame.
+
+    `d` maps image f-1 onto image f, so a point in f-1 goes through `d` and then
+    through `h_next`. Needed because a clip is rarely best seeded at its first frame -
+    the camera is often still finding the play - and a seed halfway through is useless
+    if it can only travel forwards.
+    """
+    out = h_next @ d
+    if not np.all(np.isfinite(out)) or abs(out[2, 2]) < 1e-12:
+        return None
+    if abs(np.linalg.det(out)) < 1e-12:
+        return None
+    return np.asarray(out / out[2, 2], dtype=np.float64)
+
+
 @dataclass(slots=True)
 class Chain:
     homographies: dict[int, H | None]
@@ -228,6 +244,30 @@ def fill(
 
         out[f] = current
         prev_img, prev_f = img, f
+
+    # Backwards, for the frames before the first one that solved. Without this a seed
+    # placed where the markings are actually visible leaves everything before it blank.
+    since_direct = 0
+    for i in range(len(frames) - 2, -1, -1):
+        f, later = frames[i], frames[i + 1]
+        if out.get(f) is not None:
+            since_direct = 0
+            continue
+        if later != f + 1 or out.get(later) is None:
+            continue
+        if max_carry is not None and since_direct >= max_carry:
+            continue
+        d = motion.get(later) if motion is not None else None
+        if d is None:
+            a, b = _read(frames_dir, f), _read(frames_dir, later)
+            d = between(a, b) if a is not None and b is not None else None
+        ahead = out.get(later)
+        if d is not None and ahead is not None:
+            back = carry_back(ahead, d)
+            if back is not None:
+                out[f] = back
+                since_direct += 1
+                carried += 1
 
     return Chain(
         homographies=out,

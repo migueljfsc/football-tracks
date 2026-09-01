@@ -317,6 +317,12 @@ and counted as an identity error. What remains is a registration problem wearing
 problem's clothes. `--carry 0` is still the better setting, for that reason and not the one
 first recorded here.
 
+**D25 — a seed propagates in BOTH directions.** A clip is rarely best seeded at its first
+frame: the camera is often still finding the play, and on the Rio Ave clip frame 1 has the
+goal half out of shot with almost no markings visible while frame 100 has the whole box.
+Forward-only propagation would make the good frame useless. `fill` therefore runs a backward
+pass as well, composing `h @ d` rather than `h @ inv(d)`.
+
 **D23 — the seed is a file, not a UI.** `seed.json` holds clicked landmark
 correspondences and nothing else. The click tool writes it, but so could a keypoint
 model, and so could Pitchboard's own import view — which is where this ends up, so the

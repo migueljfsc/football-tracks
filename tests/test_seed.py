@@ -38,8 +38,8 @@ def clicked(names: list[str], *, jitter: float = 0.0) -> seed.Seed:
 # all sit on x = 0 and are degenerate; `test_landmarks_along_one_line_are_refused`
 # pins that.
 SIX = [
-    "goal post left",
-    "goal post right",
+    "goal post far",
+    "goal post near",
     "penalty box front far",
     "penalty box front near",
     "6yd front far",
@@ -75,15 +75,15 @@ def test_landmarks_along_one_line_are_refused() -> None:
     # Both posts and both corners of a goal are the four most natural things to click,
     # and all four sit on x = 0. That fits perfectly and describes nothing, so it is
     # refused rather than returned - the same call as D17.
-    on_the_goal_line = ["goal post left", "goal post right", "corner far", "corner near"]
+    on_the_goal_line = ["goal post far", "goal post near", "corner far", "corner near"]
     assert seed.homography(clicked(on_the_goal_line)) is None
 
 
 def test_the_far_goal_is_the_same_landmark_mirrored() -> None:
     # So a coach never has to think about which end the pitch model calls zero.
-    assert seed.LANDMARKS["goal post left"][0] == 0.0
-    assert seed.mirrored("goal post left")[0] == PITCH_LENGTH
-    assert seed.mirrored("goal post left")[1] == seed.LANDMARKS["goal post left"][1]
+    assert seed.LANDMARKS["goal post far"][0] == 0.0
+    assert seed.mirrored("goal post far")[0] == PITCH_LENGTH
+    assert seed.mirrored("goal post far")[1] == seed.LANDMARKS["goal post far"][1]
 
 
 def test_a_seed_survives_a_round_trip(tmp_path: Path) -> None:

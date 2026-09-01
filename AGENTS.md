@@ -134,6 +134,10 @@ work/<clip>/                every stage's artefacts, all reproducible
   composition multiplies in the last one's error; the failure is a matrix that still looks
   like a matrix. `DEFAULT_MAX_CARRY` is the guard, and it is a measured number, not a
   round one.
+- **FAR and NEAR, never left and right.** Which post is "left" depends on where the camera
+  stands and is ambiguous on a screen. The broadcast camera sits on one touchline, so near is
+  always the bottom of the frame — and that is the same convention the pitch y axis uses.
+- **A seed propagates both ways** (D25). The best frame to seed is rarely the first one.
 - **A chain cannot start itself.** Propagation needs a first homography from somewhere —
   the solver, a keypoint model, or a human. Anything assuming `fill` alone can calibrate a
   clip has missed that it takes `direct` as input.

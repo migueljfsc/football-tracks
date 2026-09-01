@@ -22,6 +22,7 @@ import cv2
 import numpy as np
 
 from . import calibration, detect, stage1_propagate, stage1_register, stage2_track
+from . import seed as seed_mod
 from .stage3_teams import assign
 from .tracks import Sample, Track, on_pitch
 
@@ -36,6 +37,30 @@ class Result:
     raw_tracks: int
     dropped_off_pitch: int
     unsolved_frames: int
+
+
+def from_seed(
+    seeded: seed_mod.Seed,
+    frames: list[int],
+    frames_dir: Path,
+    *,
+    max_carry: int | None,
+    motions: dict[int, Any] | None = None,
+) -> dict[int, Any]:
+    """One clicked frame, carried across the clip in both directions.
+
+    The whole automatic path for a clip nobody has annotated: a human marks landmarks
+    once and `stage1_propagate` does the rest. Both directions matter - a clip is
+    rarely best seeded at its first frame, because the camera is often still finding
+    the play there.
+    """
+    h = seed_mod.homography(seeded)
+    direct: dict[int, Any] = dict.fromkeys(frames)
+    if h is not None and seeded.frame in direct:
+        direct[seeded.frame] = h
+    return stage1_propagate.fill(
+        frames_dir, direct, max_carry=max_carry, motion=motions
+    ).homographies
 
 
 def homographies(

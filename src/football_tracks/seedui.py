@@ -14,11 +14,52 @@ from typing import Any
 
 import cv2
 
+from . import pitch as pitch_mod
 from .seed import LANDMARKS, Seed, mirrored
 
 WINDOW = "seed - click a landmark, then pick its name"
 MARK = (60, 240, 90)
 TEXT = (255, 255, 255)
+TARGET = (40, 90, 250)
+
+# The diagram is the whole usability of this tool. A landmark name means nothing on its
+# own - "6yd front far" is only obvious once you have seen it marked on a pitch - so a
+# small top-down pitch sits in the corner with the wanted point on it.
+# Pixels per metre in the inset. Scaled to the frame so it stays readable whether the
+# clip is 720p or an upscaled recording.
+DIAGRAM_MIN_SCALE = 4.0
+
+
+def _diagram(name: str, far_goal: bool, width: int) -> Any:
+    scale = max(DIAGRAM_MIN_SCALE, width / 420)
+    img = pitch_mod.draw(scale, 2.0)
+    x, y = mirrored(name) if far_goal else LANDMARKS[name]
+    px, py = pitch_mod.to_px(x, y, scale, 2.0)
+    r = max(10, round(scale * 2.2))
+    cv2.circle(img, (px, py), r, TARGET, max(2, r // 4), cv2.LINE_AA)
+    cv2.drawMarker(img, (px, py), TARGET, cv2.MARKER_CROSS, r * 2, max(2, r // 5), cv2.LINE_AA)
+    cv2.putText(
+        img,
+        name,
+        (10, img.shape[0] - 14),
+        cv2.FONT_HERSHEY_SIMPLEX,
+        max(0.7, scale / 9),
+        TARGET,
+        2,
+        cv2.LINE_AA,
+    )
+    return img
+
+
+def _inset(base: Any, panel: Any) -> None:
+    """Drop the diagram into the bottom-left corner, over the frame."""
+    ph, pw = panel.shape[:2]
+    h = base.shape[0]
+    y0, x0 = h - ph - 16, 16
+    if y0 < 0 or x0 + pw > base.shape[1]:
+        return
+    cv2.rectangle(base, (x0 - 4, y0 - 4), (x0 + pw + 4, y0 + ph + 4), (0, 0, 0), -1)
+    base[y0 : y0 + ph, x0 : x0 + pw] = panel
 
 
 def _draw(base: Any, seed_points: list[Any], cursor: str, far_goal: bool) -> Any:
@@ -35,16 +76,30 @@ def _draw(base: Any, seed_points: list[Any], cursor: str, far_goal: bool) -> Any
             2,
             cv2.LINE_AA,
         )
-    end = "FAR goal (x=105)" if far_goal else "NEAR goal (x=0)"
+    end = "FAR goal" if far_goal else "NEAR goal"
+    enough = len(seed_points) >= 4
     lines = [
-        f"{len(seed_points)} points  |  end: {end}  (press 'e' to switch)",
-        f"next: {cursor}",
-        "click = place   n/p = change landmark   u = undo   s = save   q = quit",
+        f"CLICK: {cursor}      (marked on the diagram, bottom left)",
+        f"{len(seed_points)} placed   |   {end} end"
+        " - press 'e' if the goal in shot is the other one",
+        "n = SKIP this landmark if it is not in shot     p = back     u = undo",
+        f"s = save{'' if enough else '  (needs 4 or more)'}     q = quit",
     ]
+    scale = max(0.9, base.shape[1] / 2200)
     for i, line in enumerate(lines):
+        y = int(44 + i * 46 * scale)
+        cv2.putText(img, line, (16, y), cv2.FONT_HERSHEY_SIMPLEX, scale, (0, 0, 0), 5, cv2.LINE_AA)
         cv2.putText(
-            img, line, (14, 34 + i * 34), cv2.FONT_HERSHEY_SIMPLEX, 0.85, TEXT, 2, cv2.LINE_AA
+            img,
+            line,
+            (16, y),
+            cv2.FONT_HERSHEY_SIMPLEX,
+            scale,
+            MARK if i == 0 else TEXT,
+            2,
+            cv2.LINE_AA,
         )
+    _inset(img, _diagram(cursor, far_goal, base.shape[1]))
     return img
 
 
