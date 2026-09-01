@@ -20,6 +20,14 @@ from .config import CLIPS, work_dir
 app = typer.Typer(add_completion=False, help="Broadcast clip -> player tracks in pitch metres.")
 
 
+def _size(root: Path, labels: dict[str, Any] | None) -> tuple[int, int]:
+    """Frame size, from SoccerNet's labels or from clip.json."""
+    if labels is not None:
+        return (int(labels["images"][0]["width"]), int(labels["images"][0]["height"]))
+    clip = video_mod.load(root)
+    return (clip.width, clip.height)
+
+
 def _fps(root: Path, labels: dict[str, Any] | None) -> float:
     """SoccerNet states it; a recording carries it in clip.json (and the container lies)."""
     if labels is not None:
@@ -353,32 +361,49 @@ def auto(
     if not dets_path.exists():
         raise typer.BadParameter(f"no {dets_path} - run `ft detect {clip}` first")
 
-    labels = c.labels()
     frames = sorted(int(p.stem) for p in c.frames_dir.glob("*.jpg"))
     detections = detect_mod.read(dets_path)
-
     motions = stage1_propagate.motions(c.frames_dir, frames, cache=out / "motions.json")
-    homs = auto_mod.homographies(
-        labels, c.frames_dir, picked, max_carry=None if carry < 0 else carry, motions=motions
-    )
+
+    labels: dict[str, Any] | None = None
+    seed_path = out / "seed.json"
+    if c.labels_path.exists():
+        labels = c.labels()
+        homs = auto_mod.homographies(
+            labels, c.frames_dir, picked, max_carry=None if carry < 0 else carry, motions=motions
+        )
+    elif seed_path.exists():
+        # A real clip: one seeded frame is all the camera information there is.
+        homs = auto_mod.from_seed(
+            seed_mod.read(seed_path),
+            frames,
+            c.frames_dir,
+            max_carry=None if carry < 0 else carry,
+            motions=motions,
+        )
+    else:
+        raise typer.BadParameter(
+            f"{clip} has neither SoccerNet labels nor {seed_path} - run `ft seed {clip}` first"
+        )
+
     result = auto_mod.build(
         c.frames_dir,
         frames,
         detections,
         homs,
-        fps=float(labels["info"]["frame_rate"]),
+        fps=_fps(CLIPS / clip, labels),
         motions=motions,
     )
 
     path = tracks.write(
         out / "tracks.json",
         clip=clip,
-        fps=float(labels["info"]["frame_rate"]),
+        fps=_fps(CLIPS / clip, labels),
         start_frame=min(frames),
         end_frame=max(frames),
         tracks=result.tracks,
-        width=labels["images"][0]["width"],
-        height=labels["images"][0]["height"],
+        width=_size(CLIPS / clip, labels)[0],
+        height=_size(CLIPS / clip, labels)[1],
     )
     typer.echo(
         f"mode {mode}: {result.detections} detections -> {result.raw_tracks} raw tracks"
@@ -434,10 +459,31 @@ def seed(
         typer.echo("abandoned; nothing written")
         raise typer.Exit(1)
 
+    # The reprojection overlay CANNOT see a mirrored y axis: a pitch is symmetric about
+    # the halfway line, so a flipped model draws onto the real markings perfectly. So it
+    # is checked here, arithmetically, before anything is written.
+    agreement = seed_mod.orientation(got)
+    if agreement < -seed_mod.ORIENTATION_CONFIDENT:
+        typer.echo("far and near look swapped - flipping the pitch y axis to match the camera")
+        got = seed_mod.flip_y(got)
+    elif agreement < seed_mod.ORIENTATION_CONFIDENT:
+        typer.echo(
+            "WARNING: cannot tell which side the camera is on from these points."
+            " If the board comes out mirrored, far and near are swapped."
+        )
+
+    directions = {abs(a) > abs(b) for _, (a, b, _c) in got.lines}
+    if got.lines and len(directions) == 1:
+        typer.echo(
+            "NOTE: every traced line runs the same way. Lines parallel to each other pin"
+            " down nothing across them - the exact points are carrying the fit."
+        )
+
     path = seed_mod.write(work_dir(Path(clip)) / "seed.json", got)
     h = seed_mod.homography(got)
     typer.echo(
-        f"{len(got.points)} points -> {'a homography' if h is not None else 'NO homography'}"
+        f"{len(got.points)} points + {len(got.lines)} traced"
+        f" -> {'a homography' if h is not None else 'NO homography'}"
     )
     typer.echo(f"wrote {path}")
     typer.echo(f"now check it: ft calibrate {clip} --frame {frame}")

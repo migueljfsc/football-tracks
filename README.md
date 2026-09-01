@@ -38,6 +38,8 @@ uv run ft frames my_goal.mov         # -> data/clips/my_goal/img1/, bars removed
 uv run ft seed my_goal               # click pitch landmarks on frame 1
 uv run ft calibrate my_goal --frame 1      # check: do lines land on lines?
 uv run ft detect my_goal
+uv run ft auto my_goal --mode seed         # -> work/my_goal/tracks.json
+uv run ft render work/my_goal/tracks.json  # the top-down proof
 
 uv run ft segment data/clips/foo.mp4 # stage 0, for arbitrary broadcast footage
 ```
@@ -74,6 +76,12 @@ From one seeded frame, a 7-second clip comes out at 97% recall, 0.80 m median er
 
 SoccerNet clips are single-camera and already trimmed, so they enter at stage 1 — stage 0
 is for arbitrary broadcast footage (D10).
+
+**It runs end to end on real broadcast TV.** On a sport.tv recording of a Rio Ave goal —
+screen-captured, pillarboxed, night match, faint markings, no annotations of any kind —
+one seeded frame produces a top-down reconstruction of the play. Objectively: every
+detected pitch marking projects onto the pitch, with a median of **0.11 m** from the real
+line it belongs to, and 78% inside half a metre.
 
 ## Requirements
 

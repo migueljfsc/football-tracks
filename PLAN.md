@@ -225,6 +225,28 @@ nine, exactly as predicted; precision sits at 74% because referees and touchline
 tracked as players; and the team split is near chance, because a fragmented track carries too
 little colour to cluster on.
 
+### It works on real broadcast footage
+
+The whole point, finally tested. A sport.tv recording of a Rio Ave goal: screen-captured
+and pillarboxed, 32 fps behind a container claiming 120, a night match with washed-out
+markings, and no annotations of any kind. One seeded frame — nine landmarks and 28 traced
+points along three lines — and:
+
+```
+3161 detections -> 52 tracks
+frames solved   208/208
+```
+
+Judged objectively rather than by eye: project every DETECTED pitch marking through the
+fitted camera and measure how far it lands from the real line it belongs to. Median
+**0.11 m**, 78% inside half a metre, and not one pixel thrown off the pitch. The top-down
+render puts ten players around the penalty area with the keeper on his line, which is what
+the frame shows.
+
+What that does not yet mean: 52 tracks for about a dozen people is heavy fragmentation, the
+team split is unproven here, and there are no shirt numbers. The camera is solved; the rest
+of the pipeline is where the remaining error is.
+
 ## Milestones
 
 | # | done when | est. |
