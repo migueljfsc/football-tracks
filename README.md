@@ -33,6 +33,12 @@ uv run ft detect SNGS-147            # stage 2a: find people, cached
 uv run ft auto SNGS-147 --mode seed  # the whole pipeline from ONE seeded frame
 uv run ft score work/SNGS-147/tracks.json
 
+# YOUR OWN broadcast clip, which has no annotations
+uv run ft frames my_goal.mov         # -> data/clips/my_goal/img1/, bars removed
+uv run ft seed my_goal               # click pitch landmarks on frame 1
+uv run ft calibrate my_goal --frame 1      # check: do lines land on lines?
+uv run ft detect my_goal
+
 uv run ft segment data/clips/foo.mp4 # stage 0, for arbitrary broadcast footage
 ```
 

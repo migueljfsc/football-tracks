@@ -317,6 +317,23 @@ and counted as an identity error. What remains is a registration problem wearing
 problem's clothes. `--carry 0` is still the better setting, for that reason and not the one
 first recorded here.
 
+**D23 — the seed is a file, not a UI.** `seed.json` holds clicked landmark
+correspondences and nothing else. The click tool writes it, but so could a keypoint
+model, and so could Pitchboard's own import view — which is where this ends up, so the
+format is the interface and the OpenCV window is disposable.
+
+**D24 — four clicked landmarks are not enough, and the obvious four are degenerate.**
+Both goalposts and both corners of a goal are the most natural things to click and ALL
+FOUR SIT ON x = 0. A homography fitted to collinear points fits perfectly and describes
+nothing, so `seed.homography` refuses it — D17's argument reaching the human.
+
+The misclick threshold is in pitch METRES, not pixels, because that is the destination
+space; the usual pixel default of 5 would be a five-metre tolerance. It is 0.5 rather
+than 1.0 because with six points a homography has barely more constraints than degrees
+of freedom, so at a loose threshold RANSAC prefers a warped fit that swallows a bad
+click over one that rejects it. Measured on a deliberate 8 m misclick: 0.5 rejects it,
+1.0 absorbs it and moves the centre spot sixteen metres.
+
 **D22 — stage 2 does not depend on stage 1.** The gate is a speed — a footballer covers at
 most MAX_SPEED metres in a second — and it reaches pixels through the only local scale that
 needs no camera model: a detection box is about 1.8 m tall, so it says how many pixels a

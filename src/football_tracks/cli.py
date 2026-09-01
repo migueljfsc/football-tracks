@@ -12,7 +12,9 @@ from . import detect as detect_mod
 from . import overlay as overlay_mod
 from . import render as render_mod
 from . import score as score_mod
+from . import seed as seed_mod
 from . import soccernet, stage0_segment, stage1_propagate, stage1_register, tracks
+from . import video as video_mod
 from .config import CLIPS, work_dir
 
 app = typer.Typer(add_completion=False, help="Broadcast clip -> player tracks in pitch metres.")
@@ -353,6 +355,58 @@ def auto(
         f" {result.unsolved_frames}"
     )
     typer.echo(f"wrote {path}")
+
+
+@app.command()
+def frames(
+    source: Annotated[Path, typer.Argument(exists=True, dir_okay=False, help="A video file.")],
+    name: Annotated[str | None, typer.Option(help="Clip name. Defaults to the file stem.")] = None,
+) -> None:
+    """Turn a broadcast video into the numbered-JPEG layout the pipeline speaks.
+
+    Detects and removes pillarbox and letterbox bars, and records the REAL frame rate
+    rather than the one the container claims - a screen recording routinely lies.
+    """
+    dest = CLIPS / (name or source.stem)
+    clip = video_mod.extract(source, dest)
+    typer.echo(
+        f"{clip.frames} frames at {clip.fps:.2f} fps, {clip.width}x{clip.height}"
+        f" (cropped from {clip.crop})"
+    )
+    typer.echo(f"wrote {dest}")
+
+
+@app.command()
+def seed(
+    clip: Annotated[str, typer.Argument(help="A clip in data/clips/.")],
+    frame: Annotated[int, typer.Option(help="Which frame to seed.")] = 1,
+) -> None:
+    """Click pitch landmarks on one frame, to seed the camera model.
+
+    The only human step in the automatic path. Click a landmark, and the name shown is
+    the one it is recorded as - so click them in the order listed, or press n/p to
+    choose. Four is the minimum and is exactly determined, which means it fits whatever
+    was misclicked and cannot be checked (D17); six or more is much safer.
+    """
+    from . import seedui
+
+    root = CLIPS / clip
+    img = video_mod.read_frame(root / "img1", frame)
+    if img is None:
+        raise typer.BadParameter(f"no frame {frame} in {root / 'img1'}")
+
+    got = seedui.collect(img, frame)
+    if got is None:
+        typer.echo("abandoned; nothing written")
+        raise typer.Exit(1)
+
+    path = seed_mod.write(work_dir(Path(clip)) / "seed.json", got)
+    h = seed_mod.homography(got)
+    typer.echo(
+        f"{len(got.points)} points -> {'a homography' if h is not None else 'NO homography'}"
+    )
+    typer.echo(f"wrote {path}")
+    typer.echo(f"now check it: ft calibrate {clip} --frame {frame}")
 
 
 if __name__ == "__main__":

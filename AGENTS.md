@@ -41,6 +41,13 @@ src/football_tracks/
   calibration.py            named pitch lines -> a homography
   stage1_register.py        fit per frame, and measure what it costs
   stage1_propagate.py       carry a homography across gaps by tracking the grass
+  video.py                  a recording -> the numbered-JPEG layout, bars removed
+  seed.py                   clicked landmarks -> a homography; seed.json is the format
+  seedui.py                 the click tool. Disposable: the FILE is the interface (D23)
+  detect.py                 stage 2a, torchvision COCO - BSD, and a floor not a ceiling
+  stage2_track.py           stage 2b, association in stabilised pixels
+  stage3_teams.py           kit clustering, and which end each side plays at
+  auto.py                   the whole automatic path, frames in and tracks.json out
   overlay.py                the markings reprojected onto a frame - stage 1's picture
   pitch.py                  the markings in metres; `model()` is the one description
   render.py                 a tracks file -> a video of coloured dots
@@ -95,6 +102,21 @@ work/<clip>/                every stage's artefacts, all reproducible
   camera**, which is what makes their intersection useless and why the fit is point-on-line
   (D16). Anything reaching for line crossings is reaching for the approach that produced a
   0.00 m residual and a 100 m error.
+- **The four most natural landmarks to click are collinear** (D24). Both posts and both
+  corners of a goal all sit on x = 0, and a homography fitted to them fits perfectly and
+  describes nothing. `seed.degenerate` refuses that set.
+- **RANSAC's threshold is in the DESTINATION space.** For every homography fitted here
+  that is pitch METRES, so the usual pixel default of 5 means five metres and accepts
+  almost any error. It also cannot be loose: with six points there is barely more data
+  than there are degrees of freedom, so a loose threshold buys a warped fit that swallows
+  the bad point instead of rejecting it.
+- **A container's frame rate is not the clip's.** A screen recording claimed 120fps while
+  holding 208 frames across 6.4 seconds. `video.probe` derives it from duration and count,
+  because these numbers become scene durations.
+- **Pillarbox bars are not black enough to ignore.** Compression noise lifts them over the
+  grass mask's value floor, so they register as pitch and the optical flow tries to track
+  them. That is what `video.content_box` is for, and it uses a max rather than a mean: one
+  bright pixel anywhere in a column means that column is content.
 - **A homography good enough for stage 1 can be useless for stage 2** (D19). Tracking needs
   frame-to-frame CONSISTENCY, not absolute accuracy, and nothing in `Registration` measures
   that. Carrying improves stage 1's card and halves identity purity.
