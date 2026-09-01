@@ -202,6 +202,29 @@ the harness measures what it claims. Scoring a deliberately degraded copy (12% o
 dropped, 0.6 m of gaussian noise) returns 87.2% recall, 0.70 m median error and 110
 switches — the numbers the noise implies.
 
+### The automatic path, measured
+
+`ft detect` then `ft auto --mode seed` runs the whole pipeline with **only frame one's
+pitch lines** — everything a human clicking four corners once would give it — and `ft score`
+diffs the result against ground truth. On SNGS-147:
+
+| clip | recall | precision | error | purity | switches |
+|---|---|---|---|---|---|
+| 3 s | 96.6% | 80.8% | 0.60 m | 92.4% | 1 |
+| 5 s | 97.2% | 79.5% | 0.69 m | 87.0% | 1 |
+| **7 s** | **97.0%** | **74.4%** | **0.80 m** | **86.2%** | **2** |
+| 10 s | 45.3% | 44.5% | 0.89 m | 88.0% | 8 |
+| 30 s | 39.0% | 36.9% | 1.34 m | 76.7% | 67 |
+
+**Up to about seven seconds, one seed is enough.** Past that the carried homography reaches
+where drift turns sharp (D18 measured the corners going at frame ~150–200) and recall halves.
+Seven seconds is a goal, a build-up, a press — the length this is for.
+
+What does NOT work yet, and is not hidden by those numbers: shirt numbers resolve zero of
+nine, exactly as predicted; precision sits at 74% because referees and touchline staff are
+tracked as players; and the team split is near chance, because a fragmented track carries too
+little colour to cluster on.
+
 ## Milestones
 
 | # | done when | est. |
@@ -269,6 +292,34 @@ carries its own frame index; gaps are expected and the consumer interpolates or 
 the moment this graduates into a product. RT-DETR and RF-DETR are Apache-licensed and are the
 swap to make if that day comes — which is another reason the detector lives behind a stage
 boundary and not in the middle of everything.
+
+**D19 — stage 1's accuracy is not what stage 2 needs.** Carried homographies score WELL on
+stage 1's own metric — 0.90 m median, better tails than the solver alone — and they wreck
+tracking: identity purity 62.9% with carrying on against 82.9% with it off, 145 switches
+against 25.
+
+The reason is that the two stages want different things from the same matrix. Stage 1 is
+scored on absolute accuracy per frame. Tracking does not care where the pitch is, it cares
+that it does not MOVE: a homography smoothly one metre off tracks perfectly, while one that
+jitters two metres between frames throws every player at once and every track breaks
+together. Frame-to-frame consistency is the property, and no number in `Registration`
+measures it.
+
+Recorded rather than fixed. The fix is to associate in a stabilised image space — using the
+frame-to-frame transform, which is measured per pair and never accumulated — rather than in
+pitch metres. Until then, `--carry 0` is the setting that tracks best.
+
+**D20 — the tracker is ours.** supervision's ByteTrack is deprecated and disappears in 0.31,
+and this regime has a signal a general tracker does not use: a team wears one colour, which
+is exactly what tells two crossing players apart. Association is greedy over a gate, in
+metres, so the gate is a physical claim about how far a footballer runs rather than a claim
+about how fast the camera pans.
+
+**D21 — which cluster is "home" is decided by which end the side plays at**, never by
+whichever labelling scores best — that would be fitting to the yardstick. It is a weak
+discriminator over a long clip, where both sides cover the same ground, so `score` reports
+the team split permutation-invariantly: the question worth measuring is whether the sides
+were told apart, not whether they got SoccerNet's names.
 
 **D18 — a homography is carried across gaps by tracking the ground plane.** Stage 1's
 solver needs enough markings in shot, and real footage often has fewer. Features on the

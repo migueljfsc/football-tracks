@@ -82,11 +82,21 @@ def test_an_id_switch_is_visible_where_recall_is_not() -> None:
     assert s.id_switches == 2
 
 
-def test_the_wrong_team_is_counted_separately_from_the_wrong_place() -> None:
-    truth = doc(trk(1, "home", [(1, 10.0, 10.0)]))
-    s = score(truth, doc(trk(1, "away", [(1, 10.0, 10.0)])))
-    assert s.recall == 1.0
-    assert s.team_accuracy == 0.0
+def test_naming_the_two_sides_the_other_way_round_is_not_an_error() -> None:
+    # Which cluster an unsupervised split calls "home" is arbitrary. Scoring the raw
+    # labelling would measure that coin flip rather than whether the sides were told
+    # apart, so the metric takes the better of the two labellings.
+    truth = doc(trk(1, "home", [(1, 10.0, 10.0)]), trk(2, "away", [(1, 40.0, 40.0)]))
+    swapped = doc(trk(1, "away", [(1, 10.0, 10.0)]), trk(2, "home", [(1, 40.0, 40.0)]))
+    assert score(truth, swapped).team_accuracy == 1.0
+
+
+def test_genuinely_mixing_the_sides_up_is_an_error() -> None:
+    # A global swap is free; putting two opponents on the SAME side is not, and no
+    # relabelling can rescue it.
+    truth = doc(trk(1, "home", [(1, 10.0, 10.0)]), trk(2, "away", [(1, 40.0, 40.0)]))
+    merged = doc(trk(1, "home", [(1, 10.0, 10.0)]), trk(2, "home", [(1, 40.0, 40.0)]))
+    assert score(truth, merged).team_accuracy == 0.5
 
 
 def test_a_wrong_shirt_number_is_reported_apart_from_an_unread_one() -> None:

@@ -29,6 +29,10 @@ uv run ft calibrate SNGS-147 --carry 0     # solver only, no propagation across 
 uv run ft calibrate SNGS-147 --frame 288   # the overlay - do lines land on lines?
 uv run ft calibrate SNGS-147 --video
 
+uv run ft detect SNGS-147            # stage 2a: find people, cached
+uv run ft auto SNGS-147 --mode seed  # the whole pipeline from ONE seeded frame
+uv run ft score work/SNGS-147/tracks.json
+
 uv run ft segment data/clips/foo.mp4 # stage 0, for arbitrary broadcast footage
 ```
 
@@ -54,10 +58,13 @@ uv sync --extra ocr      # shirt numbers
 | — | SoccerNet fetch, ground truth, render, score | **done** |
 | 0 | segment — find the tactical camera | built, unproven |
 | 1 | registration — pixels to metres | solver done, detector next |
-| 2 | detect and track | not started |
-| 3 | teams | not started |
-| 4 | project — **the proof** | not started |
+| 2 | detect and track | working; purity 86% at 7s |
+| 3 | teams | clustering near chance — needs work |
+| 4 | project — **the proof** | working |
 | 5 | shirt numbers | not started |
+
+From one seeded frame, a 7-second clip comes out at 97% recall, 0.80 m median error and
+86% identity purity. Past ~7s the carried homography drifts and recall halves.
 
 SoccerNet clips are single-camera and already trimmed, so they enter at stage 1 — stage 0
 is for arbitrary broadcast footage (D10).

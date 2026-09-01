@@ -14,7 +14,11 @@ dependencies = [
 # Installed per stage rather than all at once: stage 0 needs none of this, and a
 # torch install that fails should not block the stage that does not use torch.
 [project.optional-dependencies]
-vision = ["torch>=2.5", "torchvision>=0.20", "ultralytics>=8.3", "supervision>=0.25"]
+# torchvision's detector is BSD and its COCO weights are enough for players on a
+# pitch. Ultralytics is deliberately absent: it is AGPL-3.0 and this repo is MIT (D9),
+# and nothing here needs it. supervision is MIT but its ByteTrack is deprecated and
+# goes away in 0.31, so the tracker is our own - see stage2_track.
+vision = ["torch>=2.5", "torchvision>=0.20"]
 ocr = ["easyocr>=1.7"]
 data = ["SoccerNet>=0.1.60"]
 
@@ -46,7 +50,7 @@ strict = true
 # scenedetect ships no stubs. Confined to it, so a missing stub anywhere else is
 # still an error rather than a silent Any. cv2 5.x types itself - see MatLike.
 [[tool.mypy.overrides]]
-module = ["scenedetect.*"]
+module = ["scenedetect.*", "torchvision.*"]
 ignore_missing_imports = true
 
 [tool.pytest.ini_options]

@@ -7,6 +7,8 @@ from typing import Annotated
 
 import typer
 
+from . import auto as auto_mod
+from . import detect as detect_mod
 from . import overlay as overlay_mod
 from . import render as render_mod
 from . import score as score_mod
@@ -262,6 +264,89 @@ def calibrate(
             f" ({chain.solved_directly} solved directly, {chain.gaps} left unsolved)"
         )
     typer.echo(stage1_register.report(stage1_register.evaluate(labels, homs)))
+
+
+@app.command()
+def detect(
+    clip: Annotated[str, typer.Argument(help="A clip already fetched into data/clips/.")],
+    conf: Annotated[
+        float, typer.Option(help="Detection confidence floor.")
+    ] = detect_mod.DEFAULT_CONF,
+) -> None:
+    """Stage 2a - find people in every frame, and cache them.
+
+    Slow, and separate from tracking on purpose: tracking is the part that gets tuned.
+    """
+    c = soccernet.Clip(name=clip, root=CLIPS / clip)
+    frames = sorted(int(p.stem) for p in c.frames_dir.glob("*.jpg"))
+    if not frames:
+        raise typer.BadParameter(f"no frames in {c.frames_dir} - run `ft fetch {clip}` first")
+
+    out = work_dir(Path(clip))
+    with typer.progressbar(frames, label="detecting") as bar:
+        found = detect_mod.run(c.frames_dir, frames, conf=conf, progress=lambda _f: bar.update(1))
+    path = detect_mod.write(out / "detections.json", found, conf=conf)
+    typer.echo(
+        f"{len(found)} detections over {len(frames)} frames"
+        f" ({len(found) / max(1, len(frames)):.1f}/frame)"
+    )
+    typer.echo(f"wrote {path}")
+
+
+@app.command()
+def auto(
+    clip: Annotated[str, typer.Argument(help="A clip already fetched into data/clips/.")],
+    mode: Annotated[
+        str, typer.Option(help="'truth' uses every frame's lines; 'seed' uses only frame one's.")
+    ] = "seed",
+    carry: Annotated[int, typer.Option(help="Frames a homography may be carried.")] = -1,
+) -> None:
+    """The automatic path end to end - frames in, tracks.json out.
+
+    `--mode truth` holds stage 1 fixed so the score is stages 2 and 3 alone.
+    `--mode seed` throws away every line annotation but frame one's, which is what a
+    human clicking four corners once actually leaves you with.
+    """
+    if mode not in ("truth", "seed"):
+        raise typer.BadParameter("mode must be 'truth' or 'seed'")
+    picked: auto_mod.Mode = "truth" if mode == "truth" else "seed"
+
+    c = soccernet.Clip(name=clip, root=CLIPS / clip)
+    out = work_dir(Path(clip))
+    dets_path = out / "detections.json"
+    if not dets_path.exists():
+        raise typer.BadParameter(f"no {dets_path} - run `ft detect {clip}` first")
+
+    labels = c.labels()
+    frames = sorted(int(p.stem) for p in c.frames_dir.glob("*.jpg"))
+    detections = detect_mod.read(dets_path)
+
+    homs = auto_mod.homographies(
+        labels, c.frames_dir, picked, max_carry=None if carry < 0 else carry
+    )
+    result = auto_mod.build(
+        c.frames_dir, frames, detections, homs, fps=float(labels["info"]["frame_rate"])
+    )
+
+    path = tracks.write(
+        out / "tracks.json",
+        clip=clip,
+        fps=float(labels["info"]["frame_rate"]),
+        start_frame=min(frames),
+        end_frame=max(frames),
+        tracks=result.tracks,
+        width=labels["images"][0]["width"],
+        height=labels["images"][0]["height"],
+    )
+    typer.echo(
+        f"mode {mode}: {result.detections} detections -> {result.raw_tracks} raw tracks"
+        f" -> {len(result.tracks)} kept"
+    )
+    typer.echo(
+        f"dropped off pitch {result.dropped_off_pitch}, frames with no homography"
+        f" {result.unsolved_frames}"
+    )
+    typer.echo(f"wrote {path}")
 
 
 if __name__ == "__main__":

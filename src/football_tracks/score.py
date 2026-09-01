@@ -20,6 +20,14 @@ from typing import Any
 # that a neighbour cannot be claimed, loose enough that a correct detection is not lost.
 MATCH_RADIUS = 2.0
 
+# home <-> away, for scoring the team split without scoring which name it chose.
+_SWAP: dict[str | None, str | None] = {
+    "home": "away",
+    "away": "home",
+    "gkHome": "gkAway",
+    "gkAway": "gkHome",
+}
+
 
 @dataclass(slots=True)
 class Score:
@@ -110,6 +118,7 @@ def score(truth: dict[str, Any], pred: dict[str, Any], *, radius: float = MATCH_
 
     errors: list[float] = []
     team_hits = 0
+    team_hits_swapped = 0
     matched = 0
     # gt track -> which predicted tracks it matched, and in what order
     assigned: dict[int, list[int]] = defaultdict(list)
@@ -120,8 +129,11 @@ def score(truth: dict[str, Any], pred: dict[str, Any], *, radius: float = MATCH_
             matched += 1
             errors.append(d)
             assigned[gid].append(pid)
-            if gt_teams.get(gid) == pred_teams.get(pid):
+            want, got_team = gt_teams.get(gid), pred_teams.get(pid)
+            if want == got_team:
                 team_hits += 1
+            if want == _SWAP.get(got_team, got_team):
+                team_hits_swapped += 1
 
     # Purity: the share of a ground-truth track's matched samples that went to its
     # single most common predicted partner. A tracker that swaps a player halfway
@@ -158,7 +170,12 @@ def score(truth: dict[str, Any], pred: dict[str, Any], *, radius: float = MATCH_
         matched=matched,
         median_error_m=_percentile(errors, 0.5),
         p90_error_m=_percentile(errors, 0.9),
-        team_accuracy=team_hits / matched if matched else 0.0,
+        # Permutation-invariant. Which cluster an unsupervised split calls "home" is
+        # arbitrary - the pipeline settles it by which end the side plays at, and that
+        # tie can go either way on a clip where both teams cover the same ground.
+        # Scoring the raw labelling would measure that coin flip rather than whether
+        # the two sides were told apart at all, which is the actual question.
+        team_accuracy=max(team_hits, team_hits_swapped) / matched if matched else 0.0,
         identity_purity=sum(purities) / len(purities) if purities else 0.0,
         id_switches=switches,
         jersey_gt_total=gt_numbered,
@@ -175,7 +192,7 @@ def report(s: Score) -> str:
         f"recall            {s.recall:6.1%}",
         f"precision         {s.precision:6.1%}",
         f"position error    {s.median_error_m:.2f} m median, {s.p90_error_m:.2f} m p90",
-        f"team accuracy     {s.team_accuracy:6.1%}",
+        f"team split        {s.team_accuracy:6.1%}  (best of the two labellings)",
         f"identity purity   {s.identity_purity:6.1%}  ({s.id_switches} switches)",
         f"shirt numbers     {s.jersey_correct} right, {s.jersey_wrong} WRONG,"
         f" {s.jersey_missing} unread, of {s.jersey_gt_total}",

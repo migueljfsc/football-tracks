@@ -95,6 +95,15 @@ work/<clip>/                every stage's artefacts, all reproducible
   camera**, which is what makes their intersection useless and why the fit is point-on-line
   (D16). Anything reaching for line crossings is reaching for the approach that produced a
   0.00 m residual and a 100 m error.
+- **A homography good enough for stage 1 can be useless for stage 2** (D19). Tracking needs
+  frame-to-frame CONSISTENCY, not absolute accuracy, and nothing in `Registration` measures
+  that. Carrying improves stage 1's card and halves identity purity.
+- **Track association happens in metres, and projection therefore comes BEFORE tracking.**
+  The gate is a claim about how far a footballer runs in a second. In pixels the same number
+  is really a claim about how fast the camera pans.
+- **Retire stale tracks before associating, not after** — the gate grows with the gap, so the
+  other order lets an already-dead track match anyway, and whether it does depends on whether
+  the caller's frame list is contiguous.
 - **A carried homography drifts without bound, and never announces it** (D18). Every
   composition multiplies in the last one's error; the failure is a matrix that still looks
   like a matrix. `DEFAULT_MAX_CARRY` is the guard, and it is a measured number, not a
