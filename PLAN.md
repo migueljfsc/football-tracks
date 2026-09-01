@@ -328,6 +328,23 @@ correspondences and nothing else. The click tool writes it, but so could a keypo
 model, and so could Pitchboard's own import view — which is where this ends up, so the
 format is the interface and the OpenCV window is disposable.
 
+**D26 — a human can TRACE a line as well as click a point.** A corner is one exact pixel
+and is often out of shot; a long marking is easy to follow and says nearly as much once
+several points are stacked. `calibration.fit` takes both in one DLT — a landmark
+contributes two equations, a traced point one.
+
+This came out of the first real clip. A tight goalmouth shot at night has faint, short box
+lines and its corners off screen, and clicking them produced a seed whose points were
+misidentified. The two long clear markings — the goal line and the penalty-box front — were
+easy to trace and were there all along.
+
+Two traps that come with it, both of which fit with ZERO residual and are therefore the most
+convincing way to be wrong. **Two traced lines are always degenerate**: they cross
+somewhere, and a homography sending the entire image to that crossing satisfies every
+point-on-line constraint exactly. And **lines all running the same way pin down nothing**
+about the direction across them. `_collapses` catches the first by checking that the fitted
+map still covers ground; `_spans_two_directions` catches the second.
+
 **D24 — four clicked landmarks are not enough, and the obvious four are degenerate.**
 Both goalposts and both corners of a goal are the most natural things to click and ALL
 FOUR SIT ON x = 0. A homography fitted to collinear points fits perfectly and describes

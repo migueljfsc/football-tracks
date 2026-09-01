@@ -15,7 +15,7 @@ from typing import Any
 import cv2
 
 from . import pitch as pitch_mod
-from .seed import LANDMARKS, Seed, mirrored
+from .seed import LANDMARKS, TRACEABLE, Seed, mirrored, mirrored_line
 
 WINDOW = "seed - click a landmark, then pick its name"
 MARK = (60, 240, 90)
@@ -30,9 +30,35 @@ TARGET = (40, 90, 250)
 DIAGRAM_MIN_SCALE = 4.0
 
 
-def _diagram(name: str, far_goal: bool, width: int) -> Any:
+def _diagram(name: str, far_goal: bool, width: int, trace: bool = False) -> Any:
     scale = max(DIAGRAM_MIN_SCALE, width / 420)
     img = pitch_mod.draw(scale, 2.0)
+    if trace:
+        a, b, c = mirrored_line(name) if far_goal else TRACEABLE[name]
+        # Draw the whole marking, since tracing means "anywhere along this".
+        if abs(a) > abs(b):
+            p0, p1 = (-c / a, 0.0), (-c / a, 68.0)
+        else:
+            p0, p1 = (0.0, -c / b), (105.0, -c / b)
+        cv2.line(
+            img,
+            pitch_mod.to_px(*p0, scale, 2.0),
+            pitch_mod.to_px(*p1, scale, 2.0),
+            TARGET,
+            max(3, round(scale / 2)),
+            cv2.LINE_AA,
+        )
+        cv2.putText(
+            img,
+            name,
+            (10, img.shape[0] - 14),
+            cv2.FONT_HERSHEY_SIMPLEX,
+            max(0.7, scale / 9),
+            TARGET,
+            2,
+            cv2.LINE_AA,
+        )
+        return img
     x, y = mirrored(name) if far_goal else LANDMARKS[name]
     px, py = pitch_mod.to_px(x, y, scale, 2.0)
     r = max(10, round(scale * 2.2))
@@ -62,7 +88,14 @@ def _inset(base: Any, panel: Any) -> None:
     base[y0 : y0 + ph, x0 : x0 + pw] = panel
 
 
-def _draw(base: Any, seed_points: list[Any], cursor: str, far_goal: bool) -> Any:
+def _draw(
+    base: Any,
+    seed_points: list[Any],
+    traced: list[Any],
+    cursor: str,
+    far_goal: bool,
+    trace: bool,
+) -> Any:
     img = base.copy()
     for (ix, iy), (px, py) in seed_points:
         cv2.circle(img, (int(ix), int(iy)), 7, MARK, -1, cv2.LINE_AA)
@@ -76,14 +109,18 @@ def _draw(base: Any, seed_points: list[Any], cursor: str, far_goal: bool) -> Any
             2,
             cv2.LINE_AA,
         )
+    for (ix, iy), _ in traced:
+        cv2.circle(img, (int(ix), int(iy)), 6, TARGET, -1, cv2.LINE_AA)
+
     end = "FAR goal" if far_goal else "NEAR goal"
-    enough = len(seed_points) >= 4
+    enough = len(seed_points) * 2 + len(traced) >= 8
+    mode = "TRACE ALONG" if trace else "CLICK"
     lines = [
-        f"CLICK: {cursor}      (marked on the diagram, bottom left)",
-        f"{len(seed_points)} placed   |   {end} end"
+        f"{mode}: {cursor}      (marked on the diagram, bottom left)",
+        f"{len(seed_points)} points + {len(traced)} traced   |   {end} end"
         " - press 'e' if the goal in shot is the other one",
-        "n = SKIP this landmark if it is not in shot     p = back     u = undo",
-        f"s = save{'' if enough else '  (needs 4 or more)'}     q = quit",
+        "t = switch point/trace mode    n = next    p = back    u = undo",
+        f"s = save{'' if enough else '  (needs more evidence)'}     q = quit",
     ]
     scale = max(0.9, base.shape[1] / 2200)
     for i, line in enumerate(lines):
@@ -99,41 +136,68 @@ def _draw(base: Any, seed_points: list[Any], cursor: str, far_goal: bool) -> Any
             2,
             cv2.LINE_AA,
         )
-    _inset(img, _diagram(cursor, far_goal, base.shape[1]))
+    _inset(img, _diagram(cursor, far_goal, base.shape[1], trace))
     return img
 
 
 def collect(frame: Any, frame_index: int) -> Seed | None:
-    """Run the window until saved or abandoned. Returns None if abandoned."""
+    """Run the window until saved or abandoned. Returns None if abandoned.
+
+    Two modes, because they suit different footage. POINT mode wants an exact landmark,
+    which is precise when the corner is in shot. TRACE mode wants several clicks
+    anywhere along a named line, which is what a tight goalmouth shot actually offers -
+    long clear markings whose corners are off screen.
+    """
     names = list(LANDMARKS)
-    state = {"i": 0, "far": False}
+    line_names = list(TRACEABLE)
+    state = {"i": 0, "far": False, "trace": False}
     points: list[Any] = []
+    traced: list[Any] = []
 
     def on_mouse(event: int, x: int, y: int, _flags: int, _param: Any) -> None:
-        if event == cv2.EVENT_LBUTTONDOWN:
-            name = names[state["i"]]
-            pitch = mirrored(name) if state["far"] else LANDMARKS[name]
-            points.append(((float(x), float(y)), pitch))
-            state["i"] = min(state["i"] + 1, len(names) - 1)
+        if event != cv2.EVENT_LBUTTONDOWN:
+            return
+        if state["trace"]:
+            name = line_names[state["i"]]
+            line = mirrored_line(name) if state["far"] else TRACEABLE[name]
+            traced.append(((float(x), float(y)), line))
+            return  # stay on the same line - tracing wants several clicks
+        name = names[state["i"]]
+        pitch = mirrored(name) if state["far"] else LANDMARKS[name]
+        points.append(((float(x), float(y)), pitch))
+        state["i"] = min(state["i"] + 1, len(names) - 1)
 
     cv2.namedWindow(WINDOW, cv2.WINDOW_NORMAL)
     cv2.resizeWindow(WINDOW, 1600, 900)
     cv2.setMouseCallback(WINDOW, on_mouse)
 
     while True:
-        cv2.imshow(WINDOW, _draw(frame, points, names[state["i"]], bool(state["far"])))
+        active = line_names if state["trace"] else names
+        state["i"] = min(int(state["i"]), len(active) - 1)
+        cv2.imshow(
+            WINDOW,
+            _draw(
+                frame, points, traced, active[state["i"]], bool(state["far"]), bool(state["trace"])
+            ),
+        )
         key = cv2.waitKey(20) & 0xFF
         if key == ord("q"):
             cv2.destroyWindow(WINDOW)
             return None
-        if key == ord("s") and len(points) >= 4:
+        if key == ord("s") and (len(points) * 2 + len(traced)) >= 8:
             cv2.destroyWindow(WINDOW)
-            return Seed(frame=frame_index, points=points)
+            return Seed(frame=frame_index, points=points, lines=traced)
         if key == ord("n"):
-            state["i"] = (state["i"] + 1) % len(names)
+            state["i"] = (int(state["i"]) + 1) % len(active)
         if key == ord("p"):
-            state["i"] = (state["i"] - 1) % len(names)
+            state["i"] = (int(state["i"]) - 1) % len(active)
         if key == ord("e"):
             state["far"] = not state["far"]
-        if key == ord("u") and points:
-            points.pop()
+        if key == ord("t"):
+            state["trace"] = not state["trace"]
+            state["i"] = 0
+        if key == ord("u"):
+            if state["trace"] and traced:
+                traced.pop()
+            elif not state["trace"] and points:
+                points.pop()

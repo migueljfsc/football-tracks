@@ -94,6 +94,54 @@ def _normalise(
     return centred * scale, t
 
 
+def fit(
+    points: list[tuple[tuple[float, float], tuple[float, float]]],
+    on_lines: list[tuple[tuple[float, float], Line]],
+    width: int,
+    height: int,
+) -> npt.NDArray[np.float64] | None:
+    """One DLT over both kinds of evidence.
+
+    A CORRESPONDENCE says "this pixel is that exact spot" and contributes two equations.
+    A POINT-ON-LINE says only "this pixel is somewhere along that marking" and
+    contributes one. Mixing them matters for a human seeding a clip: hitting a box
+    corner exactly is hard and often impossible when the corner is out of shot, while
+    clicking anywhere along a line you can see is easy and just as informative once
+    enough of them are stacked.
+    """
+    if not points and not on_lines:
+        return None
+
+    image = np.array([p[0] for p in points] + [p[0] for p in on_lines], dtype=np.float64)
+    if len(image) < 4:
+        return None
+    normed, t_img = _normalise(image)
+    s = float(PITCH_LENGTH)
+
+    rows: list[list[float]] = []
+    for (u, v), (px, py) in zip(normed[: len(points)], [p[1] for p in points], strict=True):
+        X, Y = px / s, py / s
+        rows.append([-u, -v, -1.0, 0.0, 0.0, 0.0, u * X, v * X, X])
+        rows.append([0.0, 0.0, 0.0, -u, -v, -1.0, u * Y, v * Y, Y])
+
+    for (u, v), (a, b, c) in zip(normed[len(points) :], [ln[1] for ln in on_lines], strict=True):
+        a_, b_, c_ = a * s, b * s, c
+        norm = math.sqrt(a_ * a_ + b_ * b_ + c_ * c_) or 1.0
+        a_, b_, c_ = a_ / norm, b_ / norm, c_ / norm
+        rows.append([a_ * u, a_ * v, a_, b_ * u, b_ * v, b_, c_ * u, c_ * v, c_])
+
+    if len(rows) < 8:
+        return None
+    _, _, vt = np.linalg.svd(np.array(rows, dtype=np.float64))
+    h = vt[-1].reshape(3, 3)
+    if not np.all(np.isfinite(h)) or abs(np.linalg.det(h)) < 1e-12:
+        return None
+    h = np.diag([s, s, 1.0]) @ h @ t_img
+    if abs(h[2, 2]) < 1e-12:
+        return None
+    return np.asarray(h / h[2, 2], dtype=np.float64)
+
+
 def homography(
     lines: dict[str, list[dict[str, float]]], width: int, height: int
 ) -> npt.NDArray[np.float64] | None:

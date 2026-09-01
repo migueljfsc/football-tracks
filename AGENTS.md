@@ -102,6 +102,14 @@ work/<clip>/                every stage's artefacts, all reproducible
   camera**, which is what makes their intersection useless and why the fit is point-on-line
   (D16). Anything reaching for line crossings is reaching for the approach that produced a
   0.00 m residual and a 100 m error.
+- **A point-on-line constraint admits a solution that collapses the image to a point.** Two
+  traced lines cross somewhere, and mapping everything to that crossing satisfies both
+  exactly, with zero residual (D26). Never read a small residual as a good fit without
+  asking whether the constraints could be satisfied trivially.
+- **RANSAC keeps whichever subset it can fit, not the one worth fitting.** On the first real
+  seed it kept five points along the goal line, fit them to 0.1 m, and rejected exactly the
+  points that pinned down the pitch's depth. The inlier set is checked for degeneracy now,
+  not just the input.
 - **The four most natural landmarks to click are collinear** (D24). Both posts and both
   corners of a goal all sit on x = 0, and a homography fitted to them fits perfectly and
   describes nothing. `seed.degenerate` refuses that set.

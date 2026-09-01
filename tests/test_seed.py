@@ -93,3 +93,108 @@ def test_a_seed_survives_a_round_trip(tmp_path: Path) -> None:
     assert back.frame == original.frame
     assert len(back.points) == len(original.points)
     assert back.points[0][1] == original.points[0][1]
+
+
+def flipped(s: seed.Seed) -> seed.Seed:
+    return seed.Seed(
+        frame=s.frame, points=[(i, (px, PITCH_WIDTH - py)) for i, (px, py) in s.points]
+    )
+
+
+def test_a_correctly_seeded_clip_agrees_with_the_camera() -> None:
+    # The synthetic camera has the near touchline at the bottom of the frame, which is
+    # what a broadcast camera on a touchline always gives.
+    assert seed.orientation(clicked(SIX)) > seed.ORIENTATION_CONFIDENT
+
+
+def test_swapped_far_and_near_is_detected() -> None:
+    # The failure the reprojection overlay is blind to: a pitch is symmetric about the
+    # halfway line, so a y-mirrored model lands on the real markings perfectly and only
+    # the arithmetic can tell.
+    assert seed.orientation(flipped(clicked(SIX))) < -seed.ORIENTATION_CONFIDENT
+
+
+def test_flipping_restores_the_orientation() -> None:
+    assert seed.orientation(seed.flip_y(flipped(clicked(SIX)))) > seed.ORIENTATION_CONFIDENT
+
+
+def test_flipping_keeps_the_clicks_and_moves_only_the_pitch_side() -> None:
+    original = clicked(SIX)
+    turned = seed.flip_y(original)
+    assert [p[0] for p in turned.points] == [p[0] for p in original.points]
+    assert [p[1][0] for p in turned.points] == [p[1][0] for p in original.points]
+
+
+def traced(name: str, n: int = 6) -> list[tuple[tuple[float, float], tuple[float, float, float]]]:
+    """Points along a named marking, projected through the synthetic camera."""
+    a, b, c = seed.TRACEABLE[name]
+    out = []
+    for t in np.linspace(0.15, 0.85, n):
+        p = (-c / a, t * PITCH_WIDTH) if abs(a) > abs(b) else (t * PITCH_LENGTH, -c / b)
+        img = calibration.apply(PITCH_TO_IMAGE, np.array([p]))[0]
+        out.append(((float(img[0]), float(img[1])), (a, b, c)))
+    return out
+
+
+def test_tracing_two_crossing_markings_recovers_the_camera() -> None:
+    # What a tight goalmouth shot actually offers: long clear lines whose corners are
+    # off screen. Clicking anywhere along them is enough.
+    s = seed.Seed(
+        frame=1,
+        points=[],
+        lines=traced("goal line")
+        + traced("penalty box front")
+        + traced("far touchline")
+        + traced("near touchline"),
+    )
+    h = seed.homography(s)
+    assert h is not None
+    got = calibration.apply(h, calibration.apply(PITCH_TO_IMAGE, np.array([[52.5, 34.0]])))
+    assert got[0] == pytest.approx([52.5, 34.0], abs=0.05)
+
+
+def test_tracing_only_parallel_markings_is_refused() -> None:
+    # Three lines all parallel to the goal line leave the camera free to slide along
+    # the pitch. The fit would come back looking like any other matrix.
+    s = seed.Seed(
+        frame=1,
+        points=[],
+        lines=traced("goal line") + traced("6yd box front") + traced("penalty box front"),
+    )
+    assert seed.homography(s) is None
+
+
+def test_landmarks_and_traces_combine() -> None:
+    s = seed.Seed(
+        frame=1,
+        points=[clicked(["goal post far"]).points[0], clicked(["goal post near"]).points[0]],
+        lines=traced("penalty box front")
+        + traced("penalty box near side")
+        + traced("far touchline"),
+    )
+    h = seed.homography(s)
+    assert h is not None
+    got = calibration.apply(h, calibration.apply(PITCH_TO_IMAGE, np.array([[30.0, 40.0]])))
+    assert got[0] == pytest.approx([30.0, 40.0], abs=0.5)
+
+
+def test_two_traced_lines_alone_are_refused() -> None:
+    # Two lines always cross, and a homography sending the whole image to that crossing
+    # satisfies every point-on-line constraint exactly. It fits with zero residuals,
+    # which is the most convincing way to be wrong.
+    s = seed.Seed(
+        frame=1,
+        points=[],
+        lines=traced("penalty box front") + traced("penalty box near side"),
+    )
+    assert seed.homography(s) is None
+
+
+def test_a_traced_seed_can_be_flipped_and_round_tripped(tmp_path: Path) -> None:
+    s = seed.Seed(frame=1, points=[], lines=traced("goal line") + traced("far touchline"))
+    seed.write(tmp_path / "s.json", s)
+    back = seed.read(tmp_path / "s.json")
+    assert len(back.lines) == len(s.lines)
+    # Flipping y must move the marking to the mirrored side, not leave it be.
+    flipped_line = seed.flip_y(s).lines[-1][1]
+    assert flipped_line != s.lines[-1][1]
