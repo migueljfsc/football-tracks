@@ -24,11 +24,7 @@ import numpy as np
 from cv2.typing import MatLike
 from scenedetect import ContentDetector, detect
 
-# OpenCV's hue channel is 0..179, so pitch green sits around 60. The saturation and
-# value floors exist to reject grey stands and floodlit white, not to be precise -
-# a shaded half of the pitch is much less saturated than a sunlit one.
-GREEN_LO = np.array([35, 40, 40], dtype=np.uint8)
-GREEN_HI = np.array([85, 255, 255], dtype=np.uint8)
+from .config import GREEN_HI, GREEN_LO
 
 # Frames are downscaled to this width before differencing. Full resolution measures
 # compression noise as much as camera movement, and is slower for no gain.

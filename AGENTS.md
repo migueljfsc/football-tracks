@@ -40,6 +40,7 @@ src/football_tracks/
   tracks.py                 the tracks.json writer, shared by every producer
   calibration.py            named pitch lines -> a homography
   stage1_register.py        fit per frame, and measure what it costs
+  stage1_propagate.py       carry a homography across gaps by tracking the grass
   overlay.py                the markings reprojected onto a frame - stage 1's picture
   pitch.py                  the markings in metres; `model()` is the one description
   render.py                 a tracks file -> a video of coloured dots
@@ -94,6 +95,16 @@ work/<clip>/                every stage's artefacts, all reproducible
   camera**, which is what makes their intersection useless and why the fit is point-on-line
   (D16). Anything reaching for line crossings is reaching for the approach that produced a
   0.00 m residual and a 100 m error.
+- **A carried homography drifts without bound, and never announces it** (D18). Every
+  composition multiplies in the last one's error; the failure is a matrix that still looks
+  like a matrix. `DEFAULT_MAX_CARRY` is the guard, and it is a measured number, not a
+  round one.
+- **A chain cannot start itself.** Propagation needs a first homography from somewhere —
+  the solver, a keypoint model, or a human. Anything assuming `fill` alone can calibrate a
+  clip has missed that it takes `direct` as input.
+- **`carry` composes as `h @ inv(d)`, not `d @ h`.** Both produce a plausible matrix and
+  the wrong one drifts the wrong way; no type catches it, so `test_propagate` pins the
+  direction with a point that must land on the same metre in both frames.
 - **A goal post is not on the ground plane.** `PITCH_LINES` lists only ground markings, and
   crossbars and posts are deliberately absent — a ground homography puts them metres from
   where they are. Circles are absent too, for the different reason that they are not lines.

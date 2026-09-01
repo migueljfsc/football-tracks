@@ -25,6 +25,7 @@ uv run ft render work/SNGS-147/truth.json --still 220
 uv run ft score work/SNGS-147/tracks.json          # diff a prediction against the truth
 
 uv run ft calibrate SNGS-147         # stage 1: fit per frame, and measure the error
+uv run ft calibrate SNGS-147 --carry 0     # solver only, no propagation across gaps
 uv run ft calibrate SNGS-147 --frame 288   # the overlay - do lines land on lines?
 uv run ft calibrate SNGS-147 --video
 

@@ -58,13 +58,17 @@ lines). **The solver is built and measured**; the detector is still ground truth
 swapping in a keypoint model is what remains. Nothing else in the module changes when it is:
 `calibration.homography` takes named polylines and does not care who found them.
 
-Measured on SNGS-147, feeding it the ground-truth lines:
+Measured on SNGS-147, feeding it the ground-truth lines. `carry` is how many frames a
+homography may be propagated across gaps the solver cannot fill:
 
-```
-frames solved     606/750  (80.8%)
-position error    0.67 m median, 2.65 m p90, 12.14 m p99
-thrown off pitch  0
-```
+| carry | coverage | median | p90 | p99 |
+|---|---|---|---|---|
+| off | 606/750 (80.8%) | 0.67 m | 2.65 m | 12.14 m |
+| 50 (default) | 710/750 (94.7%) | 0.83 m | 2.23 m | 10.94 m |
+| uncapped | 750/750 (**100%**) | 0.90 m | 2.27 m | 10.36 m |
+
+Carrying buys coverage for a quarter of a metre at the median, and it *improves* both
+tails — a carried homography beats the marginal five-line fit that produced them.
 
 That is the **ceiling** for the whole pipeline. It is measured by pushing ground-truth
 bounding boxes through the fitted homography and comparing with the position SoccerNet
@@ -265,6 +269,24 @@ carries its own frame index; gaps are expected and the consumer interpolates or 
 the moment this graduates into a product. RT-DETR and RF-DETR are Apache-licensed and are the
 swap to make if that day comes — which is another reason the detector lives behind a stage
 boundary and not in the middle of everything.
+
+**D18 — a homography is carried across gaps by tracking the ground plane.** Stage 1's
+solver needs enough markings in shot, and real footage often has fewer. Features on the
+grass move between consecutive frames by exactly the transform the camera's motion
+induces, so tracking them gives a frame-to-frame matrix that composes with a known
+homography to give the next one. It takes coverage on SNGS-147 from 80.8% to 100%.
+
+Two properties, both measured rather than assumed. It **drifts**: every composition
+multiplies in the last one's error. Carrying from frame 1 of SNGS-147, the pitch corners
+stay inside 0.19 m after 10 frames, 1.39 m after 100 and 1.63 m after 120, then degrade
+sharply. And it **cannot start itself** — something must supply the first homography,
+which is the solver, or a keypoint model, or a human clicking four corners (D7).
+
+Hence `DEFAULT_MAX_CARRY = 50`, two seconds, well inside where the measurement says drift
+is still small. Uncapped happens to be fine on this clip because its gaps are short, but a
+badly drifted matrix produces confident wrong positions and that is worse than a gap —
+D13's argument once more. Features come only from the grass, so players and crowd, which
+do not move with the ground plane, are never fed in.
 
 **D16 — the homography is fitted from POINT-ON-LINE constraints, not from line
 intersections.** Every annotated point is known to lie on a named pitch line, which gives

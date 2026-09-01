@@ -10,7 +10,7 @@ import typer
 from . import overlay as overlay_mod
 from . import render as render_mod
 from . import score as score_mod
-from . import soccernet, stage0_segment, stage1_register, tracks
+from . import soccernet, stage0_segment, stage1_propagate, stage1_register, tracks
 from .config import CLIPS, work_dir
 
 app = typer.Typer(add_completion=False, help="Broadcast clip -> player tracks in pitch metres.")
@@ -188,6 +188,13 @@ def calibrate(
     video: Annotated[
         bool, typer.Option(help="Draw the overlay for every frame, as an mp4.")
     ] = False,
+    carry: Annotated[
+        int,
+        typer.Option(
+            help="Carry a homography this many frames across gaps the solver cannot fill."
+            " 0 disables it; a negative value means uncapped."
+        ),
+    ] = stage1_propagate.DEFAULT_MAX_CARRY,
 ) -> None:
     """Stage 1 - fit a homography per frame from the pitch lines, and check it.
 
@@ -205,6 +212,11 @@ def calibrate(
     labels = c.labels()
     homs = stage1_register.fit_all(labels)
     out = work_dir(Path(clip))
+
+    chain = None
+    if carry != 0:
+        chain = stage1_propagate.fill(c.frames_dir, homs, max_carry=None if carry < 0 else carry)
+        homs = chain.homographies
 
     if frame is not None or video:
         import cv2
@@ -244,6 +256,11 @@ def calibrate(
             typer.echo(f"wrote {out / 'calib.mp4'}")
         return
 
+    if chain is not None:
+        typer.echo(
+            f"carried           {chain.carried} frames across gaps"
+            f" ({chain.solved_directly} solved directly, {chain.gaps} left unsolved)"
+        )
     typer.echo(stage1_register.report(stage1_register.evaluate(labels, homs)))
 
 
