@@ -1,3 +1,9 @@
+## v0.3.6 (2026-09-02)
+
+### Fix
+
+- the crop was keeping 290 columns of black bar
+
 ## v0.3.5 (2026-09-02)
 
 ### Refactor
