@@ -1,5 +1,10 @@
 """Stage 2a - find people in a frame.
 
+torch and transformers are imported INSIDE the functions that need them. They are a
+two-gigabyte optional extra, and the dataclasses here are the contract every other stage
+reads - `Detection` and `Sighting` have to be importable without a model, or the tests
+and the type checker need a GPU stack to look at a bounding box.
+
 RT-DETR, COCO-pretrained, Apache-2.0. It replaced torchvision's Faster R-CNN once the
 pipeline was measurable enough to compare them properly, and it wins on every axis:
 
@@ -30,7 +35,6 @@ from typing import Any
 
 import cv2
 import numpy as np
-import torch
 
 # COCO-pretrained, Apache-2.0. The o365 variant is trained on Objects365 as well and is
 # the stronger of the two on crowded scenes, which is all of football.
@@ -104,6 +108,8 @@ def _trust_certifi() -> None:
 
 
 def device() -> str:
+    import torch
+
     return "mps" if torch.backends.mps.is_available() else "cpu"
 
 
@@ -130,6 +136,8 @@ def on_frame(
 ) -> tuple[list[tuple[float, ...]], list[tuple[float, float, float]]]:
     """People and balls in one pass. Two lists, because they are not the same thing:
     a person is tracked and a ball is only ever asked about."""
+    import torch
+
     rgb = cv2.cvtColor(bgr, cv2.COLOR_BGR2RGB)
     inputs = processor(images=rgb, return_tensors="pt").to(dev)
     with torch.no_grad():

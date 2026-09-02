@@ -25,8 +25,6 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-from huggingface_hub import HfFileSystem
-
 from .config import PITCH_LENGTH, PITCH_WIDTH
 from .tracks import Sample, TeamLabel, Track, on_pitch
 
@@ -53,6 +51,8 @@ _TEAM: dict[tuple[str, str | None], TeamLabel] = {
 @contextmanager
 def open_split(split: str) -> Iterator[zipfile.ZipFile]:
     """A split's zip, read remotely. Only the index is fetched on open."""
+    from huggingface_hub import HfFileSystem
+
     if split not in SPLITS:
         raise ValueError(f"split must be one of {SPLITS}, got {split!r}")
     fs = HfFileSystem()

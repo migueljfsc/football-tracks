@@ -57,7 +57,17 @@ strict = true
 # scenedetect ships no stubs. Confined to it, so a missing stub anywhere else is
 # still an error rather than a silent Any. cv2 5.x types itself - see MatLike.
 [[tool.mypy.overrides]]
-module = ["scenedetect.*", "scipy.*", "transformers.*"]
+# The vision and data extras are not installed in CI - torch alone is two gigabytes, and
+# nothing that runs there needs a model. Their imports are inside the functions that use
+# them, so this only silences the type checker looking at those bodies.
+module = [
+    "scenedetect.*",
+    "scipy.*",
+    "transformers.*",
+    "torch.*",
+    "certifi.*",
+    "huggingface_hub.*",
+]
 ignore_missing_imports = true
 
 [tool.pytest.ini_options]
