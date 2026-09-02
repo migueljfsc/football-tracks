@@ -114,3 +114,25 @@ def test_a_chain_cannot_start_itself(tmp_path: Path) -> None:
     chain = prop.fill(tmp_path, {1: None, 2: None, 3: None})
     assert chain.carried == 0
     assert chain.gaps == 3
+
+
+def test_drift_scores_nothing_when_only_the_seed_was_fitted(tmp_path: Path) -> None:
+    """A carry can only be measured against evidence it did not produce.
+
+    Handing `drift` the carried chain instead of the direct fits makes it compare the
+    chain with itself, which reports 0.00 m however far the camera has wandered.
+    """
+    base = grass()
+    for f in range(1, 12):
+        cv2.imwrite(str(tmp_path / f"{f:06d}.jpg"), shifted(base, 3.0 * f, 0.0))
+    assert prop.drift(tmp_path, {1: np.eye(3)}, 1, length=10) == []
+
+
+def test_drift_reports_a_carry_that_disagrees_with_a_later_fit(tmp_path: Path) -> None:
+    base = grass()
+    for f in range(1, 12):
+        cv2.imwrite(str(tmp_path / f"{f:06d}.jpg"), shifted(base, 3.0 * f, 0.0))
+    # The frames really do move, so an identity fit at frame 11 is a genuine disagreement.
+    walked = prop.drift(tmp_path, {1: np.eye(3), 11: np.eye(3)}, 1, length=10)
+    assert [c for c, _ in walked] == [10]
+    assert walked[0][1] > 1.0

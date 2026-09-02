@@ -238,19 +238,27 @@ def calibrate(
     seed_path = out / "seed.json"
     labels: dict[str, object] | None = None
 
+    # What was fitted from evidence rather than carried to. A carry can only be scored
+    # against this, and on a seeded clip it is the ONE clicked frame - `from_seed` has
+    # already carried by the time it returns, so `homs` is the chain, not the evidence.
+    direct: dict[int, Any] = {}
+
     if c.labels_path.exists():
         # SoccerNet: every frame carries its own pitch lines.
         labels = c.labels()
         homs = stage1_register.fit_all(labels)
+        direct = {f: h for f, h in homs.items() if h is not None}
     elif seed_path.exists():
         # A clip nobody annotated: one clicked frame, carried both ways.
+        clicked = seed_mod.read(seed_path)
         homs = auto_mod.from_seed(
-            seed_mod.read(seed_path),
+            clicked,
             frames_all,
             c.frames_dir,
             max_carry=None,
             motions=motions,
         )
+        direct = {clicked.frame: seed_mod.homography(clicked)}
     else:
         raise typer.BadParameter(
             f"{clip} has neither SoccerNet labels nor {seed_path} - run `ft seed {clip}` first"
@@ -266,13 +274,29 @@ def calibrate(
     if drift_from is not None:
         # What DEFAULT_MAX_CARRY is set from. Carrying is unbounded in principle, so the
         # cap is only honest while somebody can re-derive the number behind it.
-        walked = stage1_propagate.drift(c.frames_dir, homs, drift_from, length=250)
+        #
+        # Scored against `direct` and never against `homs`: on a clip with no labels every
+        # entry in `homs` IS the carry, so scoring against it compares the chain with
+        # itself and reports 0.00 m however far the camera has wandered.
+        truth = dict(direct)
+        if labels is None:
+            for extra in sorted(out.glob("seed.*.json")):
+                other = seed_mod.read(extra)
+                truth[other.frame] = seed_mod.homography(other)
+        if len(truth) < 2:
+            raise typer.BadParameter(
+                f"{clip} has one seeded frame and no per-frame labels, so there is nothing"
+                " independent to score a carry against. Seed a second frame further on"
+                f" (`ft seed {clip} --frame N --check`) and measure again."
+            )
+        walked = stage1_propagate.drift(
+            c.frames_dir, truth, drift_from, length=min(250, max(frames_all) - drift_from)
+        )
         if not walked:
             raise typer.BadParameter(f"frame {drift_from} has no homography to carry")
         typer.echo(f"{'carried':>9} {'corner error':>14}")
         for carried, error in walked:
-            if carried in (1, 5, 10, 25, 50, 100, 150, 200, 250):
-                typer.echo(f"{carried:>8}f {error:>12.2f} m")
+            typer.echo(f"{carried:>8}f {error:>12.2f} m")
         return
 
     if frame is not None or video:
@@ -460,6 +484,13 @@ def frames(
 def seed(
     clip: Annotated[str, typer.Argument(help="A clip in data/clips/.")],
     frame: Annotated[int, typer.Option(help="Which frame to seed.")] = 1,
+    check: Annotated[
+        bool,
+        typer.Option(
+            help="Write seed.<frame>.json as independent truth to score a carry against,"
+            " rather than replacing the seed the pipeline runs from."
+        ),
+    ] = False,
 ) -> None:
     """Click pitch landmarks on one frame, to seed the camera model.
 
@@ -500,7 +531,8 @@ def seed(
             " down nothing across them - the exact points are carrying the fit."
         )
 
-    path = seed_mod.write(work_dir(Path(clip)) / "seed.json", got)
+    name = f"seed.{frame}.json" if check else "seed.json"
+    path = seed_mod.write(work_dir(Path(clip)) / name, got)
     h = seed_mod.homography(got)
     typer.echo(
         f"{len(got.points)} points + {len(got.lines)} traced"

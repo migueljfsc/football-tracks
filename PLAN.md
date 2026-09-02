@@ -481,6 +481,30 @@ against 1333 changed nothing, because the misses are occlusions rather than smal
 players), and a lower confidence floor, which buys recall at about three spurious boxes
 per real one.
 
+**D33 — a carry can only be scored against evidence it did not produce, and on a
+broadcast clip that evidence has to be clicked.** `ft calibrate --drift-from` was handed
+the homographies the pipeline runs on. On a SoccerNet clip those are per-frame fits and
+the measurement was roughly right; on a seeded clip every one of them IS the carry, so
+the measurement compared the chain with itself and reported
+
+    carried   corner error
+         1f         0.00 m
+        50f         0.00 m
+
+for a homography whose reprojection at frame 903 visibly misses the painted lines it sits
+on exactly at the seeded frame 853. Zero error is not a result a carry can produce, and it
+read as the best possible one.
+
+`direct` now holds only what was fitted from evidence — every frame on a labelled clip,
+the one clicked frame on a seeded one — and drift is scored against that. Where there is
+nothing to score against, the command refuses and says what would fix it rather than
+printing a number. `ft seed <clip> --frame N --check` writes `seed.<frame>.json` as that
+second piece of evidence without replacing the seed the pipeline runs from.
+
+The real curve, from SNGS-116, is what DEFAULT_MAX_CARRY = 50 was set from:
+
+    1f 0.05 m    10f 0.48 m    50f 3.45 m    150f 3.20 m    200f 29.43 m
+
 **D32 — shirt-number OCR does not work on this footage, and the failures are confident.**
 Measured on SNGS-147 with easyocr over the largest thirty sightings of each track, voting
 by summed confidence exactly as this plan proposed:
