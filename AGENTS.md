@@ -44,7 +44,7 @@ src/football_tracks/
   video.py                  a recording -> the numbered-JPEG layout, bars removed
   seed.py                   clicked landmarks -> a homography; seed.json is the format
   seedui.py                 the click tool. Disposable: the FILE is the interface (D23)
-  detect.py                 stage 2a, torchvision COCO - BSD, and a floor not a ceiling
+  detect.py                 stage 2a, RT-DETR (Apache) - see D28 for why not the others
   stage2_track.py           stage 2b, association in stabilised pixels
   stage3_teams.py           kit clustering, and which end each side plays at
   auto.py                   the whole automatic path, frames in and tracks.json out
@@ -134,6 +134,9 @@ work/<clip>/                every stage's artefacts, all reproducible
 - **A raw track count overstates fragmentation.** What matters is how much of a player's
   life their best track covers. Fifty tracks where thirteen cover half the clip is a usable
   reconstruction; the rest are fragments a reduction drops.
+- **A detector's false positives cost as much as its misses** (D28). Everything it invents
+  competes for associations and spawns a track, so the confidence floor stays at 0.5 even
+  though 0.4 buys four points of recall. Judge a detector on both columns.
 - **Off-pitch people are dropped before tracking, not after** (D27). Two fifths of the
   detector's output is crowd and staff, and until they are filtered they compete for
   associations. This is the one place stage 2 consults stage 1, and only as a filter.

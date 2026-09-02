@@ -1,9 +1,19 @@
 """Stage 2a - find people in a frame.
 
-torchvision's COCO Faster R-CNN. Not state of the art, which is the point: it is BSD
-licensed, it is already a dependency, and it is a FLOOR. Anything it finds a better
-detector also finds, so a measurement taken with it is a lower bound on the pipeline
-rather than a best case.
+RT-DETR, COCO-pretrained, Apache-2.0. It replaced torchvision's Faster R-CNN once the
+pipeline was measurable enough to compare them properly, and it wins on every axis:
+
+    Faster R-CNN  conf 0.50   83.6% recall   1.6 spurious per frame   0.26 s/frame
+    RT-DETR       conf 0.50   86.2% recall   0.5 spurious per frame   0.14 s/frame
+
+That comparison is the whole reason the first detector was a deliberate floor. The
+false-positive column matters as much as recall here: everything the detector invents
+competes for associations and spawns tracks, which is what fragments them (D27).
+
+Two things that did NOT lift recall, so they are not worth retrying: feeding the model
+a larger image (800px against 1333px changed nothing, because the misses are occlusions
+rather than small players), and lowering the confidence floor, which buys recall at
+roughly three false detections per real one.
 
 Detections are cached to work/<clip>/detections.json. Detecting is the slow part and
 tracking is the part that gets tuned, so they are separate stages on purpose.
@@ -21,15 +31,20 @@ from typing import Any
 import cv2
 import numpy as np
 import torch
-from torchvision.models.detection import (
-    FasterRCNN_ResNet50_FPN_V2_Weights,
-    fasterrcnn_resnet50_fpn_v2,
-)
 
-# COCO class 1. The only one worth asking for - a football is class 37 but at this
-# resolution the detector finds it about as often as it invents one (D4).
-PERSON = 1
+# COCO-pretrained, Apache-2.0. The o365 variant is trained on Objects365 as well and is
+# the stronger of the two on crowded scenes, which is all of football.
+MODEL = "PekingU/rtdetr_r50vd_coco_o365"
 
+# The only class worth asking for - a football is in COCO too, but at this resolution
+# the detector finds it about as often as it invents one (D4).
+PERSON = "person"
+
+# Held at 0.5 rather than lowered. RT-DETR at 0.4 does have the same false-positive rate
+# the old detector had at 0.5, but "false" there was measured against players only, and
+# what it actually finds are referees and touchline staff - real people the pipeline then
+# tracks and has to be told to ignore. At 0.5 it beats the old detector on BOTH counts:
+# 86.2% recall against 83.6%, and a third of the spurious boxes.
 DEFAULT_CONF = 0.5
 
 
@@ -72,38 +87,50 @@ def device() -> str:
     return "mps" if torch.backends.mps.is_available() else "cpu"
 
 
-def load_model(dev: str | None = None) -> tuple[Any, str]:
+def load_model(dev: str | None = None) -> tuple[Any, Any, str]:
+    """The model, its image processor, and the device. Weights download on first use."""
+    from transformers import RTDetrForObjectDetection, RTDetrImageProcessor
+
     _trust_certifi()
     dev = dev or device()
-    weights = FasterRCNN_ResNet50_FPN_V2_Weights.DEFAULT
-    model = fasterrcnn_resnet50_fpn_v2(weights=weights).eval().to(dev)
-    return model, dev
+    processor = RTDetrImageProcessor.from_pretrained(MODEL)
+    # transformers ships no py.typed, so the model is Any from here on.
+    model: Any = RTDetrForObjectDetection.from_pretrained(MODEL)
+    model = model.eval().to(dev)
+    return model, processor, dev
 
 
-def on_frame(model: Any, dev: str, bgr: Any, conf: float = DEFAULT_CONF) -> list[tuple[float, ...]]:
+def on_frame(
+    model: Any, processor: Any, dev: str, bgr: Any, conf: float = DEFAULT_CONF
+) -> list[tuple[float, ...]]:
     rgb = cv2.cvtColor(bgr, cv2.COLOR_BGR2RGB)
-    t = torch.from_numpy(rgb).permute(2, 0, 1).float().div(255).unsqueeze(0).to(dev)
+    inputs = processor(images=rgb, return_tensors="pt").to(dev)
     with torch.no_grad():
-        out = model(t)[0]
-    keep = (out["labels"] == PERSON) & (out["scores"] >= conf)
-    boxes = out["boxes"][keep].cpu().numpy()
-    scores = out["scores"][keep].cpu().numpy()
-    return [
-        (float(b[0]), float(b[1]), float(b[2]), float(b[3]), float(s))
-        for b, s in zip(boxes, scores, strict=True)
-    ]
+        out = model(**inputs)
+    sizes = torch.tensor([rgb.shape[:2]])
+    result = processor.post_process_object_detection(out, target_sizes=sizes, threshold=conf)[0]
+    people = {i for i, name in model.config.id2label.items() if name == PERSON}
+
+    found: list[tuple[float, ...]] = []
+    for box, label, score in zip(
+        result["boxes"], result["labels"].tolist(), result["scores"].tolist(), strict=True
+    ):
+        if label in people:
+            x1, y1, x2, y2 = (float(v) for v in box.cpu().numpy())
+            found.append((x1, y1, x2, y2, float(score)))
+    return found
 
 
 def run(
     frames_dir: Path, frames: list[int], *, conf: float = DEFAULT_CONF, progress: Any = None
 ) -> list[Detection]:
-    model, dev = load_model()
+    model, processor, dev = load_model()
     out: list[Detection] = []
     for f in frames:
         img = cv2.imread(str(frames_dir / f"{f:06d}.jpg"))
         if img is None:
             continue
-        for x1, y1, x2, y2, s in on_frame(model, dev, img, conf):
+        for x1, y1, x2, y2, s in on_frame(model, processor, dev, img, conf):
             out.append(Detection(f=f, x1=x1, y1=y1, x2=x2, y2=y2, score=s))
         if progress is not None:
             progress(f)

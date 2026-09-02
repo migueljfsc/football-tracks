@@ -220,9 +220,9 @@ diffs the result against ground truth. On SNGS-147:
 
 | clip | recall | precision | error | purity | switches |
 |---|---|---|---|---|---|
-| 3 s | 96.6% | 80.8% | 0.60 m | 92.4% | 1 |
-| 5 s | 97.2% | 79.5% | 0.69 m | 87.0% | 1 |
-| **7 s** | **97.0%** | **74.4%** | **0.80 m** | **86.2%** | **2** |
+| 3 s | 95.1% | 78.6% | 0.57 m | 92.6% | 1 |
+| 5 s | 96.3% | 81.2% | 0.68 m | 87.3% | 1 |
+| **7 s** | **96.7%** | **83.1%** | **0.77 m** | **86.5%** | **2** |
 | 10 s | 45.3% | 44.5% | 0.89 m | 88.0% | 8 |
 | 30 s | 39.0% | 36.9% | 1.34 m | 76.7% | 67 |
 
@@ -388,6 +388,27 @@ than 1.0 because with six points a homography has barely more constraints than d
 of freedom, so at a loose threshold RANSAC prefers a warped fit that swallows a bad
 click over one that rejects it. Measured on a deliberate 8 m misclick: 0.5 rejects it,
 1.0 absorbs it and moves the centre spot sixteen metres.
+
+**D28 — the detector is RT-DETR, and the first one was deliberately a floor.**
+torchvision's Faster R-CNN was chosen because it was BSD, already a dependency, and
+certain to be beatable — so every number taken with it was a lower bound rather than a
+best case. Once the pipeline was measurable enough to compare fairly, it was replaced:
+
+    Faster R-CNN  conf 0.50   83.6% recall   1.6 spurious per frame   0.26 s/frame
+    RT-DETR       conf 0.50   86.2% recall   0.5 spurious per frame   0.14 s/frame
+
+Better on all three, and Apache-2.0, so the licence story stays clean (D9).
+
+**The false-positive column matters as much as recall**, which is why the confidence
+floor stays at 0.5 rather than dropping to 0.4 for four more points of recall. Everything
+the detector invents competes for associations and spawns tracks. On the Rio Ave clip the
+swap took 50 tracks to 35 and, more to the point, fragments covering under a tenth of the
+clip from 17 to 5 — the twelve longest now run 205, 196, 185 and 183 frames out of 208.
+
+Two things that did NOT lift recall and are not worth retrying: a larger input image (800
+against 1333 changed nothing, because the misses are occlusions rather than small
+players), and a lower confidence floor, which buys recall at about three spurious boxes
+per real one.
 
 **D27 — anyone standing off the pitch is dropped BEFORE tracking, not after.** Two fifths
 of what the detector finds on SoccerNet is crowd, dugout staff and ballboys behind the
