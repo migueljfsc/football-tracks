@@ -212,6 +212,46 @@ bad (2 tracks over half the clip, 69 under a tenth); over 7 seconds it is not.
 The stage is worth measuring by how much of a player's life its best track covers, not by how
 many tracks exist.
 
+### Do the constants hold on clips they were not tuned on?
+
+Every number here — the track age, the coverage floor, the carrier radius, the player
+margin, the line minimums — was chosen against SNGS-147. One clip. So two more were
+fetched and run untouched, both deliberately harder: a corner and a yellow card, at 13.5
+and 13.3 players a frame against SNGS-147's 7.0.
+
+| clip | tracks | recall | precision | error | purity | teams |
+|---|---|---|---|---|---|---|
+| SNGS-147 *(tuned on)* | 52 | 53.5% | 86.4% | 0.62 m | 80.5% | 87% |
+| SNGS-116 | 58 | 59.2% | 83.4% | 0.42 m | **60.1%** | 78% |
+| SNGS-121 | 38 | 43.4% | 85.0% | 0.53 m | 78.3% | 87% |
+
+**Most of it generalises.** Precision holds within three points, position error is
+actually BETTER on the clips nothing was fitted to, and the team split holds. The
+detector, the off-pitch margin, the camera model and the kit split are not fitted to one
+clip.
+
+**Identity is the exception, and it fails by a different mechanism.** On the corner,
+purity falls to 60.1%, and 93 of its 111 steals are between players BOTH VISIBLE at the
+time — not after a gap, which was SNGS-147's problem and is fixed. Players there stand
+2.13 m apart at the fifth percentile against 3.58 m on SNGS-147.
+
+**And colour still does not fix it, which was worth finding out properly.** Weighting it
+from 0.6 up to 5.0 moves purity on the corner by less than a point (60.1, 59.5, 60.5,
+59.7). The reason is that 18% of boxes there overlap another by more than 30%, so the
+torso crop contains two players and the kit signature blends — **appearance is least
+reliable exactly when it is most needed.** A cue that fails in the case it exists for
+cannot be tuned into working.
+
+Crowded-scene identity is therefore a stated limitation, not an open task. Fixing it
+needs an appearance model robust to partial occlusion — a learned re-identification
+embedding — which is a real project of the same size as jersey OCR (D32). Turning up a
+weight is not.
+
+One methodological lesson worth keeping: **sweeping a constant on a clip where its
+failure does not occur measures nothing.** Colour looked useless for most of this project
+because it was swept on SNGS-147, whose steals happen after gaps where the right player
+is simply absent and no colour could have helped.
+
 ### The automatic path, measured
 
 `ft detect` then `ft auto --mode seed` runs the whole pipeline with **only frame one's

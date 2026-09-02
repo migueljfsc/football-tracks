@@ -135,6 +135,18 @@ work/<clip>/                every stage's artefacts, all reproducible
   grass mask's value floor, so they register as pitch and the optical flow tries to track
   them. That is what `video.content_box` is for, and it uses a max rather than a mean: one
   bright pixel anywhere in a column means that column is content.
+- **Sweeping a constant on a clip where its failure does not occur measures nothing.**
+  Weighting kit colour more heavily looked useless for most of this project, because it
+  was swept on a clip whose steals happened after gaps, where the right player was simply
+  absent and no colour could have helped. In a crowd the wrong candidate is an opponent
+  standing right there. Check which failure a clip actually has before concluding from it.
+- **Tracking fails differently in a crowd.** On SNGS-147 (7 players a frame) steals follow
+  gaps; on SNGS-116 (13.5 a frame, players 2.13 m apart) 93 of 111 are between players both
+  visible at the time. A fix for one is not a fix for the other.
+- **Kit colour cannot solve a crossing, and no weight makes it.** 18% of boxes in a crowded
+  box overlap another by over 30%, so the torso crop blends two players and the signature
+  is worthless in precisely the case it exists for. Crowded identity needs a learned
+  re-identification model; it is a stated limitation, not a tuning problem.
 - **A homography good enough for stage 1 can be useless for stage 2** (D19). Tracking needs
   frame-to-frame CONSISTENCY, not absolute accuracy, and nothing in `Registration` measures
   that. Carrying improves stage 1's card and halves identity purity.

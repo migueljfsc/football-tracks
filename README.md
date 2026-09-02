@@ -66,7 +66,7 @@ uv sync --extra ocr      # shirt numbers
 | — | SoccerNet fetch, ground truth, render, score | **done** |
 | 0 | segment — find the tactical camera | built, unproven |
 | 1 | registration — pixels to metres | solver done, detector next |
-| 2 | detect and track | RT-DETR; purity 86% and precision 83% at 7s |
+| 2 | detect and track | RT-DETR; purity 86% at 7s, but 60% in a crowded box |
 | 3 | teams | 87% of samples on the right side; keepers found |
 | 4 | project — **the proof** | working |
 | 5 | shirt numbers | **tried; does not work** — 1 right, 4 wrong of 9 (D32) |
