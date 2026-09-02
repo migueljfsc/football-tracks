@@ -431,6 +431,25 @@ against 1333 changed nothing, because the misses are occlusions rather than smal
 players), and a lower confidence floor, which buys recall at about three spurious boxes
 per real one.
 
+**D31 — the two kits are told apart on their axis of greatest variance, not by k-means.**
+k-means was the obvious choice and it collapses. It minimises inertia, and the kits are
+not cleanly bimodal — a dozen tracks of the same shirt vary more in light and pose than
+two shirts differ from each other — so the cheapest split is one tight little cluster
+against everybody else. Measured on SNGS-147: 44 tracks to 8, 70% right, and six spurious
+tracks were enough to flip it.
+
+Projecting the signatures onto their first principal component and cutting where the
+between-class variance is greatest gives 26 and 26, 85% right. The `len(a) * len(b)` in
+that score is exactly what stops one side swallowing the other.
+
+**Goalkeepers are taken out first and put back after.** A keeper wears neither kit, and
+left in he costs real accuracy — 83% against 93% on the same tracks. What identifies one
+without being told is two things at once: a colour unlike either team AND standing near a
+goal. Colour alone catches a player in odd light; position alone catches every defender on
+a goal line.
+
+Together these take the team split from 50.2% — pure chance — to **87.2%**.
+
 **D30 — a track that has lost its player gives up quickly.** 88 of 98 identity changes
 on SNGS-147 happened AFTER A GAP, at a median of ten frames — not during a visible
 crossing, which is where I had assumed they were. A track that has lost its player coasts

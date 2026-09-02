@@ -131,6 +131,12 @@ work/<clip>/                every stage's artefacts, all reproducible
 - **Track association happens in STABILISED PIXELS, and projection comes after** (D22). Raw
   pixels lose a panning camera; pitch metres inherit every wobble in the homography. The gate
   is a speed converted through the box height, so stage 2 needs no camera model at all.
+- **k-means collapses on kit colours** (D31). It minimises inertia, and same-kit tracks
+  vary more in light than two kits differ, so the cheapest split is one tiny cluster
+  against everyone. Split on the first principal component by between-class variance,
+  whose `len(a) * len(b)` term is what keeps the two sides comparable in size.
+- **A goalkeeper is not a third team, and leaving him in the clustering costs both.** He
+  is removed by being an odd colour AND near a goal — either test alone is wrong.
 - **A raw track count overstates fragmentation.** What matters is how much of a player's
   life their best track covers. Fifty tracks where thirteen cover half the clip is a usable
   reconstruction; the rest are fragments a reduction drops.

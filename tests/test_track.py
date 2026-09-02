@@ -24,7 +24,7 @@ from football_tracks.stage2_track import (
     color_distance,
     run,
 )
-from football_tracks.stage3_teams import assign, kmeans2
+from football_tracks.stage3_teams import assign, split_kits
 
 FPS = 25.0
 
@@ -146,19 +146,32 @@ def test_colour_distance_is_neutral_when_a_kit_is_unknown() -> None:
     assert color_distance(a, np.array([0.0, 1.0])) == 1.0
 
 
-def test_kmeans_splits_two_kits() -> None:
+def test_the_two_kits_are_told_apart() -> None:
     pts = np.array([[1.0, 0.0]] * 5 + [[0.0, 1.0]] * 5)
-    labels = kmeans2(pts)
+    labels = split_kits(pts)
     assert len(set(labels[:5])) == 1
     assert len(set(labels[5:])) == 1
     assert labels[0] != labels[5]
 
 
-def test_kmeans_is_deterministic() -> None:
-    # Seeded from the two most distant points, not at random, so a rerun of the whole
+def test_the_split_is_reproducible() -> None:
+    # Exhaustive over cut points rather than seeded at random, so a rerun of the whole
     # pipeline does not relabel the teams.
     pts = np.array([[1.0, 0.0], [0.9, 0.1], [0.0, 1.0], [0.1, 0.9]])
-    assert np.array_equal(kmeans2(pts), kmeans2(pts))
+    assert np.array_equal(split_kits(pts), split_kits(pts))
+
+
+def test_one_odd_kit_does_not_swallow_the_split() -> None:
+    # What k-means did: minimising inertia, the cheapest split of eleven similar kits and
+    # one strange one is the strange one alone against everybody else. Between-class
+    # variance will not, because it is weighted by BOTH group sizes.
+    #
+    # A signature is a normalised histogram, so it sums to one and no kit can be
+    # arbitrarily far from the rest. A genuinely extreme point would still split alone,
+    # which is why `assign` takes the keepers out before it gets here.
+    pts = np.array([[1.0, 0.0]] * 6 + [[0.0, 1.0]] * 5 + [[0.5, 0.5]])
+    labels = split_kits(pts)
+    assert min(int((labels == 0).sum()), int((labels == 1).sum())) >= 5
 
 
 def test_home_is_the_side_nearer_x_zero_not_the_side_that_scores_best() -> None:

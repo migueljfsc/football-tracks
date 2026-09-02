@@ -67,7 +67,7 @@ uv sync --extra ocr      # shirt numbers
 | 0 | segment — find the tactical camera | built, unproven |
 | 1 | registration — pixels to metres | solver done, detector next |
 | 2 | detect and track | RT-DETR; purity 86% and precision 83% at 7s |
-| 3 | teams | clustering near chance — needs work |
+| 3 | teams | 87% of samples on the right side; keepers found |
 | 4 | project — **the proof** | working |
 | 5 | shirt numbers | not started |
 | — | the ball's holder | 99% right within 4m; declines when it is in flight |
