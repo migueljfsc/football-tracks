@@ -1,3 +1,9 @@
+## v0.3.7 (2026-09-02)
+
+### Fix
+
+- crop chrome out of the picture, and leave the ball selection alone
+
 ## v0.3.6 (2026-09-02)
 
 ### Fix
