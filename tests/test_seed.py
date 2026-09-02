@@ -198,3 +198,30 @@ def test_a_traced_seed_can_be_flipped_and_round_tripped(tmp_path: Path) -> None:
     # Flipping y must move the marking to the mirrored side, not leave it be.
     flipped_line = seed.flip_y(s).lines[-1][1]
     assert flipped_line != s.lines[-1][1]
+
+
+def test_two_swapped_landmarks_do_not_wreck_the_fit() -> None:
+    """A real seed had `penalty box front far` and `near` clicked the wrong way round.
+
+    Nine of its eleven clicks were right, and the fit still came back 1.82m from the
+    markings, because a least-squares fit spreads a bad click's error over every other
+    point until they all look bad. The single-pass trim then dropped all eleven, found
+    what remained degenerate, and returned the very fit it was trying to repair.
+    """
+    good = clicked(SIX)
+    swapped = list(good.points)
+    (ia, pa), (ib, pb) = swapped[2], swapped[3]
+    swapped[2], swapped[3] = (ia, pb), (ib, pa)
+    s = seed.Seed(frame=1, points=swapped, lines=traced("goal line") + traced("far touchline"))
+
+    h = seed.homography(s)
+    assert h is not None
+    got = calibration.apply(h, calibration.apply(PITCH_TO_IMAGE, np.array([[52.5, 34.0]])))
+    assert got[0] == pytest.approx([52.5, 34.0], abs=1.0)
+
+
+def test_trimming_stops_before_the_evidence_runs_out() -> None:
+    # Dropping outliers must not eat the constraints. Four exact points are already
+    # exactly determined, so nothing can be removed and the fit is returned as it is.
+    s = clicked(SIX[:4])
+    assert seed.homography(s) is not None

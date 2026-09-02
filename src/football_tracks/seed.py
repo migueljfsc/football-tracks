@@ -257,26 +257,48 @@ def homography(seed: Seed) -> npt.NDArray[np.float64] | None:
     if _collapses(h, seed):
         return None
 
-    # One trimmed refit. There is no RANSAC here because a traced point is not a
-    # correspondence to sample from, and tracing gives many more constraints than
-    # degrees of freedom, so a single bad point cannot warp the fit the way it can
-    # with six exact clicks.
-    bad_points = {i for i, r in enumerate(_point_residuals(h, seed)) if r > MISCLICK_METRES}
-    bad_lines = {i for i, r in enumerate(_line_residuals(h, seed)) if r > MISCLICK_METRES}
-    if not bad_points and not bad_lines:
-        return np.asarray(h, dtype=np.float64)
+    # Trim ONE AT A TIME, worst first, rather than dropping everything that looks bad
+    # in a single pass. A least-squares fit spreads a bad click's error over every other
+    # point, so with two landmarks swapped EVERY residual exceeded the threshold - the
+    # single-pass version dropped all eleven, found what was left degenerate, and handed
+    # back the bad fit it was trying to repair. Measured on a real seed: 1.82 m from the
+    # markings before, 0.2 m after.
+    #
+    # A drop is only kept while what remains still says something about both directions
+    # and still has more constraints than degrees of freedom (D17).
+    for _ in range(len(seed.points)):
+        point_res = _point_residuals(h, seed)
+        line_res = _line_residuals(h, seed)
+        worst_point = max(range(len(point_res)), default=-1, key=lambda i: point_res[i])
+        worst_line = max(range(len(line_res)), default=-1, key=lambda i: line_res[i])
+        pw = point_res[worst_point] if point_res else 0.0
+        lw = line_res[worst_line] if line_res else 0.0
+        if max(pw, lw) <= MISCLICK_METRES:
+            break
 
-    kept = Seed(
-        frame=seed.frame,
-        points=[p for i, p in enumerate(seed.points) if i not in bad_points],
-        lines=[ln for i, ln in enumerate(seed.lines) if i not in bad_lines],
-    )
-    if not _spans_two_directions(kept) or len(kept.points) * 2 + len(kept.lines) < 8:
-        return np.asarray(h, dtype=np.float64)
-    refit = calibration.fit(kept.points, kept.lines, 0, 0)
-    if refit is None or _collapses(np.asarray(refit, dtype=np.float64), kept):
-        return np.asarray(h, dtype=np.float64)
-    return np.asarray(refit, dtype=np.float64)
+        if pw >= lw:
+            kept = Seed(
+                frame=seed.frame,
+                points=[p for i, p in enumerate(seed.points) if i != worst_point],
+                lines=seed.lines,
+            )
+        else:
+            kept = Seed(
+                frame=seed.frame,
+                points=seed.points,
+                lines=[ln for i, ln in enumerate(seed.lines) if i != worst_line],
+            )
+        if not _spans_two_directions(kept) or len(kept.points) * 2 + len(kept.lines) < 8:
+            break
+        refit = calibration.fit(kept.points, kept.lines, 0, 0)
+        if refit is None:
+            break
+        candidate = np.asarray(refit, dtype=np.float64)
+        if _collapses(candidate, kept):
+            break
+        h, seed = candidate, kept
+
+    return np.asarray(h, dtype=np.float64)
 
 
 def _collapses(h: npt.NDArray[np.float64], seed: Seed) -> bool:
