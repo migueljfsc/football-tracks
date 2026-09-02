@@ -1,3 +1,9 @@
+## v0.3.2 (2026-09-02)
+
+### Fix
+
+- **ci**: the type checker needed a two-gigabyte GPU stack to look at a dataclass
+
 ## v0.3.1 (2026-09-02)
 
 ### Perf
