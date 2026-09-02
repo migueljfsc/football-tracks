@@ -344,6 +344,16 @@ Measured against SoccerNet's own ball annotations, the nearest player is the rig
 **99% of the time** within four metres, answering about half the frames and declining on
 the rest. Declining is the point: a ball in flight belongs to nobody.
 
+Two more things tried and rejected, both measured against SoccerNet's own ball. **Filtering
+candidates by SIZE** — a 22 cm ball has a predictable apparent width at any point once the
+camera is known — does not separate them: true sightings come in at 2.00x the predicted
+width and false ones at 1.69x, and the tightest useful band keeps 74% of real balls while
+still admitting 49% of the impostors. **Choosing the most confident candidate that lands ON
+the pitch**, rather than the most confident anywhere, answers more frames and gets more of
+them wrong: 630 frames against 589, of which 17 of the 41 extra answers are wrong, because
+a weak false positive on the grass then wins a frame the ball was not in. Abstaining is the
+better trade (D5).
+
 Two things that had to be right. The detector reports about five "sports balls" a frame —
 a head, a boot, a patch of hoarding — so the most confident one is taken and then MEDIAN
 FILTERED over its neighbours, because what separates the real ball from the impostors is

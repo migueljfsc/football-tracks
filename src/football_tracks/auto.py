@@ -125,6 +125,11 @@ def ball_path(
         h = homs.get(f)
         if h is None:
             continue
+        # The most confident candidate ANYWHERE, then checked against the pitch after
+        # smoothing. Choosing among only the candidates that already land on the grass
+        # was tried and is worse: it answers 630 frames against 589, but 17 of those 41
+        # extra answers are wrong, because a low-confidence false positive ON the pitch
+        # then wins a frame the ball was not in. Abstaining is the better trade (D5).
         top = max(seen, key=lambda b: b.score)
         best[f] = calibration.to_pitch(h, top.x, top.y)
 
