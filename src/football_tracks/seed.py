@@ -72,6 +72,10 @@ MISCLICK_METRES = 0.5
 # x = 0 - a degenerate set that fits perfectly and describes nothing. Measured as the
 # ratio of the point cloud's two principal spreads.
 MIN_SPREAD_RATIO = 0.08
+
+# Distinct markings needed when there is nothing but traced lines to go on. Two always
+# meet, and a fit that maps everything to where they meet satisfies both perfectly.
+MIN_TRACED_LINES = 3
 MIN_SPREAD_M = 3.0
 
 
@@ -236,6 +240,13 @@ def homography(seed: Seed) -> npt.NDArray[np.float64] | None:
             return None if fallback is None else np.asarray(fallback, dtype=np.float64)
         return np.asarray(solved, dtype=np.float64)
 
+    # Two distinct markings are ALWAYS degenerate, however many points are traced along
+    # them: they cross somewhere, and a homography sending the whole image to that
+    # crossing satisfies every point-on-line constraint exactly. This is structural, so
+    # it is counted rather than measured - `_collapses` below catches it numerically and
+    # a numerical guard is at the mercy of which machine ran the SVD.
+    if not seed.points and len({ln for _, ln in seed.lines}) < MIN_TRACED_LINES:
+        return None
     if not _spans_two_directions(seed):
         return None
 

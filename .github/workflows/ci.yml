@@ -21,6 +21,10 @@ jobs:
       # Stage 0 deps plus the dev group. The vision and ocr extras pull torch, which
       # is ~2GB and is needed by neither the linters nor the pure helpers under test.
       # CI installs them once a stage that uses them has tests worth running.
+      # video.probe shells out to it. The code falls back to the container's declared
+      # frame rate without it, but that is the path nobody should be testing.
+      - run: sudo apt-get update -qq && sudo apt-get install -y -qq ffmpeg
+
       - run: uv sync --frozen
       - run: uv run ruff format --check .
       - run: uv run ruff check .

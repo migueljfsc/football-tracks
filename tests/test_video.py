@@ -58,3 +58,24 @@ def test_the_clip_metadata_round_trips(tmp_path: Path) -> None:
     make(src, frames=5)
     written = video.extract(src, tmp_path / "out")
     assert video.load(tmp_path / "out") == written
+
+
+def test_a_missing_ffprobe_costs_accuracy_not_the_run(tmp_path: Path, monkeypatch) -> None:  # type: ignore[no-untyped-def]
+    """Without ffprobe the container's declared rate is used.
+
+    It is the only thing that knows the real duration, and a recording routinely lies
+    about its frame rate — but a machine without it should still be able to open a clip,
+    and get slightly wrong scene timings rather than a stack trace.
+    """
+    import subprocess
+
+    src = tmp_path / "clip.mp4"
+    make(src, frames=6, fps=30.0)
+
+    def gone(*_args: object, **_kwargs: object) -> None:
+        raise FileNotFoundError(2, "No such file or directory", "ffprobe")
+
+    monkeypatch.setattr(subprocess, "run", gone)
+    fps, count, _w, _h = video.probe(src)
+    assert count == 6
+    assert fps == pytest.approx(30.0, abs=0.1)

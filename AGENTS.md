@@ -118,6 +118,12 @@ work/<clip>/                every stage's artefacts, all reproducible
   almost any error. It also cannot be loose: with six points there is barely more data
   than there are degrees of freedom, so a loose threshold buys a warped fit that swallows
   the bad point instead of rejecting it.
+- **CI has base dependencies and no ffmpeg.** Verify against that, not against a laptop
+  with everything installed — twice now a green local run has pushed a red CI. The heavy
+  imports are inside the functions that need them for the same reason.
+- **Prefer a structural guard to a numerical one.** Two traced lines are ALWAYS degenerate
+  and that can be counted; checking whether the resulting fit "collapses" is at the mercy
+  of which machine ran the SVD, and passed locally while failing on CI.
 - **A container's frame rate is not the clip's.** A screen recording claimed 120fps while
   holding 208 frames across 6.4 seconds. `video.probe` derives it from duration and count,
   because these numbers become scene durations.

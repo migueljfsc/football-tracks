@@ -60,25 +60,30 @@ def probe(path: Path) -> tuple[float, int, int, int]:
     # A variable-rate recording lies in the header. Duration times the declared rate
     # rarely equals the frame count; the count over the duration is what actually
     # played, and that is what a scene duration has to be built from.
-    out = subprocess.run(
-        [
-            "ffprobe",
-            "-v",
-            "error",
-            "-show_entries",
-            "format=duration",
-            "-of",
-            "default=noprint_wrappers=1:nokey=1",
-            str(path),
-        ],
-        capture_output=True,
-        text=True,
-        check=False,
-    )
+    # ffprobe is the only thing that knows the real duration, and it may not be
+    # installed. Missing it costs accuracy, not the run: the declared rate is used, and
+    # a variable-rate recording then gets slightly wrong scene timings.
+    duration = 0.0
     try:
+        out = subprocess.run(
+            [
+                "ffprobe",
+                "-v",
+                "error",
+                "-show_entries",
+                "format=duration",
+                "-of",
+                "default=noprint_wrappers=1:nokey=1",
+                str(path),
+            ],
+            capture_output=True,
+            text=True,
+            check=False,
+        )
         duration = float(out.stdout.strip())
-    except ValueError:
+    except (FileNotFoundError, ValueError):
         duration = 0.0
+
     fps = count / duration if duration > 0 and count > 0 else declared
     return fps, count, w, h
 
