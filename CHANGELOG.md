@@ -1,3 +1,9 @@
+## v0.4.1 (2026-09-02)
+
+### Fix
+
+- **calibrate**: score a carry against evidence, not against the carry
+
 ## v0.4.0 (2026-09-02)
 
 ### Feat
