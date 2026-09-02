@@ -202,6 +202,16 @@ the harness measures what it claims. Scoring a deliberately degraded copy (12% o
 dropped, 0.6 m of gaussian noise) returns 87.2% recall, 0.70 m median error and 110
 switches — the numbers the noise implies.
 
+### What fragmentation turned out to be
+
+A raw track count overstates it. On the Rio Ave clip, 50 tracks sounds like a dozen players
+shattered — but 13 of them cover more than half the clip, which is about how many players are
+in shot, and 17 are brief fragments any reduction can drop. Over 30 seconds it is genuinely
+bad (2 tracks over half the clip, 69 under a tenth); over 7 seconds it is not.
+
+The stage is worth measuring by how much of a player's life its best track covers, not by how
+many tracks exist.
+
 ### The automatic path, measured
 
 `ft detect` then `ft auto --mode seed` runs the whole pipeline with **only frame one's
@@ -378,6 +388,26 @@ than 1.0 because with six points a homography has barely more constraints than d
 of freedom, so at a loose threshold RANSAC prefers a warped fit that swallows a bad
 click over one that rejects it. Measured on a deliberate 8 m misclick: 0.5 rejects it,
 1.0 absorbs it and moves the centre spot sixteen metres.
+
+**D27 — anyone standing off the pitch is dropped BEFORE tracking, not after.** Two fifths
+of what the detector finds on SoccerNet is crowd, dugout staff and ballboys behind the
+hoardings. They were always discarded at the end, but until then they were competing for
+associations and spawning tracks of their own. Filtering first takes 123 tracks to 69,
+lifts identity purity from 77.8% to 79.3% and drops switches from 44 to 38, at no cost to
+recall.
+
+This is the one place stage 2 consults stage 1, and it is a deliberate exception to D22:
+only as a FILTER. The association still never sees a homography, so a drifting camera can
+change which detections are considered and cannot change the identities.
+
+**Four things that did NOT work, recorded so they are not retried.** Associating in pitch
+metres rather than stabilised pixels; optimal assignment instead of greedy (worth keeping
+on its own merits once the junk was gone — 69 tracks against 72 — but it fixed nothing);
+raising the weight on kit colour, which is genuinely discriminative (same-team pairs sit at
+0.32, opposing at 0.67) and still moved nothing; and stitching fragments back together
+afterwards, which reunited one player for every two players it wrongly welded into one. The
+last was deleted rather than tuned: a fragment loses a run, but a bad join invents one, and
+nothing downstream can tell.
 
 **D22 — stage 2 does not depend on stage 1.** The gate is a speed — a footballer covers at
 most MAX_SPEED metres in a second — and it reaches pixels through the only local scale that

@@ -24,9 +24,12 @@ is deprecated and disappears in 0.31, and more usefully, this regime has a signa
 general tracker does not use: a football team wears one colour. Two players crossing
 are the classic id switch, and if they are on opposite sides their shirts say so.
 
-Association is greedy by ascending cost rather than optimal assignment. With a dozen
-observations and a tight gate the two agree almost always, and greedy can be read - a
-switch traces to a pair rather than to a solver.
+Association is OPTIMAL, not greedy. Greedy by ascending cost was the first version and
+it fragments: measured on SNGS-147, 98% of the frames where a track went unmatched had
+its nearest detection already claimed by a different track. That is exactly greedy's
+failure - it hands out the globally cheapest pair first, taking a detection some other
+track needed more, and the starved track then dies and respawns as a new id. Crowded
+penalty areas are all competition, which is where this matters and where football is.
 
 THE FAILURE THIS STAGE HAS is the id switch, and it is invisible in a detection count:
 every player is still found. `score.identity_purity` is what sees it.
@@ -40,6 +43,7 @@ from typing import Any
 
 import cv2
 import numpy as np
+from scipy.optimize import linear_sum_assignment
 
 from .detect import Detection
 
@@ -68,6 +72,10 @@ COLOR_WEIGHT = 0.6
 MAX_AGE_S = 0.8
 
 MIN_TRACK_LENGTH = 5
+
+# Stands in for "cannot be paired" in the cost matrix. Any value a real pair cannot
+# reach will do; the gate caps a real cost at 1 + COLOR_WEIGHT.
+UNREACHABLE = 1e6
 
 
 def warp(x: float, y: float, motion: np.ndarray | None) -> tuple[float, float]:
@@ -190,40 +198,38 @@ def run(
 
         motion = motions.get(f) if motions is not None else None
 
-        pairs: list[tuple[float, int, int]] = []
-        for ti, track in enumerate(live):
-            for oi, o in enumerate(obs):
-                c = _cost(track, o, colors[oi], fps, motion)
-                if c is not None:
-                    pairs.append((c, ti, oi))
-        pairs.sort()
-
+        # Cost matrix, with unreachable pairs held out of the assignment by a cost no
+        # feasible pair can reach rather than by omission - the solver needs a full
+        # rectangle, and it must never prefer an impossible pair to leaving a track
+        # unmatched.
         used_t: set[int] = set()
         used_o: set[int] = set()
-        for _, ti, oi in pairs:
-            if ti in used_t or oi in used_o:
-                continue
-            used_t.add(ti)
-            used_o.add(oi)
-            track, o = live[ti], obs[oi]
-            dt = max(1, o.f - track.last.f) / fps
-            # Velocity is what is left after the camera is accounted for, so it stays
-            # meaningful across a pan instead of encoding the pan itself.
-            sx, sy = (
-                track.predict(dt, motion) if motion is not None else (track.last.x, track.last.y)
-            )
-            base = (
-                (sx - track.velocity[0] * dt, sy - track.velocity[1] * dt)
-                if motion is not None
-                else (track.last.x, track.last.y)
-            )
-            track.velocity = ((o.x - base[0]) / dt, (o.y - base[1]) / dt)
-            track.observations.append(o)
-            seen = colors[oi]
-            if seen is not None:
-                # Rolling average: a single frame of shadow should not redefine a kit.
-                prior = track.color
-                track.color = seen if prior is None else 0.8 * prior + 0.2 * seen
+        if live and obs:
+            costs = np.full((len(live), len(obs)), UNREACHABLE, dtype=np.float64)
+            for ti, track in enumerate(live):
+                for oi, o in enumerate(obs):
+                    c = _cost(track, o, colors[oi], fps, motion)
+                    if c is not None:
+                        costs[ti, oi] = c
+
+            for ti, oi in zip(*linear_sum_assignment(costs), strict=True):
+                if costs[ti, oi] >= UNREACHABLE:
+                    continue  # the solver had to pair these; the gate says otherwise
+                used_t.add(int(ti))
+                used_o.add(int(oi))
+                track, o = live[ti], obs[oi]
+                dt = max(1, o.f - track.last.f) / fps
+                # Velocity is what is left after the camera is accounted for: where the
+                # player actually was, moved by the camera alone, versus where they
+                # turned up. Skipping the compensation stores the pan as their speed.
+                wx, wy = warp(track.last.x, track.last.y, motion)
+                track.velocity = ((o.x - wx) / dt, (o.y - wy) / dt)
+                track.observations.append(o)
+                seen = colors[oi]
+                if seen is not None:
+                    # Rolling average: one frame of shadow should not redefine a kit.
+                    prior = track.color
+                    track.color = seen if prior is None else 0.8 * prior + 0.2 * seen
 
         for oi, o in enumerate(obs):
             if oi not in used_o:

@@ -113,14 +113,28 @@ def build(
             cache[f] = cv2.imread(str(frames_dir / f"{f:06d}.jpg"))
         return cache[f]
 
+    # Drop anyone standing off the pitch BEFORE tracking, not after. Two fifths of what
+    # the detector finds is crowd, dugout staff and ballboys behind the hoardings, and
+    # while they were always discarded at the end, until then they were competing for
+    # associations and spawning tracks. Filtering first nearly halves the track count.
+    #
+    # This is the one place stage 2 consults stage 1 (D22), and only as a filter: the
+    # association itself still never sees a homography, so a drifting camera moves which
+    # detections are considered and cannot move the identities.
     observations: dict[int, list[stage2_track.Observation]] = {}
+    dropped = 0
     for d in detections:
+        h = homs.get(d.f)
+        if h is None:
+            continue
+        if not on_pitch(*calibration.to_pitch(h, *d.foot)):
+            dropped += 1
+            continue
         observations.setdefault(d.f, []).append(stage2_track.Observation.of(d))
 
     raw = stage2_track.run(observations, frames, read_frame, fps=fps, motions=motions)
 
     positions: dict[int, list[Sample]] = {}
-    dropped = 0
     for t in raw:
         samples: list[Sample] = []
         for o in t.observations:
@@ -129,7 +143,7 @@ def build(
                 continue
             x, y = calibration.to_pitch(h, o.x, o.y)
             if not on_pitch(x, y):
-                dropped += 1  # crowd, dugout, ballboys behind the hoardings
+                dropped += 1
                 continue
             samples.append(Sample(f=o.f, x=x, y=y, conf=o.det.score))
         if samples:

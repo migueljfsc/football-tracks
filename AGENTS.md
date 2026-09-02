@@ -131,6 +131,12 @@ work/<clip>/                every stage's artefacts, all reproducible
 - **Track association happens in STABILISED PIXELS, and projection comes after** (D22). Raw
   pixels lose a panning camera; pitch metres inherit every wobble in the homography. The gate
   is a speed converted through the box height, so stage 2 needs no camera model at all.
+- **A raw track count overstates fragmentation.** What matters is how much of a player's
+  life their best track covers. Fifty tracks where thirteen cover half the clip is a usable
+  reconstruction; the rest are fragments a reduction drops.
+- **Off-pitch people are dropped before tracking, not after** (D27). Two fifths of the
+  detector's output is crowd and staff, and until they are filtered they compete for
+  associations. This is the one place stage 2 consults stage 1, and only as a filter.
 - **A bad homography now shows up as an identity error, not a tracking error.** The tracker
   is independent of it, but a sample projected five metres out matches a different player and
   scores as a switch. Do not read a purity drop as a tracker regression without checking what

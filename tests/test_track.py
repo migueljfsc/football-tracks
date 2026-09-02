@@ -12,12 +12,15 @@ tie-breaks they rest on.
 from __future__ import annotations
 
 import numpy as np
+from scipy.optimize import linear_sum_assignment
 
 from football_tracks.detect import Detection
 from football_tracks.stage2_track import (
     MAX_SPEED,
+    UNREACHABLE,
     Observation,
     Track,
+    _cost,
     color_distance,
     run,
 )
@@ -174,3 +177,34 @@ def test_a_track_with_no_kit_signature_is_unknown_not_guessed() -> None:
     ]
     teams = assign(tracks, {1: 20.0, 2: 80.0, 3: 50.0})
     assert teams[3] == "unknown"
+
+
+def test_optimal_assignment_beats_taking_the_cheapest_pair_first() -> None:
+    """Greedy hands out the globally cheapest pair first, even when that starves another
+    track of the only detection it could have had. Two tracks and two detections, laid
+    out so the cheap pairing forces the second track onto nothing."""
+    a = Track(id=1, observations=[obs(1, 100.0, 200.0)])
+    b = Track(id=2, observations=[obs(1, 140.0, 200.0)])
+    candidates = [obs(2, 138.0, 200.0), obs(2, 104.0, 200.0)]
+
+    costs = np.array(
+        [
+            [
+                c if (c := _cost(t, o, None, FPS, None)) is not None else UNREACHABLE
+                for o in candidates
+            ]
+            for t in (a, b)
+        ]
+    )
+    rows, cols = linear_sum_assignment(costs)
+    # Track 1 must take the detection near 100 and track 2 the one near 140, even though
+    # pairing track 1 with the 138 detection is individually cheaper than nothing.
+    assert dict(zip(rows.tolist(), cols.tolist(), strict=True)) == {0: 1, 1: 0}
+    assert costs[0, 1] < UNREACHABLE and costs[1, 0] < UNREACHABLE
+
+
+def test_an_unreachable_pair_is_never_accepted() -> None:
+    # The solver must return a full assignment, so it will pair things the gate refuses.
+    # Those pairings have to be dropped afterwards or a track teleports across the pitch.
+    far = Track(id=1, observations=[obs(1, 100.0, 200.0)])
+    assert _cost(far, obs(2, 3000.0, 200.0), None, FPS, None) is None

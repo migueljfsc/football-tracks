@@ -9,6 +9,9 @@ dependencies = [
     "numpy>=2.1",
     "opencv-python>=4.10",
     "scenedetect>=0.6.4",
+    # Optimal assignment for the tracker. Already present transitively; declared
+    # because relying on somebody else's dependency is how a working install breaks.
+    "scipy>=1.14",
 ]
 
 # Installed per stage rather than all at once: stage 0 needs none of this, and a
@@ -50,7 +53,7 @@ strict = true
 # scenedetect ships no stubs. Confined to it, so a missing stub anywhere else is
 # still an error rather than a silent Any. cv2 5.x types itself - see MatLike.
 [[tool.mypy.overrides]]
-module = ["scenedetect.*", "torchvision.*"]
+module = ["scenedetect.*", "torchvision.*", "scipy.*"]
 ignore_missing_imports = true
 
 [tool.pytest.ini_options]
