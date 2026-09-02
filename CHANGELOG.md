@@ -1,3 +1,9 @@
+## v0.4.0 (2026-09-02)
+
+### Feat
+
+- **seed**: a panel behind the instructions, and markings drawn at their extent
+
 ## v0.3.8 (2026-09-02)
 
 ### Fix
