@@ -1,3 +1,9 @@
+## v0.3.3 (2026-09-02)
+
+### Fix
+
+- tell the two kits apart properly, and stop the keeper poisoning it
+
 ## v0.3.2 (2026-09-02)
 
 ### Fix
