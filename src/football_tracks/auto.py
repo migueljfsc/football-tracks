@@ -29,9 +29,19 @@ from .tracks import PLAYER_MARGIN, Sample, Track, on_pitch
 Mode = Literal["truth", "seed"]
 
 
+# How many frames either side the ball's position is taken a median over.
+#
+# The detector reports about five "sports balls" a frame - a head, a boot, a patch of
+# hoarding - and the real one is only usually the most confident. What separates it from
+# the impostors is that it MOVES SMOOTHLY, so a median over neighbouring frames throws
+# them out without having to know which is which.
+BALL_SMOOTH_FRAMES = 5
+
+
 @dataclass(slots=True)
 class Result:
     tracks: list[Track]
+    ball: list[Sample]
     frames: int
     detections: int
     raw_tracks: int
@@ -89,6 +99,47 @@ def homographies(
     ).homographies
 
 
+def ball_path(
+    balls: list[detect.Sighting],
+    homs: dict[int, Any],
+    frames: list[int],
+    smooth: int = BALL_SMOOTH_FRAMES,
+) -> list[Sample]:
+    """Where the ball is, per frame, in pitch metres.
+
+    The most confident sighting per frame, projected, then median-filtered over its
+    neighbours. Picking the sighting NEAREST a player scores worse than this and it is
+    worth saying why: there are several candidates a frame, so "nearest a player"
+    reliably selects whichever false positive happens to stand beside somebody.
+
+    The positions are NOT to be trusted as positions. A ground homography assumes z = 0,
+    so a ball in flight lands metres from where it is. They are good for one question -
+    who is nearest - and that question is all a board needs (D29).
+    """
+    best: dict[int, tuple[float, float]] = {}
+    per_frame: dict[int, list[detect.Sighting]] = {}
+    for b in balls:
+        per_frame.setdefault(b.f, []).append(b)
+
+    for f, seen in per_frame.items():
+        h = homs.get(f)
+        if h is None:
+            continue
+        top = max(seen, key=lambda b: b.score)
+        best[f] = calibration.to_pitch(h, top.x, top.y)
+
+    out: list[Sample] = []
+    for f in frames:
+        near = [best[g] for g in range(f - smooth, f + smooth + 1) if g in best]
+        if not near:
+            continue
+        x = float(np.median([p[0] for p in near]))
+        y = float(np.median([p[1] for p in near]))
+        if on_pitch(x, y):
+            out.append(Sample(f=f, x=x, y=y))
+    return out
+
+
 def build(
     frames_dir: Path,
     frames: list[int],
@@ -97,6 +148,7 @@ def build(
     *,
     fps: float,
     motions: dict[int, Any] | None = None,
+    balls: list[detect.Sighting] | None = None,
 ) -> Result:
     """Detections plus a camera model -> tracks in pitch metres.
 
@@ -153,6 +205,7 @@ def build(
     teams = assign([t for t in raw if t.id in positions], mean_x)
 
     return Result(
+        ball=ball_path(balls or [], homs, frames),
         tracks=[
             Track(id=tid, team=teams.get(tid, "unknown"), number=None, samples=ss)
             for tid, ss in sorted(positions.items())

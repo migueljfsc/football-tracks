@@ -134,6 +134,13 @@ work/<clip>/                every stage's artefacts, all reproducible
 - **A raw track count overstates fragmentation.** What matters is how much of a player's
   life their best track covers. Fifty tracks where thirteen cover half the clip is a usable
   reconstruction; the rest are fragments a reduction drops.
+- **The ball's POSITION is not usable and its HOLDER is** (D29). A ground homography
+  assumes z = 0, so a ball in flight lands metres away. Never write a ball position into a
+  board; derive the carrier and let the board draw the pass.
+- **Picking the ball candidate nearest a player is worse than picking the most confident
+  one** — 55% against 99%. With five candidates a frame, "nearest a player" selects
+  whichever false positive is standing beside somebody. Confidence, then a median over
+  neighbouring frames, because the real ball is the one that moves smoothly.
 - **A detector's false positives cost as much as its misses** (D28). Everything it invents
   competes for associations and spawns a track, so the confidence floor stays at 0.5 even
   though 0.4 buys four points of recall. Judge a detector on both columns.

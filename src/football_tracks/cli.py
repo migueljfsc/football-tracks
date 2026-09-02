@@ -328,11 +328,14 @@ def detect(
 
     out = work_dir(Path(clip))
     with typer.progressbar(frames, label="detecting") as bar:
-        found = detect_mod.run(c.frames_dir, frames, conf=conf, progress=lambda _f: bar.update(1))
-    path = detect_mod.write(out / "detections.json", found, conf=conf)
+        found, balls = detect_mod.run(
+            c.frames_dir, frames, conf=conf, progress=lambda _f: bar.update(1)
+        )
+    path = detect_mod.write(out / "detections.json", found, balls, conf=conf)
     typer.echo(
-        f"{len(found)} detections over {len(frames)} frames"
-        f" ({len(found) / max(1, len(frames)):.1f}/frame)"
+        f"{len(found)} people over {len(frames)} frames"
+        f" ({len(found) / max(1, len(frames)):.1f}/frame),"
+        f" {len(balls)} ball sightings"
     )
     typer.echo(f"wrote {path}")
 
@@ -362,7 +365,7 @@ def auto(
         raise typer.BadParameter(f"no {dets_path} - run `ft detect {clip}` first")
 
     frames = sorted(int(p.stem) for p in c.frames_dir.glob("*.jpg"))
-    detections = detect_mod.read(dets_path)
+    detections, balls = detect_mod.read(dets_path)
     motions = stage1_propagate.motions(c.frames_dir, frames, cache=out / "motions.json")
 
     labels: dict[str, Any] | None = None
@@ -393,6 +396,7 @@ def auto(
         homs,
         fps=_fps(CLIPS / clip, labels),
         motions=motions,
+        balls=balls,
     )
 
     path = tracks.write(
@@ -402,6 +406,7 @@ def auto(
         start_frame=min(frames),
         end_frame=max(frames),
         tracks=result.tracks,
+        ball=result.ball,
         width=_size(CLIPS / clip, labels)[0],
         height=_size(CLIPS / clip, labels)[1],
     )
@@ -411,7 +416,7 @@ def auto(
     )
     typer.echo(
         f"dropped off pitch {result.dropped_off_pitch}, frames with no homography"
-        f" {result.unsolved_frames}"
+        f" {result.unsolved_frames}, ball located on {len(result.ball)} frames"
     )
     typer.echo(f"wrote {path}")
 

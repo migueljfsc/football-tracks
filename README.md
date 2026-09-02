@@ -70,6 +70,7 @@ uv sync --extra ocr      # shirt numbers
 | 3 | teams | clustering near chance — needs work |
 | 4 | project — **the proof** | working |
 | 5 | shirt numbers | not started |
+| — | the ball's holder | 99% right within 4m; declines when it is in flight |
 
 From one seeded frame, a 7-second clip comes out at 97% recall, 0.80 m median error and
 86% identity purity. Past ~7s the carried homography drifts and recall halves.

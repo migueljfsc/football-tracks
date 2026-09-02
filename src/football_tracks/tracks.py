@@ -91,6 +91,7 @@ def write(
     start_frame: int,
     end_frame: int,
     tracks: list[Track],
+    ball: list[Sample] | None = None,
     width: int | None = None,
     height: int | None = None,
 ) -> Path:
@@ -110,7 +111,13 @@ def write(
         "source": source,
         "pitch": {"length": PITCH_LENGTH, "width": PITCH_WIDTH},
         "tracks": [t.to_json() for t in tracks],
-        "ball": None,
+        # The ball's POSITIONS, which are not to be trusted as positions - a ground
+        # homography assumes z = 0, so a ball in flight lands metres from where it is.
+        # They answer one question reliably, which is who is nearest, and that is the
+        # only thing a board wants from the ball (D29).
+        "ball": {"samples": [s.to_json() for s in sorted(ball, key=lambda s: s.f)]}
+        if ball
+        else None,
     }
     path.write_text(json.dumps(doc, indent=2) + "\n")
     return path

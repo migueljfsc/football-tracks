@@ -36,9 +36,19 @@ import torch
 # the stronger of the two on crowded scenes, which is all of football.
 MODEL = "PekingU/rtdetr_r50vd_coco_o365"
 
-# The only class worth asking for - a football is in COCO too, but at this resolution
-# the detector finds it about as often as it invents one (D4).
 PERSON = "person"
+
+# The ball. D4 deferred it on the grounds that it is the hardest object in the frame,
+# and on this detector that turned out to be wrong: RT-DETR finds it in every sampled
+# frame of all three clips. What is still hard is where it IS - a ground homography
+# assumes z = 0, so an airborne ball projects metres from the truth. That is why only
+# the CARRIER is derived from it and never a position (D29 in this repo's plan).
+BALL = "sports ball"
+
+# Lower than the person floor. A ball is small and often blurred, and the cost of a
+# spurious one is bounded: it has to land within a couple of metres of a player before
+# anything downstream believes it.
+BALL_CONF = 0.15
 
 # Held at 0.5 rather than lowered. RT-DETR at 0.4 does have the same false-positive rate
 # the old detector had at 0.5, but "false" there was measured against players only, and
@@ -46,6 +56,16 @@ PERSON = "person"
 # tracks and has to be told to ignore. At 0.5 it beats the old detector on BOTH counts:
 # 86.2% recall against 83.6%, and a third of the spurious boxes.
 DEFAULT_CONF = 0.5
+
+
+@dataclass(slots=True)
+class Sighting:
+    """A ball, seen. Not a track - the ball is never followed, only looked for."""
+
+    f: int
+    x: float
+    y: float
+    score: float
 
 
 @dataclass(slots=True)
@@ -101,52 +121,71 @@ def load_model(dev: str | None = None) -> tuple[Any, Any, str]:
 
 
 def on_frame(
-    model: Any, processor: Any, dev: str, bgr: Any, conf: float = DEFAULT_CONF
-) -> list[tuple[float, ...]]:
+    model: Any,
+    processor: Any,
+    dev: str,
+    bgr: Any,
+    conf: float = DEFAULT_CONF,
+    ball_conf: float = BALL_CONF,
+) -> tuple[list[tuple[float, ...]], list[tuple[float, float, float]]]:
+    """People and balls in one pass. Two lists, because they are not the same thing:
+    a person is tracked and a ball is only ever asked about."""
     rgb = cv2.cvtColor(bgr, cv2.COLOR_BGR2RGB)
     inputs = processor(images=rgb, return_tensors="pt").to(dev)
     with torch.no_grad():
         out = model(**inputs)
     sizes = torch.tensor([rgb.shape[:2]])
-    result = processor.post_process_object_detection(out, target_sizes=sizes, threshold=conf)[0]
+    floor = min(conf, ball_conf)
+    result = processor.post_process_object_detection(out, target_sizes=sizes, threshold=floor)[0]
     people = {i for i, name in model.config.id2label.items() if name == PERSON}
+    balls = {i for i, name in model.config.id2label.items() if name == BALL}
 
     found: list[tuple[float, ...]] = []
+    seen: list[tuple[float, float, float]] = []
     for box, label, score in zip(
         result["boxes"], result["labels"].tolist(), result["scores"].tolist(), strict=True
     ):
-        if label in people:
-            x1, y1, x2, y2 = (float(v) for v in box.cpu().numpy())
+        x1, y1, x2, y2 = (float(v) for v in box.cpu().numpy())
+        if label in people and score >= conf:
             found.append((x1, y1, x2, y2, float(score)))
-    return found
+        elif label in balls and score >= ball_conf:
+            # The centre, not the foot. A ball has no feet, and where it meets the grass
+            # is exactly what a ground homography cannot tell you when it is in the air.
+            seen.append(((x1 + x2) / 2, (y1 + y2) / 2, float(score)))
+    return found, seen
 
 
 def run(
     frames_dir: Path, frames: list[int], *, conf: float = DEFAULT_CONF, progress: Any = None
-) -> list[Detection]:
+) -> tuple[list[Detection], list[Sighting]]:
     model, processor, dev = load_model()
     out: list[Detection] = []
+    balls: list[Sighting] = []
     for f in frames:
         img = cv2.imread(str(frames_dir / f"{f:06d}.jpg"))
         if img is None:
             continue
-        for x1, y1, x2, y2, s in on_frame(model, processor, dev, img, conf):
+        people, seen = on_frame(model, processor, dev, img, conf)
+        for x1, y1, x2, y2, s in people:
             out.append(Detection(f=f, x1=x1, y1=y1, x2=x2, y2=y2, score=s))
+        for x, y, s in seen:
+            balls.append(Sighting(f=f, x=x, y=y, score=s))
         if progress is not None:
             progress(f)
-    return out
+    return out, balls
 
 
-def write(path: Path, detections: list[Detection], *, conf: float) -> Path:
+def write(path: Path, detections: list[Detection], balls: list[Sighting], *, conf: float) -> Path:
+    def rounded(d: Any) -> dict[str, Any]:
+        return {k: (round(v, 2) if isinstance(v, float) else v) for k, v in asdict(d).items()}
+
     path.write_text(
         json.dumps(
             {
                 "version": 1,
                 "conf": conf,
-                "detections": [
-                    {k: (round(v, 2) if isinstance(v, float) else v) for k, v in asdict(d).items()}
-                    for d in detections
-                ],
+                "detections": [rounded(d) for d in detections],
+                "balls": [rounded(b) for b in balls],
             },
             indent=1,
         )
@@ -155,9 +194,12 @@ def write(path: Path, detections: list[Detection], *, conf: float) -> Path:
     return path
 
 
-def read(path: Path) -> list[Detection]:
+def read(path: Path) -> tuple[list[Detection], list[Sighting]]:
     data = json.loads(path.read_text())
-    return [Detection(**d) for d in data["detections"]]
+    return (
+        [Detection(**d) for d in data["detections"]],
+        [Sighting(**b) for b in data.get("balls", [])],
+    )
 
 
 def by_frame(detections: list[Detection]) -> dict[int, list[Detection]]:

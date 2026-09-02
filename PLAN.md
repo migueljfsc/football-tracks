@@ -294,7 +294,28 @@ parallel against fixtures, and it means the entire video pipeline can be replace
 different tracker, by a hand-annotation tool, by a vendor's data — without touching
 Pitchboard.
 
-**D4 — no ball in v0.** It is the hardest object in the frame: small, fast, motion-blurred,
+**D29 — the ball is found for ONE question: who has it.** Pitchboard models the ball as
+`scene.carrier` and nothing else, which turns the intractable problem into an easy one.
+Where the ball IS cannot be recovered — a ground homography assumes z = 0, so a ball in
+flight lands metres from the truth — but who is NEAREST it can be, and that is the whole
+question a board asks.
+
+Measured against SoccerNet's own ball annotations, the nearest player is the right one
+**99% of the time** within four metres, answering about half the frames and declining on
+the rest. Declining is the point: a ball in flight belongs to nobody.
+
+Two things that had to be right. The detector reports about five "sports balls" a frame —
+a head, a boot, a patch of hoarding — so the most confident one is taken and then MEDIAN
+FILTERED over its neighbours, because what separates the real ball from the impostors is
+that it moves smoothly. And picking the candidate NEAREST A PLAYER instead scores far
+worse (55% against 99%), which is worth stating plainly: with five candidates a frame,
+"nearest a player" reliably selects whichever false positive is standing beside somebody.
+
+This supersedes D4's deferral. D4 was right that ball POSITION is the hardest thing in the
+frame and would corrupt whatever it touched. It was wrong that the ball was therefore
+out of reach, because it never asked the smaller question.
+
+**D4 — no ball in v0 (superseded by D29).** It is the hardest object in the frame: small, fast, motion-blurred,
 occluded by legs, and frequently out of shot. Worse, it is the input to `carrier`, `shot` and
 `hiddenRuns`, so its errors do not stay local — they corrupt the meaning of the board rather
 than just its geometry. Players first; carriers get set by hand in the editor. `loft` is not
