@@ -67,9 +67,27 @@ MIN_GATE_BOXES = 0.35
 # turned back does not tear a track in half.
 COLOR_WEIGHT = 0.6
 
-# Seconds a track survives unmatched before it is closed. Long enough to ride out an
-# occlusion, short enough that its id is not handed to somebody else later.
-MAX_AGE_S = 0.8
+# Seconds a track survives unmatched before it is closed.
+#
+# Short, and measured. 88 of 98 identity changes on SNGS-147 happened AFTER A GAP, at a
+# median of ten frames - not during a visible crossing. A track that has lost its player
+# coasts on a stale prediction, its gate grows with the wait, and when detections resume
+# it takes whoever is nearest. Over half the time that was an opponent.
+#
+# Cutting 0.8s to 0.24s takes identity purity from 76.9% to 80.5% and switches from 37
+# to 26, with the track count and recall unchanged: a track that would have coasted and
+# stolen now ends, and the player is picked up again anyway.
+#
+# It does shorten tracks, and on a six-second clip that costs roster - Pitchboard's
+# importer answers by asking for less coverage, and comes out ahead on both counts.
+# Worth knowing which measurement decided this: run fidelity compares a board with the
+# TRACKS it was built from, so it cannot see a steal at all. Only ground truth can, and
+# that is what chose the number.
+#
+# It also explains why weighting kit colour more heavily never helped. At 0.8s the wrong
+# candidate is reachable and colour is asked to talk the tracker out of it; shorten the
+# wait and it was never reachable, and the two settings score the same.
+MAX_AGE_S = 0.24
 
 MIN_TRACK_LENGTH = 5
 

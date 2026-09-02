@@ -431,6 +431,26 @@ against 1333 changed nothing, because the misses are occlusions rather than smal
 players), and a lower confidence floor, which buys recall at about three spurious boxes
 per real one.
 
+**D30 — a track that has lost its player gives up quickly.** 88 of 98 identity changes
+on SNGS-147 happened AFTER A GAP, at a median of ten frames — not during a visible
+crossing, which is where I had assumed they were. A track that has lost its player coasts
+on a stale prediction, its gate grows with the wait, and when detections resume it takes
+whoever is nearest. Over half the time that was an opponent.
+
+Cutting `MAX_AGE_S` from 0.8 to 0.24 takes purity from 76.9% to 80.5% and switches from
+37 to 26, with the track count and recall unchanged: the player is picked up again either
+way, and what is saved is a run stitched onto somebody else.
+
+It also settles why weighting kit colour more heavily never helped, which had been an
+open puzzle. At 0.8s the wrong candidate is reachable and colour is asked to talk the
+tracker out of it; shorten the wait and it was never reachable, and the two weightings
+score identically.
+
+**Which measurement chose the number matters here.** Run fidelity compares a board with
+the TRACKS it was built from, so it cannot see a steal — the board faithfully draws
+whatever the tracker believed. Only ground truth can, and a shorter age looked WORSE by
+fidelity while being better by truth. Do not tune this against a clip with no answers.
+
 **D27 — anyone standing off the pitch is dropped BEFORE tracking, not after.** Two fifths
 of what the detector finds on SoccerNet is crowd, dugout staff and ballboys behind the
 hoardings. They were always discarded at the end, but until then they were competing for

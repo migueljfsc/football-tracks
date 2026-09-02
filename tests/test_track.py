@@ -113,10 +113,21 @@ def test_a_pan_is_not_recorded_as_the_player_running() -> None:
     assert abs(track.velocity[1]) < 1e-6
 
 
-def test_a_brief_occlusion_does_not_break_a_track() -> None:
-    pts = {f: [(100.0 + 0.5 * f, 200.0)] for f in range(1, 40) if not 12 <= f <= 18}
-    tracks = track_over(pts)
-    assert len(tracks) == 1
+def test_a_very_brief_occlusion_does_not_break_a_track() -> None:
+    # Inside MAX_AGE_S the track rides it out and keeps its id.
+    pts = {f: [(100.0 + 0.5 * f, 200.0)] for f in range(1, 40) if not 14 <= f <= 17}
+    assert len(track_over(pts)) == 1
+
+
+def test_a_longer_gap_ends_the_track_rather_than_letting_it_wait() -> None:
+    # Deliberately impatient, and measured: on SNGS-147, 88 of 98 identity changes
+    # happened AFTER a gap at a median of ten frames. A track that waits coasts on a
+    # stale prediction with a gate that grows as it waits, and takes whoever is nearest
+    # when detections resume - over half the time an opponent. Ending it costs nothing,
+    # because the player is picked up again as a new track either way; what it saves is
+    # a run stitched onto the wrong person.
+    pts = {f: [(100.0 + 0.5 * f, 200.0)] for f in range(1, 40) if not 12 <= f <= 26}
+    assert len(track_over(pts)) == 2
 
 
 def test_a_long_absence_does_break_it() -> None:
