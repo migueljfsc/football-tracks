@@ -1,3 +1,9 @@
+## v0.3.1 (2026-09-02)
+
+### Perf
+
+- give up on a lost player quickly
+
 ## v0.3.0 (2026-09-02)
 
 ### Feat
