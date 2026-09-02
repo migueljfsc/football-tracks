@@ -27,6 +27,15 @@ TeamLabel = Literal["home", "away", "gkHome", "gkAway", "referee", "unknown"]
 # throw-in taker is genuinely a metre or two outside; nobody is ever fifty.
 PITCH_MARGIN = 0.15
 
+# A tighter margin, for deciding whether somebody is a PLAYER rather than whether a
+# single position is credible. Those are different questions. A position needs slack for
+# the camera model to be wrong; a person does not - the crowd behind a goal stands ten
+# metres back, and at the generous margin they are tracked, clustered as a team, and
+# arrive on the board as an eleven who never move. Measured on the Rio Ave clip, they
+# also captured the "home" label outright, because they sit at negative x and that is
+# how the side playing left is decided.
+PLAYER_MARGIN = 0.05
+
 
 @dataclass(slots=True)
 class Sample:

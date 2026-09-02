@@ -24,7 +24,7 @@ import numpy as np
 from . import calibration, detect, stage1_propagate, stage1_register, stage2_track
 from . import seed as seed_mod
 from .stage3_teams import assign
-from .tracks import Sample, Track, on_pitch
+from .tracks import PLAYER_MARGIN, Sample, Track, on_pitch
 
 Mode = Literal["truth", "seed"]
 
@@ -127,7 +127,7 @@ def build(
         h = homs.get(d.f)
         if h is None:
             continue
-        if not on_pitch(*calibration.to_pitch(h, *d.foot)):
+        if not on_pitch(*calibration.to_pitch(h, *d.foot), PLAYER_MARGIN):
             dropped += 1
             continue
         observations.setdefault(d.f, []).append(stage2_track.Observation.of(d))
