@@ -69,7 +69,7 @@ uv sync --extra ocr      # shirt numbers
 | 2 | detect and track | RT-DETR; purity 86% and precision 83% at 7s |
 | 3 | teams | 87% of samples on the right side; keepers found |
 | 4 | project — **the proof** | working |
-| 5 | shirt numbers | not started |
+| 5 | shirt numbers | **tried; does not work** — 1 right, 4 wrong of 9 (D32) |
 | — | the ball's holder | 99% right within 4m; declines when it is in flight |
 
 From one seeded frame, a 7-second clip comes out at 97% recall, 0.80 m median error and

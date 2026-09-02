@@ -70,6 +70,10 @@ work/<clip>/                every stage's artefacts, all reproducible
 
 ## Known traps
 
+- **Shirt-number OCR was measured and rejected** (D32). A general-purpose reader gets one
+  digit out of a two-digit number and is confident about it, so numbers come out wrong
+  four times as often as right. Do not reach for a different OCR package; the crop and the
+  recogniser both need to be jersey-specific.
 - **A `null` shirt number is an answer, not a gap** (D5). Unread imports as a generic token;
   a *wrong* number silently attaches a run to the wrong player, and nothing downstream can
   see that it happened. Never guess, never fill in a plausible value.

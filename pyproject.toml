@@ -17,16 +17,17 @@ dependencies = [
 # Installed per stage rather than all at once: stage 0 needs none of this, and a
 # torch install that fails should not block the stage that does not use torch.
 [project.optional-dependencies]
-# torchvision's detector is BSD and its COCO weights are enough for players on a
-# pitch. Ultralytics is deliberately absent: it is AGPL-3.0 and this repo is MIT (D9),
-# and nothing here needs it. supervision is MIT but its ByteTrack is deprecated and
-# goes away in 0.31, so the tracker is our own - see stage2_track.
-vision = [
-    "torch>=2.5",
-    "torchvision>=0.20",
-    "transformers>=4.45",
-]
-ocr = ["easyocr>=1.7"]
+# RT-DETR through transformers: Apache-2.0, and measurably better than torchvision's
+# Faster R-CNN, which it replaced (see detect.py). torchvision went with it and nothing
+# imports it now. Ultralytics is deliberately absent - AGPL-3.0 against this repo's MIT
+# (D9). supervision is absent too: MIT, but its ByteTrack is deprecated and goes away in
+# 0.31, so the tracker is our own.
+vision = ["torch>=2.5", "transformers>=5.0"]
+# Deliberately empty. Shirt-number OCR was tried and does not work on this footage: a
+# general-purpose reader takes one digit out of a two-digit number and is confident about
+# it, so numbers come out wrong four times as often as right (D32). The extra remains so
+# the pipeline's shape still says where such a thing would go.
+ocr = []
 data = ["SoccerNet>=0.1.60"]
 
 [dependency-groups]
