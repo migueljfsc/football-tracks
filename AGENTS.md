@@ -114,6 +114,14 @@ work/<clip>/                every stage's artefacts, all reproducible
   seed it kept five points along the goal line, fit them to 0.1 m, and rejected exactly the
   points that pinned down the pitch's depth. The inlier set is checked for degeneracy now,
   not just the input.
+- **A least-squares fit spreads one bad click over every other point.** Never conclude
+  from "all the residuals are large" that all the clicks are bad — drop the worst, refit,
+  and look again. The single-pass version dropped all eleven landmarks of a real seed and
+  returned the fit it was repairing.
+- **Trimming repairs bad clicks, not bad geometry.** If every traced marking runs the same
+  way, the lines pin down depth and nothing pins down across, so two landmarks swapped
+  across the pitch fit as well as the truth and nothing can prefer one. The answer there is
+  a line that crosses the others, not a better solver.
 - **The four most natural landmarks to click are collinear** (D24). Both posts and both
   corners of a goal all sit on x = 0, and a homography fitted to them fits perfectly and
   describes nothing. `seed.degenerate` refuses that set.

@@ -266,6 +266,12 @@ def homography(seed: Seed) -> npt.NDArray[np.float64] | None:
     #
     # A drop is only kept while what remains still says something about both directions
     # and still has more constraints than degrees of freedom (D17).
+    #
+    # This repairs a seed whose GEOMETRY is sound and whose clicks are not. It cannot
+    # rescue one where every traced marking runs the same way: there the lines pin down
+    # depth and nothing pins down across, so a pair of landmarks swapped across the pitch
+    # fits as well as the truth does, and no amount of trimming can prefer one. Trace a
+    # line that crosses the others.
     for _ in range(len(seed.points)):
         point_res = _point_residuals(h, seed)
         line_res = _line_residuals(h, seed)

@@ -200,24 +200,29 @@ def test_a_traced_seed_can_be_flipped_and_round_tripped(tmp_path: Path) -> None:
     assert flipped_line != s.lines[-1][1]
 
 
-def test_two_swapped_landmarks_do_not_wreck_the_fit() -> None:
-    """A real seed had `penalty box front far` and `near` clicked the wrong way round.
+def test_one_bad_click_does_not_drag_the_others_with_it() -> None:
+    """A least-squares fit spreads a bad click's error over every other point.
 
-    Nine of its eleven clicks were right, and the fit still came back 1.82m from the
-    markings, because a least-squares fit spreads a bad click's error over every other
-    point until they all look bad. The single-pass trim then dropped all eleven, found
-    what remained degenerate, and returned the very fit it was trying to repair.
+    On a real seed that meant EVERY residual exceeded the misclick threshold, so the
+    single-pass trim dropped all eleven landmarks, found what remained degenerate, and
+    returned the very fit it had been trying to repair. Dropping the worst one at a
+    time and refitting recovers instead.
     """
-    good = clicked(SIX)
-    swapped = list(good.points)
-    (ia, pa), (ib, pb) = swapped[2], swapped[3]
-    swapped[2], swapped[3] = (ia, pb), (ib, pa)
-    s = seed.Seed(frame=1, points=swapped, lines=traced("goal line") + traced("far touchline"))
+    names = ["goal post far", "goal post near", "6yd front far", "6yd front near", "penalty spot"]
+    points = list(clicked(names).points)
+    (image, pitch) = points[2]
+    points[2] = ((image[0] + 220.0, image[1] - 160.0), pitch)  # one badly placed click
 
+    s = seed.Seed(
+        frame=1,
+        points=points,
+        # Crossing markings, so the geometry itself is sound and only the click is wrong.
+        lines=traced("goal line") + traced("far touchline") + traced("near touchline"),
+    )
     h = seed.homography(s)
     assert h is not None
-    got = calibration.apply(h, calibration.apply(PITCH_TO_IMAGE, np.array([[52.5, 34.0]])))
-    assert got[0] == pytest.approx([52.5, 34.0], abs=1.0)
+    got = calibration.apply(h, calibration.apply(PITCH_TO_IMAGE, np.array([[30.0, 40.0]])))
+    assert got[0] == pytest.approx([30.0, 40.0], abs=1.0)
 
 
 def test_trimming_stops_before_the_evidence_runs_out() -> None:
