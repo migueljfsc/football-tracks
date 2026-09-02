@@ -131,6 +131,15 @@ work/<clip>/                every stage's artefacts, all reproducible
 - **A container's frame rate is not the clip's.** A screen recording claimed 120fps while
   holding 208 frames across 6.4 seconds. `video.probe` derives it from duration and count,
   because these numbers become scene durations.
+- **The video is the longest CONTIGUOUS run of content, not the outermost bright columns.**
+  A recorder's own furniture — a subscribe button, a watermark — sits out in the bar, and
+  taking first-to-last swallows everything between it and the picture. That is how a
+  3354px frame came back uncropped with 290 black columns in it.
+- **Sample the crop across frames and take a MEDIAN, never a union.** One flash, fade or
+  overlay widens a unioned crop for the whole clip.
+- **Re-cropping moves every pixel coordinate a seed holds.** `seed.json` is in cropped
+  frame space, so changing the crop invalidates it — shift it by the delta rather than
+  asking for it to be clicked again.
 - **Pillarbox bars are not black enough to ignore.** Compression noise lifts them over the
   grass mask's value floor, so they register as pitch and the optical flow tries to track
   them. That is what `video.content_box` is for, and it uses a max rather than a mean: one

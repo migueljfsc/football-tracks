@@ -26,9 +26,11 @@ import cv2
 import numpy as np
 from cv2.typing import MatLike
 
-# A bar is dark for its WHOLE height or width, so it is found with a max rather than a
-# mean: one bright pixel anywhere in a column means that column is content.
+# A bar is dark for its whole height, so a column is judged by how bright it gets - but
+# by its 99th percentile rather than its maximum, because one hot pixel or a compression
+# artefact should not make a black bar look like content.
 BAR_LEVEL = 60
+BAR_PERCENTILE = 99
 
 SAMPLES = 12
 
@@ -88,32 +90,60 @@ def probe(path: Path) -> tuple[float, int, int, int]:
     return fps, count, w, h
 
 
+def _longest_run(bright: np.ndarray) -> tuple[int, int]:
+    """The longest contiguous stretch of content, as (start, end_exclusive).
+
+    Not the first-to-last bright column. A recorder's own furniture sits OUTSIDE the
+    video — the Rio Ave clip had a subscribe button 200px into the right-hand bar — and
+    taking the outermost bright columns swallows the bar between it and the picture. The
+    video is the one unbroken stretch; anything else is somebody else's chrome.
+    """
+    best = (0, 0)
+    start: int | None = None
+    for i, on in enumerate([*bright, False]):
+        if on and start is None:
+            start = i
+        elif not on and start is not None:
+            if i - start > best[1] - best[0]:
+                best = (start, i)
+            start = None
+    return best
+
+
 def content_box(path: Path, *, samples: int = SAMPLES) -> tuple[int, int, int, int]:
     """The rectangle inside the letterbox and pillarbox bars.
 
-    Sampled across the clip and intersected, because a shot that happens to be dark at
-    one edge would otherwise have that edge cropped away for the whole clip.
+    Sampled across the clip and then taken as a MEDIAN of what each frame says. Not the
+    union: one frame with a flash, an overlay or a fade at the edge would otherwise widen
+    the crop for the whole clip, which is how a 3354px frame came back uncropped when 293
+    columns of it were black in every frame but one.
     """
     cap = cv2.VideoCapture(str(path))
     count = int(cap.get(cv2.CAP_PROP_FRAME_COUNT)) or 1
-    x0, y0 = 10**9, 10**9
-    x1, y1 = -1, -1
+    boxes: list[tuple[int, int, int, int]] = []
     for i in range(samples):
         cap.set(cv2.CAP_PROP_POS_FRAMES, int((i + 0.5) * count / samples))
         ok, frame = cap.read()
         if not ok:
             continue
-        gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
-        cols = np.where(gray.max(axis=0) > BAR_LEVEL)[0]
-        rows = np.where(gray.max(axis=1) > BAR_LEVEL)[0]
-        if len(cols) == 0 or len(rows) == 0:
-            continue
-        x0, x1 = min(x0, int(cols.min())), max(x1, int(cols.max()))
-        y0, y1 = min(y0, int(rows.min())), max(y1, int(rows.max()))
+        gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY).astype(np.float32)
+        cols = np.percentile(gray, BAR_PERCENTILE, axis=0) > BAR_LEVEL
+        rows = np.percentile(gray, BAR_PERCENTILE, axis=1) > BAR_LEVEL
+        x0, x1 = _longest_run(cols)
+        y0, y1 = _longest_run(rows)
+        if x1 > x0 and y1 > y0:
+            boxes.append((x0, y0, x1, y1))
     cap.release()
-    if x1 < 0:
+    if not boxes:
         raise RuntimeError(f"{path} appears to be entirely dark")
-    return (x0, y0, x1 + 1, y1 + 1)
+
+    arr = np.array(boxes)
+    return (
+        int(np.median(arr[:, 0])),
+        int(np.median(arr[:, 1])),
+        int(np.median(arr[:, 2])),
+        int(np.median(arr[:, 3])),
+    )
 
 
 def extract(path: Path, dest: Path, *, crop: tuple[int, int, int, int] | None = None) -> Clip:
