@@ -214,6 +214,10 @@ def calibrate(
             " 0 disables it; a negative value means uncapped."
         ),
     ] = stage1_propagate.DEFAULT_MAX_CARRY,
+    drift_from: Annotated[
+        int | None,
+        typer.Option(help="Measure how far a homography carried from this frame wanders."),
+    ] = None,
 ) -> None:
     """Stage 1 - fit a homography per frame from the pitch lines, and check it.
 
@@ -258,6 +262,18 @@ def calibrate(
             c.frames_dir, homs, max_carry=None if carry < 0 else carry, motion=motions
         )
         homs = chain.homographies
+
+    if drift_from is not None:
+        # What DEFAULT_MAX_CARRY is set from. Carrying is unbounded in principle, so the
+        # cap is only honest while somebody can re-derive the number behind it.
+        walked = stage1_propagate.drift(c.frames_dir, homs, drift_from, length=250)
+        if not walked:
+            raise typer.BadParameter(f"frame {drift_from} has no homography to carry")
+        typer.echo(f"{'carried':>9} {'corner error':>14}")
+        for carried, error in walked:
+            if carried in (1, 5, 10, 25, 50, 100, 150, 200, 250):
+                typer.echo(f"{carried:>8}f {error:>12.2f} m")
+        return
 
     if frame is not None or video:
         import cv2

@@ -210,13 +210,6 @@ def read(path: Path) -> tuple[list[Detection], list[Sighting]]:
     )
 
 
-def by_frame(detections: list[Detection]) -> dict[int, list[Detection]]:
-    out: dict[int, list[Detection]] = {}
-    for d in detections:
-        out.setdefault(d.f, []).append(d)
-    return out
-
-
 def torso(bgr: Any, d: Detection) -> Any:
     """The shirt, roughly - the middle of the upper half of the box.
 
