@@ -1,3 +1,9 @@
+## v0.3.0 (2026-09-02)
+
+### Feat
+
+- find the ball, for the one question a board asks of it
+
 ## v0.2.0 (2026-09-02)
 
 ### Feat

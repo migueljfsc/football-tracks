@@ -1,6 +1,6 @@
 [project]
 name = "football-tracks"
-version = "0.2.0"
+version = "0.3.0"
 description = "Broadcast football clip -> player tracks in pitch metres, for import into Pitchboard."
 requires-python = ">=3.12,<3.13"
 license = "MIT"
