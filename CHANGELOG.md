@@ -1,3 +1,9 @@
+## v0.3.4 (2026-09-02)
+
+### Fix
+
+- **ci**: a green local run is not a green CI
+
 ## v0.3.3 (2026-09-02)
 
 ### Fix
