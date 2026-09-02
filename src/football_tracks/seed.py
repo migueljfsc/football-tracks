@@ -95,6 +95,29 @@ TRACEABLE: dict[str, tuple[float, float, float]] = {
 }
 
 
+# Where each marking actually STOPS, in metres. A traceable line is stored as an
+# infinite one because that is what the solver wants, but a diagram drawn from that
+# claims the six-yard box runs the length of the pitch - which is what it was doing,
+# pointing the coach at grass instead of at a line.
+EXTENTS: dict[str, tuple[tuple[float, float], tuple[float, float]]] = {
+    "goal line": ((0.0, 0.0), (0.0, PITCH_WIDTH)),
+    "6yd box front": ((5.5, MID - 9.16), (5.5, MID + 9.16)),
+    "penalty box front": ((16.5, MID - 20.16), (16.5, MID + 20.16)),
+    "6yd box far side": ((0.0, MID - 9.16), (5.5, MID - 9.16)),
+    "6yd box near side": ((0.0, MID + 9.16), (5.5, MID + 9.16)),
+    "penalty box far side": ((0.0, MID - 20.16), (16.5, MID - 20.16)),
+    "penalty box near side": ((0.0, MID + 20.16), (16.5, MID + 20.16)),
+    "far touchline": ((0.0, 0.0), (PITCH_LENGTH, 0.0)),
+    "near touchline": ((0.0, PITCH_WIDTH), (PITCH_LENGTH, PITCH_WIDTH)),
+}
+
+
+def mirrored_extent(name: str) -> tuple[tuple[float, float], tuple[float, float]]:
+    """The same marking at the other end of the pitch."""
+    (ax, ay), (bx, by) = EXTENTS[name]
+    return ((PITCH_LENGTH - ax, ay), (PITCH_LENGTH - bx, by))
+
+
 def mirrored_line(name: str) -> tuple[float, float, float]:
     """The same marking at the other end. x = k becomes x = 105 - k; y = k is unchanged."""
     a, b, c = TRACEABLE[name]

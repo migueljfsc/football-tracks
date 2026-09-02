@@ -13,14 +13,21 @@ from __future__ import annotations
 from typing import Any
 
 import cv2
+import numpy as np
 
 from . import pitch as pitch_mod
-from .seed import LANDMARKS, TRACEABLE, Seed, mirrored, mirrored_line
+from .seed import EXTENTS, LANDMARKS, TRACEABLE, Seed, mirrored, mirrored_extent, mirrored_line
 
 WINDOW = "seed - click a landmark, then pick its name"
 MARK = (60, 240, 90)
 TEXT = (255, 255, 255)
 TARGET = (40, 90, 250)
+
+# The instructions sit over the picture, and a crowd or a floodlit stand behind them is
+# unreadable however the text is outlined. A dark panel under the block fixes it; 60%
+# lets enough of the frame through that nothing underneath is hidden, which matters
+# because a landmark can be up there.
+TEXT_PANEL_OPACITY = 0.6
 
 # The diagram is the whole usability of this tool. A landmark name means nothing on its
 # own - "6yd front far" is only obvious once you have seen it marked on a pitch - so a
@@ -34,18 +41,16 @@ def _diagram(name: str, far_goal: bool, width: int, trace: bool = False) -> Any:
     scale = max(DIAGRAM_MIN_SCALE, width / 420)
     img = pitch_mod.draw(scale, 2.0)
     if trace:
-        a, b, c = mirrored_line(name) if far_goal else TRACEABLE[name]
-        # Draw the whole marking, since tracing means "anywhere along this".
-        if abs(a) > abs(b):
-            p0, p1 = (-c / a, 0.0), (-c / a, 68.0)
-        else:
-            p0, p1 = (0.0, -c / b), (105.0, -c / b)
+        # The marking's real extent, not the infinite line the solver stores. Drawing the
+        # infinite one claims the six-yard box runs the length of the pitch, which points
+        # the coach at grass rather than at a line.
+        p0, p1 = mirrored_extent(name) if far_goal else EXTENTS[name]
         cv2.line(
             img,
             pitch_mod.to_px(*p0, scale, 2.0),
             pitch_mod.to_px(*p1, scale, 2.0),
             TARGET,
-            max(3, round(scale / 2)),
+            max(4, round(scale / 1.6)),
             cv2.LINE_AA,
         )
         cv2.putText(
@@ -59,6 +64,7 @@ def _diagram(name: str, far_goal: bool, width: int, trace: bool = False) -> Any:
             cv2.LINE_AA,
         )
         return img
+
     x, y = mirrored(name) if far_goal else LANDMARKS[name]
     px, py = pitch_mod.to_px(x, y, scale, 2.0)
     r = max(10, round(scale * 2.2))
@@ -123,8 +129,23 @@ def _draw(
         f"s = save{'' if enough else '  (needs more evidence)'}     q = quit",
     ]
     scale = max(0.9, base.shape[1] / 2200)
+    step = int(46 * scale)
+    widest = max(cv2.getTextSize(line, cv2.FONT_HERSHEY_SIMPLEX, scale, 2)[0][0] for line in lines)
+    pad = int(14 * scale)
+    # Clamped at zero: a negative index is a slice from the far edge, so an oversized
+    # font on a tall frame silently selects nothing and the panel never appears.
+    x0, y0 = max(0, 16 - pad), max(0, 44 - step + pad // 2)
+    x1 = min(img.shape[1], 16 + widest + pad)
+    y1 = min(img.shape[0], 44 + step * (len(lines) - 1) + pad)
+
+    panel = img[y0:y1, x0:x1]
+    if panel.size:
+        img[y0:y1, x0:x1] = cv2.addWeighted(
+            panel, 1 - TEXT_PANEL_OPACITY, np.zeros_like(panel), TEXT_PANEL_OPACITY, 0
+        )
+
     for i, line in enumerate(lines):
-        y = int(44 + i * 46 * scale)
+        y = 44 + i * step
         cv2.putText(img, line, (16, y), cv2.FONT_HERSHEY_SIMPLEX, scale, (0, 0, 0), 5, cv2.LINE_AA)
         cv2.putText(
             img,

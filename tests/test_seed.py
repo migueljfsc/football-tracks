@@ -230,3 +230,37 @@ def test_trimming_stops_before_the_evidence_runs_out() -> None:
     # exactly determined, so nothing can be removed and the fit is returned as it is.
     s = clicked(SIX[:4])
     assert seed.homography(s) is not None
+
+
+def test_extents_lie_on_their_lines() -> None:
+    """Each drawn segment must sit on the line the solver constrains against."""
+    for name, ((ax, ay), (bx, by)) in seed.EXTENTS.items():
+        a, b, c = seed.TRACEABLE[name]
+        assert abs(a * ax + b * ay + c) < 1e-9, name
+        assert abs(a * bx + b * by + c) < 1e-9, name
+        assert (ax, ay) != (bx, by), name
+
+
+def test_extents_cover_every_traceable_marking() -> None:
+    assert set(seed.EXTENTS) == set(seed.TRACEABLE)
+
+
+def test_mirrored_extent_is_on_the_mirrored_line() -> None:
+    for name in seed.TRACEABLE:
+        (ax, ay), (bx, by) = seed.mirrored_extent(name)
+        a, b, c = seed.mirrored_line(name)
+        assert abs(a * ax + b * ay + c) < 1e-9, name
+        assert abs(a * bx + b * by + c) < 1e-9, name
+
+
+def test_text_panel_darkens_a_tall_frame() -> None:
+    """A negative slice origin selects nothing, so the panel silently vanished."""
+    import numpy as np
+
+    from football_tracks import seedui
+
+    for width, height in ((1280, 720), (2774, 1508), (3840, 2160)):
+        base = np.full((height, width, 3), 255, dtype=np.uint8)
+        out = seedui._draw(base, [], [], "penalty spot", False, False)
+        # A band under the first line of text, left of where any glyph reaches.
+        assert out[8:20, 4:12].mean() < 200, (width, height)
