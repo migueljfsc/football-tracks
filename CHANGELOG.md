@@ -1,3 +1,9 @@
+## v0.3.8 (2026-09-02)
+
+### Fix
+
+- one bad click was dragging every other one with it
+
 ## v0.3.7 (2026-09-02)
 
 ### Fix
