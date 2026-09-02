@@ -1,3 +1,9 @@
+## v0.3.5 (2026-09-02)
+
+### Refactor
+
+- remove dead code, and give the drift measurement a caller
+
 ## v0.3.4 (2026-09-02)
 
 ### Fix
