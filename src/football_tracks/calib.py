@@ -132,13 +132,24 @@ def index_clips(clips_dir: Path, names: list[str] | None = None) -> list[Frame]:
     return out
 
 
-def split_by_game(frames: list[Frame], holdout: int = 1) -> tuple[list[Frame], list[Frame]]:
-    """Train and validation sets that share no match."""
-    games = sorted({f.game for f in frames})
-    held = set(games[-holdout:]) if len(games) > holdout else set()
-    train = [f for f in frames if f.game not in held]
-    val = [f for f in frames if f.game in held]
-    return train, val
+def split_by_game(
+    frames: list[Frame], holdout: int = 1, games: set[str] | None = None
+) -> tuple[list[Frame], list[Frame]]:
+    """Train and validation sets that share no match.
+
+    `games` names the matches to hold out. It is worth naming them rather than taking the
+    last N, because the clips this project BENCHMARKS on are particular ones: train on the
+    match a benchmark clip came from and every number it reports afterwards is measured on
+    footage the model has already seen.
+    """
+    if games is not None:
+        return (
+            [f for f in frames if f.game not in games],
+            [f for f in frames if f.game in games],
+        )
+    names = sorted({f.game for f in frames})
+    held = set(names[-holdout:]) if len(names) > holdout else set()
+    return [f for f in frames if f.game not in held], [f for f in frames if f.game in held]
 
 
 def batches(

@@ -185,7 +185,14 @@ def calib_train(
     stride: Annotated[
         int, typer.Option(help="Use every Nth annotated frame; 750 consecutive ones are one shot.")
     ] = 5,
-    holdout: Annotated[int, typer.Option(help="Matches held out for validation.")] = 1,
+    holdout: Annotated[int, typer.Option(help="Matches held out, when none are named.")] = 1,
+    holdout_games: Annotated[
+        str,
+        typer.Option(
+            help="Comma-separated game ids to hold out. Defaults to the matches the"
+            " benchmark clips come from, so the benchmark stays honest."
+        ),
+    ] = "7,8",
 ) -> None:
     """Train the pitch-line segmenter (D36).
 
@@ -198,7 +205,8 @@ def calib_train(
     frames = calib.index_clips(CLIPS)[::stride]
     if not frames:
         raise typer.BadParameter(f"no annotated frames under {CLIPS} - run `ft fetch` first")
-    train_set, val_set = calib.split_by_game(frames, holdout=holdout)
+    held = {g.strip() for g in holdout_games.split(",") if g.strip()} or None
+    train_set, val_set = calib.split_by_game(frames, holdout=holdout, games=held)
     games = sorted({f.game for f in frames})
     typer.echo(
         f"{len(frames)} frames over {len(games)} matches"
