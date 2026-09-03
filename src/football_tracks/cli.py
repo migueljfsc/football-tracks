@@ -178,6 +178,79 @@ def render(
 
 
 @app.command()
+def bench(
+    clips: Annotated[
+        str,
+        typer.Option(help="Comma-separated clip names. Defaults to every clip with frames."),
+    ] = "",
+    interval_s: Annotated[
+        float, typer.Option("--interval-s", help="Held at 0 so recall counts samples, not slots.")
+    ] = 0.0,
+    snap: Annotated[bool, typer.Option(help="Re-anchor on the markings (D35).")] = False,
+) -> None:
+    """Run every clip end to end and print one table.
+
+    The command this project did not have, and the absence cost it: the numbers recorded
+    in PLAN.md came from a bespoke sweep, so nothing since could be compared with them and
+    two conclusions were nearly drawn from the difference. A benchmark that anyone can
+    re-run is worth more than a better number nobody can reproduce.
+
+    Interval defaults to 0 here and nowhere else. `ft score` counts samples, so a file
+    reduced to a time grid scores a third of the recall of the same tracking at 25 fps --
+    which is a fact about the grid and not about the pipeline.
+    """
+    import json as json_mod
+
+    names = (
+        [c.strip() for c in clips.split(",") if c.strip()]
+        if clips
+        else sorted(p.name for p in CLIPS.iterdir() if p.is_dir() and (p / "img1").is_dir())
+    )
+    if not names:
+        raise typer.BadParameter(f"no clips in {CLIPS}")
+
+    header = (
+        f"{'clip':<16} {'tracks':>6} {'recall':>7} {'precis':>7} {'error':>8} "
+        f"{'purity':>7} {'teams':>6}  notes"
+    )
+    typer.echo(header)
+    typer.echo("-" * len(header))
+    for name in names:
+        out = work_dir(Path(name))
+        pred_path = out / "tracks.json"
+        try:
+            _pipeline(name, "seed", -1, interval_s, snap)
+        except Exception as exc:
+            typer.echo(f"{name:<16} {'-':>6} {'-':>7} {'-':>7} {'-':>8} {'-':>7} {'-':>6}  {exc}")
+            continue
+        doc = json_mod.loads(pred_path.read_text())
+        tracks_n = len(doc["tracks"])
+        gt = out / "truth.json"
+        if gt.exists():
+            s = score_mod.score(render_mod.load(gt), render_mod.load(pred_path))
+            typer.echo(
+                f"{name:<16} {tracks_n:>6} {s.recall:>6.1%} {s.precision:>6.1%}"
+                f" {s.median_error_m:>6.2f} m {s.identity_purity:>6.1%}"
+                f" {s.team_accuracy:>5.0%}  ground truth"
+            )
+        else:
+            # No truth to score against, so report what CAN be checked: a broadcast clip
+            # with a plausible roster and a real spread of positions is not proof of a
+            # good board, but a roster of three is proof of a bad one.
+            samples = sum(len(t["samples"]) for t in doc["tracks"])
+            frames = {s["f"] for t in doc["tracks"] for s in t["samples"]}
+            teams: dict[str, int] = {}
+            for t in doc["tracks"]:
+                teams[t["team"]] = teams.get(t["team"], 0) + 1
+            per = f"{samples / len(frames):.1f}/frame" if frames else "-"
+            typer.echo(
+                f"{name:<16} {tracks_n:>6} {'-':>7} {'-':>7} {'-':>8} {'-':>7} {'-':>6}"
+                f"  no truth: {per}, {len(frames)} frames, "
+                + " ".join(f"{k}={v}" for k, v in sorted(teams.items()))
+            )
+
+
+@app.command()
 def score(
     prediction: Annotated[
         Path, typer.Argument(exists=True, dir_okay=False, help="A produced tracks.json.")
@@ -393,33 +466,13 @@ def detect(
 
 
 @app.command()
-def auto(
-    clip: Annotated[str, typer.Argument(help="A clip already fetched into data/clips/.")],
-    mode: Annotated[
-        str, typer.Option(help="'truth' uses every frame's lines; 'seed' uses only frame one's.")
-    ] = "seed",
-    carry: Annotated[int, typer.Option(help="Frames a homography may be carried.")] = -1,
-    interval_s: Annotated[
-        float,
-        typer.Option(
-            "--interval-s",
-            help="Seconds between stored positions. 0 writes every frame, which is finer"
-            " than the pipeline is accurate.",
-        ),
-    ] = tracks.DEFAULT_INTERVAL_S,
-    snap: Annotated[
-        bool,
-        typer.Option(
-            help="Re-anchor each carried homography on its own frame's markings."
-            " Improves the camera model and makes the tracks WORSE (D35); off by default."
-        ),
-    ] = False,
-) -> None:
-    """The automatic path end to end - frames in, tracks.json out.
+def _pipeline(
+    clip: str, mode: str, carry: int, interval_s: float, snap: bool
+) -> tuple[Path, auto_mod.Result]:
+    """Frames in, tracks.json out. Shared by `ft auto` and `ft bench`.
 
-    `--mode truth` holds stage 1 fixed so the score is stages 2 and 3 alone.
-    `--mode seed` throws away every line annotation but frame one's, which is what a
-    human clicking four corners once actually leaves you with.
+    Extracted so the benchmark runs the SAME pipeline the user runs, rather than a
+    second copy of it that can drift away from it silently.
     """
     if mode not in ("truth", "seed"):
         raise typer.BadParameter("mode must be 'truth' or 'seed'")
@@ -489,6 +542,45 @@ def auto(
         height=_size(CLIPS / clip, labels)[1],
         interval_s=interval_s,
     )
+    return path, result
+
+
+@app.command()
+def auto(
+    clip: Annotated[str, typer.Argument(help="A clip already fetched into data/clips/.")],
+    mode: Annotated[
+        str, typer.Option(help="'truth' uses every frame's lines; 'seed' uses only frame one's.")
+    ] = "seed",
+    carry: Annotated[int, typer.Option(help="Frames a homography may be carried.")] = -1,
+    interval_s: Annotated[
+        float,
+        typer.Option(
+            "--interval-s",
+            help="Seconds between stored positions. 0 writes every frame, which is finer"
+            " than the pipeline is accurate.",
+        ),
+    ] = tracks.DEFAULT_INTERVAL_S,
+    snap: Annotated[
+        bool,
+        typer.Option(
+            help="Re-anchor each carried homography on its own frame's markings."
+            " Improves the camera model and makes the tracks WORSE (D35); off by default."
+        ),
+    ] = False,
+) -> None:
+    """The automatic path end to end - frames in, tracks.json out.
+
+    `--mode truth` holds stage 1 fixed so the score is stages 2 and 3 alone.
+    `--mode seed` throws away every line annotation but frame one's, which is what a
+    human clicking four corners once actually leaves you with.
+    """
+    """The automatic path end to end - frames in, tracks.json out.
+
+    `--mode truth` holds stage 1 fixed so the score is stages 2 and 3 alone.
+    `--mode seed` throws away every line annotation but frame one's, which is what a
+    human clicking four corners once actually leaves you with.
+    """
+    path, result = _pipeline(clip, mode, carry, interval_s, snap)
     typer.echo(
         f"mode {mode}: {result.detections} detections -> {result.raw_tracks} raw tracks"
         f" -> {len(result.tracks)} kept"

@@ -528,6 +528,17 @@ The lesson worth keeping is the shape of it: the camera model got measurably bet
 measurement built to judge camera models, and the thing the pipeline actually produces got
 worse. A metric that improves while the output degrades is not a metric to optimise against.
 
+`ft bench` exists because of this. One command, fixed settings, every clip, one table --
+so the next change can be judged against something reproducible rather than against a
+number nobody can regenerate. The baseline it prints today:
+
+    clip             tracks  recall  precis    error  purity  teams
+    SNGS-116             85   67.3%   74.9%   0.54 m   64.4%    75%
+    SNGS-121             50   15.8%   15.2%   1.30 m   61.3%    55%
+    SNGS-147             88   41.3%   40.4%   1.33 m   73.6%    72%
+    geny_rioave          29       no truth: 208 frames, home=23 away=4 gkHome=2
+    nottingham           77       no truth: 695 frames, home=43 away=32 gkHome=2
+
 A caveat on the numbers above, because it matters for anyone comparing them with the
 cross-validation table earlier in this file: those two sets do not agree. `ft auto --mode
 seed` plus `ft score` gives SNGS-121 15.8% recall where the table records 43.4%, and
