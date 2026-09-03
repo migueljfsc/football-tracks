@@ -1,3 +1,13 @@
+## v0.9.0 (2026-09-03)
+
+### Feat
+
+- **calib**: train at 960x540, and make a long run resumable
+
+### Fix
+
+- **calib**: hold out the matches the benchmark clips come from
+
 ## v0.8.0 (2026-09-03)
 
 ### Feat
