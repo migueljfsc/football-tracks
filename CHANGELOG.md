@@ -1,3 +1,9 @@
+## v0.7.0 (2026-09-03)
+
+### Feat
+
+- **bench**: one command, every clip, one table
+
 ## v0.6.0 (2026-09-03)
 
 ### Feat
