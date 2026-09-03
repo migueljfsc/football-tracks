@@ -1,3 +1,9 @@
+## v0.8.0 (2026-09-03)
+
+### Feat
+
+- **calib**: learn the pitch markings, so a fit needs no seed
+
 ## v0.7.0 (2026-09-03)
 
 ### Feat
