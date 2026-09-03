@@ -1,3 +1,10 @@
+## v0.5.0 (2026-09-03)
+
+### Feat
+
+- **tracks**: store one position per tenth of a second
+- **seed**: anchor on every clicked frame, and refuse one that folds
+
 ## v0.4.2 (2026-09-03)
 
 ### Fix
