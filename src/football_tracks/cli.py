@@ -5,16 +5,17 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Annotated, Any
 
+import cv2
 import typer
 
 from . import auto as auto_mod
+from . import calibration, soccernet, stage0_segment, stage1_propagate, stage1_register, tracks
 from . import detect as detect_mod
 from . import overlay as overlay_mod
 from . import refine as refine_mod
 from . import render as render_mod
 from . import score as score_mod
 from . import seed as seed_mod
-from . import soccernet, stage0_segment, stage1_propagate, stage1_register, tracks
 from . import video as video_mod
 from .config import CLIPS, work_dir
 
@@ -175,6 +176,86 @@ def render(
     else:
         out = render_mod.video(doc, path.with_suffix(".mp4"), scale=scale)
     typer.echo(f"wrote {out}")
+
+
+@app.command("calib-train")
+def calib_train(
+    epochs: Annotated[int, typer.Option(help="Passes over the training set.")] = 12,
+    batch: Annotated[int, typer.Option(help="Frames per step.")] = 8,
+    stride: Annotated[
+        int, typer.Option(help="Use every Nth annotated frame; 750 consecutive ones are one shot.")
+    ] = 5,
+    holdout: Annotated[int, typer.Option(help="Matches held out for validation.")] = 1,
+) -> None:
+    """Train the pitch-line segmenter (D36).
+
+    Validation is by MATCH, never by clip or by frame. Two clips of one game share a
+    stadium, a camera and a kit, so any other split reports a generalisation that was
+    never tested.
+    """
+    from . import calib
+
+    frames = calib.index_clips(CLIPS)[::stride]
+    if not frames:
+        raise typer.BadParameter(f"no annotated frames under {CLIPS} - run `ft fetch` first")
+    train_set, val_set = calib.split_by_game(frames, holdout=holdout)
+    games = sorted({f.game for f in frames})
+    typer.echo(
+        f"{len(frames)} frames over {len(games)} matches"
+        f" -> train {len(train_set)}, validate {len(val_set)}"
+    )
+    if not val_set:
+        raise typer.BadParameter("no held-out match; fetch more clips or lower --holdout")
+    calib.train(train_set, val_set, epochs=epochs, batch=batch, log=typer.echo)
+
+
+@app.command("calib-eval")
+def calib_eval(
+    clip: Annotated[str, typer.Argument(help="A clip with ground-truth pitch lines.")],
+    weights: Annotated[Path | None, typer.Option(help="Trained segmenter.")] = None,
+    stride: Annotated[int, typer.Option(help="Score every Nth frame.")] = 10,
+) -> None:
+    """Score a per-frame fit from the segmenter against the annotated one.
+
+    The question the whole idea turns on: can a homography be fitted from the picture
+    alone, with no seed and nothing carried? A good human seed is 0.15-0.3 m, so anything
+    worse than about half a metre is not worth replacing seeding with.
+    """
+    import numpy as np
+
+    from . import calib
+
+    c = soccernet.Clip(name=clip, root=CLIPS / clip)
+    if not c.labels_path.exists():
+        raise typer.BadParameter(f"{clip} has no ground-truth lines to score against")
+    truth = stage1_register.fit_all(c.labels())
+    net = calib.model(weights or calib.WEIGHTS).to(calib.device()).eval()
+
+    errors: list[float] = []
+    attempted = solved = 0
+    for f in sorted(truth)[::stride]:
+        want = truth[f]
+        if want is None:
+            continue
+        img = cv2.imread(str(c.frames_dir / f"{f:06d}.jpg"))
+        if img is None:
+            continue
+        attempted += 1
+        got = calib.fit_from_mask(calib.predict(net, img), img.shape[1], img.shape[0])
+        if got is None:
+            continue
+        solved += 1
+        errors.append(calibration.observed_error(want, got, img.shape))
+
+    if not errors:
+        typer.echo(f"{clip}: solved 0 of {attempted} frames")
+        return
+    e = np.array(errors)
+    typer.echo(
+        f"{clip}: solved {solved}/{attempted} ({solved / attempted:.0%})"
+        f"  median {np.median(e):.2f} m  p90 {np.percentile(e, 90):.2f} m"
+        f"  worst {e.max():.2f} m"
+    )
 
 
 @app.command()

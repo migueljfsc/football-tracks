@@ -92,7 +92,7 @@ class Detection:
         return self.y2 - self.y1
 
 
-def _trust_certifi() -> None:
+def trust_certifi() -> None:
     """Point urllib at certifi's bundle before torch downloads weights.
 
     A stock python.org install on macOS has no system CA bundle wired up, so the
@@ -117,7 +117,7 @@ def load_model(dev: str | None = None) -> tuple[Any, Any, str]:
     """The model, its image processor, and the device. Weights download on first use."""
     from transformers import RTDetrForObjectDetection, RTDetrImageProcessor
 
-    _trust_certifi()
+    trust_certifi()
     dev = dev or device()
     processor = RTDetrImageProcessor.from_pretrained(MODEL)
     # transformers ships no py.typed, so the model is Any from here on.

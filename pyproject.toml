@@ -23,6 +23,10 @@ dependencies = [
 # (D9). supervision is absent too: MIT, but its ByteTrack is deprecated and goes away in
 # 0.31, so the tracker is our own.
 vision = ["torch>=2.5", "transformers>=5.0"]
+# The pitch-line segmenter (D36). torchvision is back, for its pretrained segmentation
+# backbones rather than its detectors -- the detector it used to supply lost to RT-DETR
+# and is still gone.
+calib = ["torch>=2.5", "torchvision>=0.20"]
 # Deliberately empty. Shirt-number OCR was tried and does not work on this footage: a
 # general-purpose reader takes one digit out of a two-digit number and is confident about
 # it, so numbers come out wrong four times as often as right (D32). The extra remains so
@@ -66,6 +70,7 @@ module = [
     "scipy.*",
     "transformers.*",
     "torch.*",
+    "torchvision.*",
     "certifi.*",
     "huggingface_hub.*",
 ]

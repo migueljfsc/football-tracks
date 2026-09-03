@@ -481,6 +481,44 @@ against 1333 changed nothing, because the misses are occlusions rather than smal
 players), and a lower confidence floor, which buys recall at about three spurious boxes
 per real one.
 
+**D36 — the camera model is learned, because the missing thing was never the paint but
+the NAME of it.** `refine.line_pixels` finds markings to a median of 0.00 m under a correct
+homography. What it cannot do is say which marking a white pixel belongs to: it infers that
+from the homography it is trying to fix, which is the circularity that gave it a two-metre
+capture radius and lost it the benchmark (D35).
+
+A segmenter answers that one question. Every pixel arrives already named, so a
+correspondence is a fact rather than an inference, and a homography can be fitted per frame
+from nothing at all -- no seed, no carry, and therefore no drift. Manual seeding, drift and
+the cut-detection problem are one problem wearing three hats, and this is the hat.
+
+DeepLabv3 on a MobileNetV3 backbone, 27 classes, 640x360, trained on SN-GSR-2025 -- which
+is broadcast footage carrying per-frame line annotations in the format `lines_of` already
+reads. It is training data ONLY: at inference the model sees the user's own clips and
+SoccerNet is never involved. Weights are gitignored rather than committed, which is also
+the answer to what the data licence permits.
+
+Three things this is built around:
+
+- **The split is by MATCH, never by clip or frame.** SNGS-116 and SNGS-121 are both game 7,
+  so a clip-level split puts the same stadium, camera and kit on both sides and reports a
+  generalisation that was never tested. `split_by_game` is the whole guard and
+  `test_calib.py` pins it.
+- **Background is 95% of the pixels**, so plain cross-entropy scores 95% by predicting
+  nothing. The background class is weighted to 0.05.
+- **A predicted class the fitter cannot name is wasted supervision, not a bug.** Circles and
+  goalposts are labelled and learned because they teach the network what a pitch looks
+  like; only the 17 straight markings become correspondences. A test asserts those 17 are
+  exactly `PITCH_LINES`, because the fitter silently ignores anything else.
+
+The fit is DLT first -- it needs no starting guess, which is the entire point -- then the
+geometric least squares from `refine`, because a DLT is biased by how many pixels each
+marking happens to contribute (D35 again).
+
+Kill criterion, set before training: a per-frame fit must beat 0.5 m median `observed_error`
+on a held-out MATCH and solve 80% of frames. A good human seed is 0.15-0.3 m, so anything
+worse is not worth replacing seeding with.
+
 **D35 — snapping the camera model onto the painted lines improves the camera model and
 makes the tracks worse. Off by default.** Propagation is open-loop, so `refine.py` closes
 the loop: project the model's markings into the frame, find the paint they should be lying
