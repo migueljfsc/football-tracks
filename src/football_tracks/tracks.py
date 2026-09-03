@@ -72,7 +72,27 @@ class Track:
         return d
 
 
-DEFAULT_INTERVAL_S = 0.2
+# A tenth of a second. Chosen against the board that comes out, not against the file
+# size: the reduction costs 0.04 m at the median where the camera model itself is 0.95 m
+# out, so accuracy does not constrain this at all -- every interval tried was far inside
+# the noise. What constrains it is the CURVES. A run is fitted from the samples between
+# two scenes, and scenes are seconds apart, so a coarse grid starves the fit:
+#
+#     interval   size    curved runs    roster
+#     raw        888 KB      22         11v10
+#     0.1 s      237 KB      23         11v10
+#     0.2 s      153 KB      16         11v9
+#     0.4 s      110 KB      12         11v10
+#     1.0 s       84 KB       5         11v9
+#
+# A second per sample costs 78% of the runs, which is the whole point of the pipeline,
+# to save 150 KB. 0.1 s keeps every run the raw file had -- 23 against 22, because the
+# median also removes the noise that was fragmenting tracks -- at a quarter of the size.
+#
+# The twitchiness a long interval is meant to cure is cured by the MEDIAN inside the
+# slot, not by the slot being long. Five frames is already enough to average away the
+# jitter; longer slots stop removing noise and start removing the run.
+DEFAULT_INTERVAL_S = 0.1
 
 
 def at_interval(samples: list[Sample], fps: float, interval_s: float) -> list[Sample]:
