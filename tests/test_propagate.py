@@ -116,6 +116,11 @@ def test_a_chain_cannot_start_itself(tmp_path: Path) -> None:
     assert chain.gaps == 3
 
 
+def onto_pitch() -> npt.NDArray[np.float64]:
+    """A camera model that puts the test frame on the pitch, so probes land on grass."""
+    return np.array([[105.0 / W, 0.0, 0.0], [0.0, 68.0 / HGT, 0.0], [0.0, 0.0, 1.0]])
+
+
 def test_drift_scores_nothing_when_only_the_seed_was_fitted(tmp_path: Path) -> None:
     """A carry can only be measured against evidence it did not produce.
 
@@ -125,7 +130,7 @@ def test_drift_scores_nothing_when_only_the_seed_was_fitted(tmp_path: Path) -> N
     base = grass()
     for f in range(1, 12):
         cv2.imwrite(str(tmp_path / f"{f:06d}.jpg"), shifted(base, 3.0 * f, 0.0))
-    assert prop.drift(tmp_path, {1: np.eye(3)}, 1, length=10) == []
+    assert prop.drift(tmp_path, {1: onto_pitch()}, 1, length=10) == []
 
 
 def test_drift_reports_a_carry_that_disagrees_with_a_later_fit(tmp_path: Path) -> None:
@@ -133,6 +138,21 @@ def test_drift_reports_a_carry_that_disagrees_with_a_later_fit(tmp_path: Path) -
     for f in range(1, 12):
         cv2.imwrite(str(tmp_path / f"{f:06d}.jpg"), shifted(base, 3.0 * f, 0.0))
     # The frames really do move, so an identity fit at frame 11 is a genuine disagreement.
-    walked = prop.drift(tmp_path, {1: np.eye(3), 11: np.eye(3)}, 1, length=10)
+    walked = prop.drift(tmp_path, {1: onto_pitch(), 11: onto_pitch()}, 1, length=10)
     assert [c for c, _ in walked] == [10]
     assert walked[0][1] > 1.0
+
+
+def test_observed_error_ignores_a_corner_the_camera_cannot_see() -> None:
+    """The metric asks about the picture, not about the model's fixed points.
+
+    Three of the four pitch corners fall outside a tight shot of a penalty area, one of
+    them twenty frame-widths away, so a corner-based error reports the extrapolation and
+    not the camera (D33).
+    """
+    truth = onto_pitch()
+    # A model that agrees across the frame and diverges hard off its left edge.
+    near = truth.copy()
+    near[0, 2] = 0.5  # half a metre of pan, everywhere on screen
+    got = prop.observed_error(truth, near, (HGT, W, 3))
+    assert 0.4 < got < 0.6

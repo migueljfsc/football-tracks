@@ -277,6 +277,43 @@ def fill(
     )
 
 
+# The grid the disagreement is measured over: across the frame, and down its lower part,
+# which for any football camera is where the grass is.
+PROBE_COLS = 12
+PROBE_ROWS = 8
+PROBE_TOP = 0.4
+
+
+def observed_error(truth: H, carried: H, shape: tuple[int, ...]) -> float:
+    """How far the two models disagree, in metres, WHERE THE CAMERA IS LOOKING.
+
+    Measured on the frame and not at the pitch corners. A corner is a fixed point of the
+    model, not of the picture: in a tight shot of a penalty area three of the four fall
+    outside the frame - one of them 58,717 px out on a 2,774 px frame - so the number
+    that comes back is the extrapolation error twenty pitch-lengths away, and it read as
+    25.44 m for a camera whose players were 0.95 m out. It flatters a wide shot for the
+    same reason. Probing the image instead asks the question the pipeline actually has.
+    """
+    h, w = shape[0], shape[1]
+    xs = np.linspace(0.0, float(w), PROBE_COLS)
+    ys = np.linspace(float(h) * PROBE_TOP, float(h), PROBE_ROWS)
+    pts = np.array([[x, y] for x in xs for y in ys], dtype=np.float64).reshape(-1, 1, 2)
+    a = cv2.perspectiveTransform(pts, truth).reshape(-1, 2)
+    b = cv2.perspectiveTransform(pts, carried).reshape(-1, 2)
+    d = np.linalg.norm(a - b, axis=1)
+    # Only where the true model says there is pitch. Above the horizon it maps to nothing
+    # and a probe there is a number about a point that does not exist.
+    on = (
+        np.isfinite(d)
+        & np.isfinite(a).all(axis=1)
+        & (a[:, 0] > -20)
+        & (a[:, 0] < 125)
+        & (a[:, 1] > -20)
+        & (a[:, 1] < 88)
+    )
+    return float(np.median(d[on])) if on.any() else float("nan")
+
+
 def drift(
     frames_dir: Path, direct: dict[int, H | None], seed: int, *, length: int
 ) -> list[tuple[int, float]]:
@@ -286,8 +323,10 @@ def drift(
     of disagreement)` pairs - the offset travels WITH the error because not every frame
     has a direct fit to score against, so a bare list would be indexed by scored frames
     while reading like it was indexed by carried ones.
+
+    `direct` must hold only what was FITTED. Passing the carried chain scores it against
+    itself and reports 0.00 m however far the camera has wandered (D33).
     """
-    corners = np.array([[0.0, 0.0], [105.0, 0.0], [105.0, 68.0], [0.0, 68.0]])
     seeded = direct.get(seed)
     if seeded is None:
         return []
@@ -311,10 +350,5 @@ def drift(
         truth = direct.get(f)
         if truth is None:
             continue
-        # Compared at the pitch corners rather than at the matrix: a homography is only
-        # ever wrong somewhere, and the corners are where a small angular error shows.
-        got = cv2.perspectiveTransform(
-            cv2.perspectiveTransform(corners.reshape(-1, 1, 2), np.linalg.inv(truth)), current
-        ).reshape(-1, 2)
-        errors.append((f - seed, float(np.max(np.linalg.norm(got - corners, axis=1)))))
+        errors.append((f - seed, observed_error(truth, current, img.shape)))
     return errors

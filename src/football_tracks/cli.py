@@ -294,9 +294,9 @@ def calibrate(
         )
         if not walked:
             raise typer.BadParameter(f"frame {drift_from} has no homography to carry")
-        typer.echo(f"{'carried':>9} {'corner error':>14}")
+        typer.echo(f"{'carried':>9} {'error on screen':>16}")
         for carried, error in walked:
-            typer.echo(f"{carried:>8}f {error:>12.2f} m")
+            typer.echo(f"{carried:>8}f {error:>14.2f} m")
         return
 
     if frame is not None or video:

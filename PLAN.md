@@ -501,9 +501,34 @@ nothing to score against, the command refuses and says what would fix it rather 
 printing a number. `ft seed <clip> --frame N --check` writes `seed.<frame>.json` as that
 second piece of evidence without replacing the seed the pipeline runs from.
 
-The real curve, from SNGS-116, is what DEFAULT_MAX_CARRY = 50 was set from:
+Fixing that exposed the second half of the same mistake. The error was measured at the
+PITCH CORNERS, which are fixed points of the model and not of the picture. On the first
+broadcast clip measured this way three of the four fall outside the frame - one of them
+58,717 px out on a 2,774 px frame - so the number returned was the extrapolation error
+twenty pitch-lengths beyond anything the camera saw:
 
-    1f 0.05 m    10f 0.48 m    50f 3.45 m    150f 3.20 m    200f 29.43 m
+    at the pitch corners                     25.44 m
+    at the ten players actually detected      0.95 m median, 1.49 m max
+    across the visible lower frame            1.76 m median
+
+25.44 m was as wrong as 0.00 m had been, in the other direction, and both would have been
+believed. `observed_error` probes a grid on the IMAGE and keeps the probes the true model
+puts on grass, which is the question the pipeline actually has. It cross-checks against the
+independent per-player measurement above at 1.74 m.
+
+The corner metric had been flattering nothing and inflating everything, SoccerNet included.
+The honest curves:
+
+    SNGS-116 (wide, fixed camera)   1f 0.00   25f 0.12   50f 0.22   200f 0.94 m
+    nottingham (broadcast, tight)                        50f 1.74 m
+
+So DEFAULT_MAX_CARRY = 50 was derived from a number that was wrong by an order of
+magnitude, and the cap it produced happens to be defensible for a different reason than
+the one recorded: a fixed SoccerNet camera tolerates 200 frames comfortably, while
+broadcast footage is already at 1.74 m by 50. There is no single right cap across footage
+types, and 50 is a reasonable middle rather than a measured optimum. Bounding the
+BACKWARD carry needs a second check seed early in the segment; the board built from this
+clip is carried up to 456 frames back from its seed, and that distance is unmeasured.
 
 **D32 — shirt-number OCR does not work on this footage, and the failures are confident.**
 Measured on SNGS-147 with easyocr over the largest thirty sightings of each track, voting
