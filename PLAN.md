@@ -481,6 +481,62 @@ against 1333 changed nothing, because the misses are occlusions rather than smal
 players), and a lower confidence floor, which buys recall at about three spurious boxes
 per real one.
 
+**D35 — snapping the camera model onto the painted lines improves the camera model and
+makes the tracks worse. Off by default.** Propagation is open-loop, so `refine.py` closes
+the loop: project the model's markings into the frame, find the paint they should be lying
+on, and refit. Against SoccerNet's per-frame ground truth it does what it claims --
+
+    carry only      median 0.22 m   worst 1.10 m   at 200 frames 0.94 m
+    carry + refine  median 0.22 m   worst 0.65 m   at 200 frames 0.16 m
+
+-- and end to end, on the same clips with the interval held at 0 so recall is comparable,
+it is a plain regression:
+
+    clip        snap    recall   precision
+    SNGS-147    off      41.3%      40.4%
+    SNGS-147    on        8.4%      97.8%
+    SNGS-116    off      67.3%      74.9%
+    SNGS-116    on       61.1%      67.6%
+
+97.8% precision on a recall of 8.4% is the on-pitch filter throwing nearly everything away:
+the model is plausible enough to pass its own guard and wrong enough to put the players off
+the grass. Feeding each snap back as the basis for the next carry made it worse still --
+one bad fit poisons the rest of the chain rather than costing one frame -- and carrying
+from the unrefined chain instead recovered 147 from 8.4% to 26.7%, which is still below
+doing nothing.
+
+So the code stays, behind `--snap`, and the default is off. Three things went wrong on the
+way to it and all three are the same mistake in different clothes:
+
+- a DLT minimises an ALGEBRAIC residual, and applied to a homography that was already
+  exactly right it moved it half a metre, because lines carrying 48 snapped points outvote
+  lines carrying 6 and the weight per constraint varies with depth. Geometric least squares
+  in metres fixed it.
+- snapping to the NEAREST painted pixel always finds the near edge of a line several pixels
+  wide, so it under-corrected by half a line width every pass and converged to being wrong.
+  The centre of the stripe fixed it.
+- it was built as a pass over the finished chain, on the reasoning that it therefore could
+  not compound. It also cannot PREVENT compounding: snapping has a capture radius of about
+  two metres, so it refused 384 of the 695 frames on the clip whose chain had wandered 44.
+
+And one thing that is simply not worth retrying: adding the centre circle and penalty arcs
+as constraints, on the reasoning that a mid-pitch frame has almost no straight paint. Their
+correspondences carry a 0.26 m systematic bias where the lines carry none, and 45 of them
+were enough to take a fit from 0.16 m to 1.03 m.
+
+The lesson worth keeping is the shape of it: the camera model got measurably better by the
+measurement built to judge camera models, and the thing the pipeline actually produces got
+worse. A metric that improves while the output degrades is not a metric to optimise against.
+
+A caveat on the numbers above, because it matters for anyone comparing them with the
+cross-validation table earlier in this file: those two sets do not agree. `ft auto --mode
+seed` plus `ft score` gives SNGS-121 15.8% recall where the table records 43.4%, and
+`--mode truth` gives 53.1% recall at 51.2% precision where the table records 85.0%
+precision. The difference is NOT this work -- the last commit before any of it scores the
+same -- so the table was produced by a bespoke sweep rather than by these two commands, and
+it should not be read as a baseline these commands reproduce. The snap-on against snap-off
+comparison is internally consistent and is the one that decided the default.
+
 **D34 — a seed is checked against the frame it claims to describe, not against its own
 clicks; and one seed does not cross a broadcast clip.** Carried 453 frames, the Nottingham
 seed lands 44 m from where the players actually are (129 m at worst). Nothing downstream

@@ -14,6 +14,7 @@ import numpy as np
 import numpy.typing as npt
 import pytest
 
+from football_tracks import calibration
 from football_tracks import stage1_propagate as prop
 
 W, HGT = 640, 480
@@ -154,5 +155,5 @@ def test_observed_error_ignores_a_corner_the_camera_cannot_see() -> None:
     # A model that agrees across the frame and diverges hard off its left edge.
     near = truth.copy()
     near[0, 2] = 0.5  # half a metre of pan, everywhere on screen
-    got = prop.observed_error(truth, near, (HGT, W, 3))
+    got = calibration.observed_error(truth, near, (HGT, W, 3))
     assert 0.4 < got < 0.6

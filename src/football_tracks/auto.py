@@ -97,6 +97,7 @@ def from_seeds(
     *,
     max_carry: int | None,
     motions: dict[int, Any] | None = None,
+    snap: Any = None,
 ) -> dict[int, Any]:
     """Clicked frames, carried across the clip in both directions.
 
@@ -111,7 +112,7 @@ def from_seeds(
         if h is not None and seeded.frame in direct:
             direct[seeded.frame] = h
     return stage1_propagate.fill(
-        frames_dir, direct, max_carry=max_carry, motion=motions
+        frames_dir, direct, max_carry=max_carry, motion=motions, snap=snap
     ).homographies
 
 
@@ -122,6 +123,7 @@ def homographies(
     *,
     max_carry: int | None,
     motions: dict[int, Any] | None = None,
+    snap: Any = None,
 ) -> dict[int, Any]:
     """Per-frame homographies, either from every frame's lines or from frame one's."""
     direct = stage1_register.fit_all(labels)
@@ -137,7 +139,7 @@ def homographies(
     if first is not None:
         seeded[first] = direct[first]
     return stage1_propagate.fill(
-        frames_dir, seeded, max_carry=max_carry, motion=motions
+        frames_dir, seeded, max_carry=max_carry, motion=motions, snap=snap
     ).homographies
 
 

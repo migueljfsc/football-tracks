@@ -10,6 +10,7 @@ import typer
 from . import auto as auto_mod
 from . import detect as detect_mod
 from . import overlay as overlay_mod
+from . import refine as refine_mod
 from . import render as render_mod
 from . import score as score_mod
 from . import seed as seed_mod
@@ -406,6 +407,13 @@ def auto(
             " than the pipeline is accurate.",
         ),
     ] = tracks.DEFAULT_INTERVAL_S,
+    snap: Annotated[
+        bool,
+        typer.Option(
+            help="Re-anchor each carried homography on its own frame's markings."
+            " Improves the camera model and makes the tracks WORSE (D35); off by default."
+        ),
+    ] = False,
 ) -> None:
     """The automatic path end to end - frames in, tracks.json out.
 
@@ -432,7 +440,12 @@ def auto(
     if c.labels_path.exists():
         labels = c.labels()
         homs = auto_mod.homographies(
-            labels, c.frames_dir, picked, max_carry=None if carry < 0 else carry, motions=motions
+            labels,
+            c.frames_dir,
+            picked,
+            max_carry=None if carry < 0 else carry,
+            motions=motions,
+            snap=refine_mod.refine if snap else None,
         )
     elif seed_path.exists():
         # A real clip: one seeded frame is all the camera information there is.
@@ -447,6 +460,7 @@ def auto(
             c.frames_dir,
             max_carry=None if carry < 0 else carry,
             motions=motions,
+            snap=refine_mod.refine if snap else None,
         )
     else:
         raise typer.BadParameter(

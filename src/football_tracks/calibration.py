@@ -40,6 +40,8 @@ GOAL_AREA_HALF = 9.16
 # Circles and goal frames are deliberately absent. A circle is not a line, and a goal
 # post is not on the ground plane at all - projecting it with a ground homography puts
 # it metres from where it is.
+H = npt.NDArray[np.float64]
+
 PITCH_LINES: dict[str, Line] = {
     "Side line left": (1.0, 0.0, 0.0),
     "Side line right": (1.0, 0.0, -PITCH_LENGTH),
@@ -230,3 +232,40 @@ def lines_of(annotation: dict[str, Any]) -> dict[str, list[dict[str, float]]]:
     """The `lines` payload of a SoccerNet pitch annotation."""
     payload: dict[str, list[dict[str, float]]] = annotation.get("lines", {})
     return payload
+
+
+# The grid the disagreement is measured over: across the frame, and down its lower part,
+# which for any football camera is where the grass is.
+PROBE_COLS = 12
+PROBE_ROWS = 8
+PROBE_TOP = 0.4
+
+
+def observed_error(truth: H, carried: H, shape: tuple[int, ...]) -> float:
+    """How far the two models disagree, in metres, WHERE THE CAMERA IS LOOKING.
+
+    Measured on the frame and not at the pitch corners. A corner is a fixed point of the
+    model, not of the picture: in a tight shot of a penalty area three of the four fall
+    outside the frame - one of them 58,717 px out on a 2,774 px frame - so the number
+    that comes back is the extrapolation error twenty pitch-lengths away, and it read as
+    25.44 m for a camera whose players were 0.95 m out. It flatters a wide shot for the
+    same reason. Probing the image instead asks the question the pipeline actually has.
+    """
+    h, w = shape[0], shape[1]
+    xs = np.linspace(0.0, float(w), PROBE_COLS)
+    ys = np.linspace(float(h) * PROBE_TOP, float(h), PROBE_ROWS)
+    pts = np.array([[x, y] for x in xs for y in ys], dtype=np.float64).reshape(-1, 1, 2)
+    a = cv2.perspectiveTransform(pts, truth).reshape(-1, 2)
+    b = cv2.perspectiveTransform(pts, carried).reshape(-1, 2)
+    d = np.linalg.norm(a - b, axis=1)
+    # Only where the true model says there is pitch. Above the horizon it maps to nothing
+    # and a probe there is a number about a point that does not exist.
+    on = (
+        np.isfinite(d)
+        & np.isfinite(a).all(axis=1)
+        & (a[:, 0] > -20)
+        & (a[:, 0] < 125)
+        & (a[:, 1] > -20)
+        & (a[:, 1] < 88)
+    )
+    return float(np.median(d[on])) if on.any() else float("nan")

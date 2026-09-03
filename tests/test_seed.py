@@ -287,3 +287,31 @@ def test_behind_camera_does_not_care_which_way_the_sign_runs() -> None:
     a = np.array([[1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 1.0, 3000.0]])
     b = np.array([[1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, -1.0, 3000.0]])
     assert seed.behind_camera(a, 1000, 1000) == seed.behind_camera(b, 1000, 1000)
+
+
+def test_refine_pulls_a_nudged_model_back_onto_the_paint(tmp_path: Path) -> None:
+    """A synthetic pitch: two lines each way, and a model nudged off them.
+
+    The refinement is local. It corrects what the carry has just done to a homography
+    that was nearly right, which is why it belongs inside the carry loop and not after
+    it: run over a finished chain that has already wandered, it is out of range and
+    refuses (D35).
+    """
+    from football_tracks import refine as refine_mod
+
+    h, w = 720, 1280
+    img = np.full((h, w, 3), (60, 140, 60), dtype=np.uint8)
+    # Model: pitch metres map to pixels by a factor of 12, so lines land where the
+    # markings would be. Only a scaling, but the fit does not know that.
+    scale = 12.0
+    truth = np.array([[1 / scale, 0.0, 0.0], [0.0, 1 / scale, 0.0], [0.0, 0.0, 1.0]])
+    for x in (5.5, 16.5):
+        cv2.line(img, (int(x * scale), 0), (int(x * scale), h), (250, 250, 250), 5)
+    for y in (24.84, 43.16):
+        cv2.line(img, (0, int(y * scale)), (w, int(y * scale)), (250, 250, 250), 5)
+
+    nudged = truth @ np.array([[1.0, 0.0, 6.0], [0.0, 1.0, 4.0], [0.0, 0.0, 1.0]])
+    before = calibration.observed_error(truth, nudged, img.shape)
+    got = refine_mod.refine(nudged, img)
+    assert got is not None
+    assert calibration.observed_error(truth, got, img.shape) < before
