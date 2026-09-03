@@ -13,6 +13,7 @@ stage produces a Track, never here and never downstream.
 from __future__ import annotations
 
 import json
+import statistics
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Literal
@@ -71,6 +72,44 @@ class Track:
         return d
 
 
+DEFAULT_INTERVAL_S = 0.2
+
+
+def at_interval(samples: list[Sample], fps: float, interval_s: float) -> list[Sample]:
+    """Samples reduced to one per time slot, at the MEDIAN of each slot.
+
+    A tracker answers every frame, and a per-frame answer is finer than the pipeline is
+    accurate: the camera model alone is about a metre out, so most of what a frame adds
+    over its neighbour is noise. Storing it anyway makes a 15-second clip an 888 KB file
+    and asks the board to smooth what should never have been written.
+
+    The median and not every Nth sample. Decimation keeps whatever noise the sample it
+    kept happened to have; the median of a slot rejects the excursions outright, and for
+    a player crossing the slot it lands where they were halfway through it - which is
+    why the frame stamped is the slot's median frame and not its edge.
+    """
+    if interval_s <= 0 or not samples:
+        return samples
+    step = max(1, round(interval_s * fps))
+    slots: dict[int, list[Sample]] = {}
+    for s in sorted(samples, key=lambda s: s.f):
+        slots.setdefault(s.f // step, []).append(s)
+
+    out: list[Sample] = []
+    for k in sorted(slots):
+        group = slots[k]
+        confs = [s.conf for s in group if s.conf is not None]
+        out.append(
+            Sample(
+                f=int(statistics.median_low([s.f for s in group])),
+                x=float(statistics.median([s.x for s in group])),
+                y=float(statistics.median([s.y for s in group])),
+                conf=sum(confs) / len(confs) if confs else None,
+            )
+        )
+    return out
+
+
 def on_pitch(x: float, y: float, margin: float = PITCH_MARGIN) -> bool:
     """Whether a projected position is credible enough to keep.
 
@@ -94,6 +133,7 @@ def write(
     ball: list[Sample] | None = None,
     width: int | None = None,
     height: int | None = None,
+    interval_s: float = DEFAULT_INTERVAL_S,
 ) -> Path:
     source: dict[str, Any] = {
         "clip": clip,
@@ -105,12 +145,29 @@ def write(
         source["width"] = width
     if height is not None:
         source["height"] = height
+    if interval_s > 0:
+        source["intervalS"] = interval_s
 
     doc = {
         "version": 1,
         "source": source,
         "pitch": {"length": PITCH_LENGTH, "width": PITCH_WIDTH},
-        "tracks": [t.to_json() for t in tracks],
+        "tracks": [
+            Track(
+                id=t.id,
+                team=t.team,
+                number=t.number,
+                number_confidence=t.number_confidence,
+                samples=at_interval(t.samples, fps, interval_s),
+            ).to_json()
+            for t in tracks
+        ],
+        # The ball is NOT reduced to the interval. Its samples answer one question --
+        # who was nearest -- and the answer changes inside a slot: a pass leaves one
+        # player and reaches another in less time than a player takes to run anywhere.
+        # It is also one entity rather than twenty-two, so full rate costs almost
+        # nothing here and buys every handover the board can find.
+        #
         # The ball's POSITIONS, which are not to be trusted as positions - a ground
         # homography assumes z = 0, so a ball in flight lands metres from where it is.
         # They answer one question reliably, which is who is nearest, and that is the

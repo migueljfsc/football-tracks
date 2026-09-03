@@ -481,6 +481,36 @@ against 1333 changed nothing, because the misses are occlusions rather than smal
 players), and a lower confidence floor, which buys recall at about three spurious boxes
 per real one.
 
+**D34 — a seed is checked against the frame it claims to describe, not against its own
+clicks; and one seed does not cross a broadcast clip.** Carried 453 frames, the Nottingham
+seed lands 44 m from where the players actually are (129 m at worst). Nothing downstream
+can tell: the tracks and the board share the wrong coordinate frame, so Pitchboard's
+fidelity score stays excellent while the play happens in the wrong half. The single-seed
+run also dropped ZERO detections as off-pitch where a correct model drops 4,358 — the
+drifted homography was mapping the crowd and the dugout onto the grass, and "nothing to
+filter" read as a clean clip.
+
+So the pipeline now anchors on every clicked frame. `fill` already prefers a direct fit and
+carries only the gaps, so more seeds shorten every chain rather than adding a mechanism.
+
+That immediately made things worse, which is the real lesson here. A seed clicked across a
+BAND of the frame is unconstrained in depth: three points along the top of frame 400 fit
+their own clicks to 0.27 m median and put the horizon a third of the way DOWN the picture,
+so two thirds of the frame mapped behind the camera and players landed at x = -93 m. Every
+number the fit reported about itself was excellent. Anchoring on it is worse than having no
+anchor there, because it is not wrong in proportion to distance - it is wrong AT the anchor.
+
+    seed        points  traced  own residual   frame behind camera
+    853             11      38   0.18 m med          0%
+    903             10      31   0.21 m med          0%
+    400              3      22   0.27 m med         33%   <- refused
+
+`behind_camera` is the check the residuals cannot make. `h[2] . p` is the homogeneous
+scale, so where it changes sign the ground plane has passed through infinity. A fit whose
+frame straddles that line does not describe its own picture, whatever it says about the
+points it was given. The margin is 0% against 33%, so the 25% threshold is not a boundary
+anyone has to defend.
+
 **D33 — a carry can only be scored against evidence it did not produce, and on a
 broadcast clip that evidence has to be clicked.** `ft calibrate --drift-from` was handed
 the homographies the pipeline runs on. On a SoccerNet clip those are per-frame fits and

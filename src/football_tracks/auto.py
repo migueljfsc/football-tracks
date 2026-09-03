@@ -49,25 +49,67 @@ class Result:
     unsolved_frames: int
 
 
-def from_seed(
-    seeded: seed_mod.Seed,
+def seed_paths(work: Path) -> list[Path]:
+    """Every clicked frame for a clip, primary first.
+
+    One seed cannot cross a broadcast clip. Carried 453 frames it lands 44 m from where
+    the players actually are (D34), and nothing downstream can tell - the tracks and the
+    board share the wrong coordinate frame, so every fidelity score stays excellent while
+    the play happens in the wrong half. More anchors is the only fix that does not need a
+    better flow estimator.
+    """
+    primary = work / "seed.json"
+    extra = sorted(p for p in work.glob("seed.*.json") if p != primary)
+    return ([primary] if primary.exists() else []) + extra
+
+
+def usable_seeds(
+    work: Path, frames_dir: Path
+) -> tuple[list[seed_mod.Seed], list[tuple[Path, float]]]:
+    """The seeds that describe their own frame, and the ones that do not.
+
+    A seed is refused here rather than trusted because it fits its own clicks: evidence
+    confined to a band of the frame is unconstrained in depth, and the fit folds over
+    just below it (D34). Anchoring the pipeline on one of those is worse than having no
+    anchor there at all - it does not degrade with distance, it is wrong at the anchor.
+    """
+    good: list[seed_mod.Seed] = []
+    bad: list[tuple[Path, float]] = []
+    for path in seed_paths(work):
+        seeded = seed_mod.read(path)
+        h = seed_mod.homography(seeded)
+        img = cv2.imread(str(frames_dir / f"{seeded.frame:06d}.jpg"))
+        if h is None or img is None:
+            bad.append((path, 1.0))
+            continue
+        behind = seed_mod.behind_camera(h, img.shape[1], img.shape[0])
+        if behind > seed_mod.MAX_BEHIND_CAMERA:
+            bad.append((path, behind))
+        else:
+            good.append(seeded)
+    return good, bad
+
+
+def from_seeds(
+    seeds: list[seed_mod.Seed],
     frames: list[int],
     frames_dir: Path,
     *,
     max_carry: int | None,
     motions: dict[int, Any] | None = None,
 ) -> dict[int, Any]:
-    """One clicked frame, carried across the clip in both directions.
+    """Clicked frames, carried across the clip in both directions.
 
-    The whole automatic path for a clip nobody has annotated: a human marks landmarks
-    once and `stage1_propagate` does the rest. Both directions matter - a clip is
-    rarely best seeded at its first frame, because the camera is often still finding
-    the play there.
+    `fill` already prefers a direct fit and carries only the gaps between them, so more
+    seeds shorten every chain rather than adding a mechanism. Both directions matter - a
+    clip is rarely best seeded at its first frame, because the camera is often still
+    finding the play there.
     """
-    h = seed_mod.homography(seeded)
     direct: dict[int, Any] = dict.fromkeys(frames)
-    if h is not None and seeded.frame in direct:
-        direct[seeded.frame] = h
+    for seeded in seeds:
+        h = seed_mod.homography(seeded)
+        if h is not None and seeded.frame in direct:
+            direct[seeded.frame] = h
     return stage1_propagate.fill(
         frames_dir, direct, max_carry=max_carry, motion=motions
     ).homographies

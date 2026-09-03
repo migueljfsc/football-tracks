@@ -178,6 +178,41 @@ def read(path: Path) -> Seed:
 # than across it and the test cannot tell - a seed from behind the goal, say.
 ORIENTATION_CONFIDENT = 0.5
 
+# How much of the frame may map behind the camera before the fit is refused.
+#
+# Not a tuning knob so much as a statement that a picture cannot be mostly behind the
+# lens. Measured on the three seeds clicked for the Nottingham clip: the two good ones
+# put 0% of the frame there and the bad one 67%, so anything in between is a wide
+# margin rather than a boundary anyone has to defend.
+MAX_BEHIND_CAMERA = 0.25
+BEHIND_GRID = 20
+
+
+def behind_camera(h: npt.NDArray[np.float64], width: int, height: int) -> float:
+    """Fraction of the frame this homography maps behind the camera.
+
+    The check the residuals cannot make. A seed clicked entirely within a thin band of
+    the frame is unconstrained in depth: it fits its own evidence to a few centimetres
+    and folds over immediately below it, putting the horizon inside the picture and
+    players ninety metres off the end of the pitch. Three clicked points across the top
+    of a broadcast frame did exactly that, and every residual it reported was under half
+    a metre (D34).
+
+    `h` maps image to pitch, so `h[2] . p` is the homogeneous scale: where it changes
+    sign the ground plane has passed through infinity, and everything past it is behind
+    the lens.
+    """
+    a, b, c = h[2]
+    xs = np.linspace(0.0, float(width), BEHIND_GRID)
+    ys = np.linspace(0.0, float(height), BEHIND_GRID)
+    pts = np.array([[x, y] for x in xs for y in ys], dtype=np.float64)
+    scale = pts @ np.array([a, b], dtype=np.float64) + c
+    # Sign is arbitrary; what matters is that the frame does not straddle the horizon.
+    behind = float((scale <= 0).mean())
+    # Sign is arbitrary, so the question is how far the frame STRADDLES the horizon:
+    # all-one-side is a fit that describes the whole picture, either way round.
+    return min(behind, 1.0 - behind)
+
 
 def orientation(seed: Seed) -> float:
     """How well the clicked pitch y axis agrees with the image y axis, -1 to 1.

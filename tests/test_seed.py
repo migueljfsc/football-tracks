@@ -264,3 +264,26 @@ def test_text_panel_darkens_a_tall_frame() -> None:
         out = seedui._draw(base, [], [], "penalty spot", False, False)
         # A band under the first line of text, left of where any glyph reaches.
         assert out[8:20, 4:12].mean() < 200, (width, height)
+
+
+def test_behind_camera_accepts_a_fit_that_describes_the_whole_frame() -> None:
+    # Horizon far above the picture: every pixel is in front of the lens.
+    h = np.array([[1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 1.0, 3000.0]])
+    assert seed.behind_camera(h, 1000, 1000) == 0.0
+
+
+def test_behind_camera_catches_a_fit_folded_through_the_horizon() -> None:
+    """A seed clicked in a band of the frame fits its clicks and folds below them.
+
+    Its residuals stay under half a metre while it puts players ninety metres off the
+    end of the pitch, so nothing the fit reports about itself can catch this (D34).
+    """
+    # Horizon through the middle: half the frame maps behind the camera.
+    h = np.array([[1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 1.0, -500.0]])
+    assert seed.behind_camera(h, 1000, 1000) > seed.MAX_BEHIND_CAMERA
+
+
+def test_behind_camera_does_not_care_which_way_the_sign_runs() -> None:
+    a = np.array([[1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 1.0, 3000.0]])
+    b = np.array([[1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, -1.0, 3000.0]])
+    assert seed.behind_camera(a, 1000, 1000) == seed.behind_camera(b, 1000, 1000)

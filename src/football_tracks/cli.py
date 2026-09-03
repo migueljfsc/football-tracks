@@ -249,16 +249,24 @@ def calibrate(
         homs = stage1_register.fit_all(labels)
         direct = {f: h for f, h in homs.items() if h is not None}
     elif seed_path.exists():
-        # A clip nobody annotated: one clicked frame, carried both ways.
-        clicked = seed_mod.read(seed_path)
-        homs = auto_mod.from_seed(
+        # A clip nobody annotated: every clicked frame, carried both ways between them.
+        clicked, refused = auto_mod.usable_seeds(out, c.frames_dir)
+        for path, behind in refused:
+            typer.echo(
+                f"IGNORING {path.name}: it maps {behind:.0%} of its frame behind the"
+                " camera, so it is wrong AT the anchor and not merely far from it."
+                " Click evidence lower in the frame - a fit needs depth, not just points."
+            )
+        if not clicked:
+            raise typer.BadParameter(f"{clip} has no usable seed")
+        homs = auto_mod.from_seeds(
             clicked,
             frames_all,
             c.frames_dir,
             max_carry=None,
             motions=motions,
         )
-        direct = {clicked.frame: seed_mod.homography(clicked)}
+        direct = {s.frame: seed_mod.homography(s) for s in clicked}
     else:
         raise typer.BadParameter(
             f"{clip} has neither SoccerNet labels nor {seed_path} - run `ft seed {clip}` first"
@@ -279,21 +287,24 @@ def calibrate(
         # entry in `homs` IS the carry, so scoring against it compares the chain with
         # itself and reports 0.00 m however far the camera has wandered.
         truth = dict(direct)
-        if labels is None:
-            for extra in sorted(out.glob("seed.*.json")):
-                other = seed_mod.read(extra)
-                truth[other.frame] = seed_mod.homography(other)
         if len(truth) < 2:
             raise typer.BadParameter(
                 f"{clip} has one seeded frame and no per-frame labels, so there is nothing"
                 " independent to score a carry against. Seed a second frame further on"
                 f" (`ft seed {clip} --frame N --check`) and measure again."
             )
+        if drift_from not in truth:
+            raise typer.BadParameter(f"frame {drift_from} has no homography to carry")
+        # To the end of the clip. Capping the walk short of the next piece of evidence
+        # reports "nothing to carry" for a chain that simply had not reached it yet.
         walked = stage1_propagate.drift(
-            c.frames_dir, truth, drift_from, length=min(250, max(frames_all) - drift_from)
+            c.frames_dir, truth, drift_from, length=max(frames_all) - drift_from
         )
         if not walked:
-            raise typer.BadParameter(f"frame {drift_from} has no homography to carry")
+            raise typer.BadParameter(
+                f"carrying from frame {drift_from} reached no other fitted frame -"
+                " the chain breaks before the next one (a cut, or grass the flow cannot hold)"
+            )
         typer.echo(f"{'carried':>9} {'error on screen':>16}")
         for carried, error in walked:
             typer.echo(f"{carried:>8}f {error:>14.2f} m")
@@ -387,6 +398,14 @@ def auto(
         str, typer.Option(help="'truth' uses every frame's lines; 'seed' uses only frame one's.")
     ] = "seed",
     carry: Annotated[int, typer.Option(help="Frames a homography may be carried.")] = -1,
+    interval_s: Annotated[
+        float,
+        typer.Option(
+            "--interval-s",
+            help="Seconds between stored positions. 0 writes every frame, which is finer"
+            " than the pipeline is accurate.",
+        ),
+    ] = tracks.DEFAULT_INTERVAL_S,
 ) -> None:
     """The automatic path end to end - frames in, tracks.json out.
 
@@ -417,8 +436,13 @@ def auto(
         )
     elif seed_path.exists():
         # A real clip: one seeded frame is all the camera information there is.
-        homs = auto_mod.from_seed(
-            seed_mod.read(seed_path),
+        usable, refused = auto_mod.usable_seeds(out, c.frames_dir)
+        for path, behind in refused:
+            typer.echo(f"IGNORING {path.name}: maps {behind:.0%} of its frame behind the camera")
+        if not usable:
+            raise typer.BadParameter(f"{clip} has no usable seed")
+        homs = auto_mod.from_seeds(
+            usable,
             frames,
             c.frames_dir,
             max_carry=None if carry < 0 else carry,
@@ -449,6 +473,7 @@ def auto(
         ball=result.ball,
         width=_size(CLIPS / clip, labels)[0],
         height=_size(CLIPS / clip, labels)[1],
+        interval_s=interval_s,
     )
     typer.echo(
         f"mode {mode}: {result.detections} detections -> {result.raw_tracks} raw tracks"
