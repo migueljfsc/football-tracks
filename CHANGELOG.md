@@ -1,3 +1,9 @@
+## v0.4.2 (2026-09-03)
+
+### Fix
+
+- **calibrate**: measure drift where the camera is looking
+
 ## v0.4.1 (2026-09-02)
 
 ### Fix
