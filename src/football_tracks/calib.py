@@ -64,10 +64,14 @@ CLASSES: tuple[str, ...] = (
 INDEX: dict[str, int] = {name: i + 1 for i, name in enumerate(CLASSES)}
 N_CLASSES = len(CLASSES) + 1
 
-# Training resolution. Lines are thin, so this is the one hyperparameter that is really a
-# question about whether the label survives the downsample at all.
-WIDTH, HEIGHT = 640, 360
-LINE_PX = 3
+# Training resolution, and the hyperparameter that actually decides the answer. A line is
+# thin, so the question is how many metres one predicted pixel is worth: at 640x360 a
+# 3 px line upscales to a 9 px band on a 1920x1080 frame, and at the far end of the pitch
+# that band is over a metre wide. Measured on held-out matches, the segmenter's pixels sit
+# 0.26 m from their line where they are near the camera and 1.45 m where they are far --
+# and only 3-9% of them are mislabelled, so precision and not naming is the limit (D36).
+WIDTH, HEIGHT = 960, 540
+LINE_PX = 4
 
 
 def rasterise(
@@ -282,7 +286,9 @@ def fit_from_mask(mask: npt.NDArray[np.uint8], width: int, height: int) -> Any:
     first = calibration.fit([], pairs, width, height)
     if first is None:
         return None
-    return refine._geometric(first, pairs) or first
+    # Explicit None: `a or b` on an ndarray asks for its truth value and raises.
+    better = refine._geometric(first, pairs)
+    return first if better is None else better
 
 
 def train(
@@ -293,6 +299,7 @@ def train(
     batch: int,
     out: Path = WEIGHTS,
     log: Any = print,
+    resume: bool = False,
 ) -> Path:
     """Fit the segmenter, keeping the epoch that does best on a match it never saw.
 
@@ -304,7 +311,10 @@ def train(
     from torch.nn import functional as F
 
     dev = device()
-    net = model().to(dev)
+    # Resuming matters more than it looks: a run long enough to matter is longer than any
+    # one session reliably survives, and losing six epochs to a killed shell is how a
+    # measurement never gets made.
+    net = model(out if resume and out.exists() else None).to(dev)
     opt = torch.optim.AdamW(net.parameters(), lr=3e-4, weight_decay=1e-4)
     weights = torch.ones(N_CLASSES, device=dev)
     weights[0] = 0.05

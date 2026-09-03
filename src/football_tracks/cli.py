@@ -186,6 +186,9 @@ def calib_train(
         int, typer.Option(help="Use every Nth annotated frame; 750 consecutive ones are one shot.")
     ] = 5,
     holdout: Annotated[int, typer.Option(help="Matches held out, when none are named.")] = 1,
+    resume: Annotated[
+        bool, typer.Option(help="Continue from the saved weights rather than starting over.")
+    ] = False,
     holdout_games: Annotated[
         str,
         typer.Option(
@@ -214,7 +217,7 @@ def calib_train(
     )
     if not val_set:
         raise typer.BadParameter("no held-out match; fetch more clips or lower --holdout")
-    calib.train(train_set, val_set, epochs=epochs, batch=batch, log=typer.echo)
+    calib.train(train_set, val_set, epochs=epochs, batch=batch, log=typer.echo, resume=resume)
 
 
 @app.command("calib-eval")

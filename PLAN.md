@@ -519,6 +519,31 @@ Kill criterion, set before training: a per-frame fit must beat 0.5 m median `obs
 on a held-out MATCH and solve 80% of frames. A good human seed is 0.15-0.3 m, so anything
 worse is not worth replacing seeding with.
 
+**First run: solves everything, and is not accurate enough.** Trained at 640x360 on games
+4, 6 and 9 (4,275 frames), evaluated on the held-out matches:
+
+    clip        solved   median   p90     with refine chained on
+    SNGS-147      100%    0.84 m  2.76 m         1.32 m
+    SNGS-116      100%    3.76 m  8.39 m         0.72 m
+    SNGS-121      100%    1.54 m  8.42 m         0.38 m
+
+The solve rate is the part worth noticing: 100%, from the picture alone, with no seed and
+nothing carried. The accuracy fails the bar.
+
+It is NOT a naming problem, which is what it was built to fix and what it did fix. Under
+the true homography only 3-9% of predicted pixels sit more than 2 m from the line they
+claim. What they are is imprecise: the median predicted pixel is 0.26 m from its line near
+the camera and 1.45 m from it far away, because at 640x360 a 3 px line upscales to a 9 px
+band and a band that wide is worth over a metre at the far touchline. So the limit is
+resolution, and the retrain is at 960x540.
+
+Two things not to repeat. Chaining `refine` after the segmenter helps enormously on two
+clips and wrecks the third (p90 2.76 m -> 17.65 m), so it cannot simply be switched on.
+And choosing between the two fits by which better explains the segmenter's own pixels does
+not work, for a reason worth remembering: the mask fit was fitted to minimise exactly that
+quantity, so the test is rigged for it and picked it 45 times out of 65. Selecting on the
+data you fitted on is not selection.
+
 **D35 — snapping the camera model onto the painted lines improves the camera model and
 makes the tracks worse. Off by default.** Propagation is open-loop, so `refine.py` closes
 the loop: project the model's markings into the frame, find the paint they should be lying
