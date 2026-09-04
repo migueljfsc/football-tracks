@@ -133,6 +133,27 @@ def _jersey(values: list[str | None]) -> int | None:
         return None
 
 
+def to_ball(labels: dict[str, Any]) -> list[Sample]:
+    """The annotated ball, per frame, in pitch metres.
+
+    The yardstick `ft score` measures the pipeline's ball against. Guarded by `on_pitch`
+    like every other position: a ball in flight projects arbitrarily far through a ground
+    homography, and one clip annotates it 30 m past the touchline.
+    """
+    frame_of = {img["image_id"]: _frame_index(img["file_name"]) for img in labels["images"]}
+    out: list[Sample] = []
+    for a in labels["annotations"]:
+        pitch = a.get("bbox_pitch")
+        attrs = a.get("attributes")
+        if not pitch or not attrs or attrs.get("role") != "ball":
+            continue
+        x = pitch["x_bottom_middle"] + SN_ORIGIN_X
+        y = pitch["y_bottom_middle"] + SN_ORIGIN_Y
+        if on_pitch(x, y):
+            out.append(Sample(f=frame_of[a["image_id"]], x=x, y=y))
+    return sorted(out, key=lambda s: s.f)
+
+
 def to_tracks(labels: dict[str, Any], *, keep_referees: bool = False) -> list[Track]:
     """Ground-truth annotations -> Tracks in Pitchboard's coordinate space.
 
@@ -159,7 +180,7 @@ def to_tracks(labels: dict[str, Any], *, keep_referees: bool = False) -> list[Tr
         # it survives the guard above and arrives here looking like a track with no
         # team. It is not one, and there is no ball in v0 (D4).
         if role == "ball":
-            continue
+            continue  # `to_ball` reads it; it is not a track
         if role == "referee" and not keep_referees:
             continue
         team = _TEAM.get((role, attrs.get("team")), "referee" if role == "referee" else "unknown")

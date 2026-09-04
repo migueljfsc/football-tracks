@@ -20,6 +20,11 @@ from typing import Any
 # that a neighbour cannot be claimed, loose enough that a correct detection is not lost.
 MATCH_RADIUS = 2.0
 
+# How close the ball must be to count as found, in metres. Pitchboard resolves the ball to
+# a carrier within 4 m of a player, so a ball inside 3 m names the right one; beyond it the
+# board asserts a pass that did not happen.
+BALL_NEAR_M = 3.0
+
 # home <-> away, for scoring the team split without scoring which name it chose.
 _SWAP: dict[str | None, str | None] = {
     "home": "away",
@@ -44,6 +49,11 @@ class Score:
     jersey_correct: int
     jersey_wrong: int
     jersey_missing: int
+    ball_true: int
+    ball_pred: int
+    ball_matched: int
+    ball_median_m: float
+    ball_near: float
 
     @property
     def recall(self) -> float:
@@ -101,6 +111,12 @@ def match_frame(
         used_pred.add(pid)
         out.append((gid, pid, d))
     return out
+
+
+def _ball(doc: dict[str, Any]) -> dict[int, tuple[float, float]]:
+    """frame -> ball position."""
+    samples = (doc.get("ball") or {}).get("samples", [])
+    return {int(s["f"]): (float(s["x"]), float(s["y"])) for s in samples}
 
 
 def _percentile(values: list[float], q: float) -> float:
@@ -163,6 +179,12 @@ def score(truth: dict[str, Any], pred: dict[str, Any], *, radius: float = MATCH_
         else:
             wrong += 1
 
+    gt_ball, pred_ball = _ball(truth), _ball(pred)
+    ball_errors = [
+        math.hypot(pred_ball[f][0] - gt_ball[f][0], pred_ball[f][1] - gt_ball[f][1])
+        for f in sorted(set(gt_ball) & set(pred_ball))
+    ]
+
     return Score(
         frames=len(frames),
         gt_samples=sum(len(v) for v in gt_by_frame.values()),
@@ -182,6 +204,15 @@ def score(truth: dict[str, Any], pred: dict[str, Any], *, radius: float = MATCH_
         jersey_correct=correct,
         jersey_wrong=wrong,
         jersey_missing=missing,
+        ball_true=len(gt_ball),
+        ball_pred=len(pred_ball),
+        ball_matched=len(ball_errors),
+        ball_median_m=_percentile(ball_errors, 0.5),
+        # Of the frames both sides claim a ball on. A pipeline that abstains everywhere
+        # scores well here on nothing, which is what ball_pred is for.
+        ball_near=sum(1 for d in ball_errors if d <= BALL_NEAR_M) / len(ball_errors)
+        if ball_errors
+        else 0.0,
     )
 
 
@@ -197,6 +228,16 @@ def report(s: Score) -> str:
         f"shirt numbers     {s.jersey_correct} right, {s.jersey_wrong} WRONG,"
         f" {s.jersey_missing} unread, of {s.jersey_gt_total}",
     ]
+    if s.ball_true or s.ball_pred:
+        lines.append(
+            f"ball              {s.ball_pred} asserted / {s.ball_true} true,"
+            f" {s.ball_matched} comparable"
+        )
+        if s.ball_matched:
+            lines.append(
+                f"ball error        {s.ball_median_m:.2f} m median,"
+                f" {s.ball_near:6.1%} within {BALL_NEAR_M:g} m"
+            )
     if s.jersey_wrong:
         # D5: an unread number imports as a generic token and costs nothing. A wrong
         # one attaches a run to the wrong player and nobody downstream can see it.

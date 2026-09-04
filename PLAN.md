@@ -1410,6 +1410,127 @@ starting at. That signal needs no labels -- it is sitting in our own tracks.json
 on a corner arc for 80 frames.
 
 
+**D60 — a stationary false positive is only distinguishable from a placed ball by WHERE it
+is standing.** `_painted_spots` calls a square metre scenery when a "ball" holds it for a third
+of a clip. That floor cannot go lower, because a ball placed for a corner holds one for a fifth
+of a clip — so the filter that catches paint would call every set piece scenery. Two clips paid
+for it: SNGS-147 asserted a ball on all 163 pre-action frames with NONE within 3 m of the real
+one, and SNGS-151 the same on 84. Both are a stationary false positive a few metres from a
+genuinely stationary real ball, holding its bin for about 21% of the clip — under the floor.
+
+    clip        ours                truth               error
+    SNGS-147    (10.1, 44.3) frozen  (5.3, 42.1)         ~5 m for 160 frames
+    SNGS-151    (55.2, 28.9) frozen  (52.5, 34.0) spot   ~5.5 m
+
+D59's restart geometry is the discriminator, used the other way round: a ball sitting still AT
+a restart spot is legitimate, and one sitting still anywhere else is not. So the floor is 0.33
+on a restart cell and 0.20 off it.
+
+0.20 rather than lower, and the bound is real rather than cautious. At 0.15 SNGS-066 gains 24
+points and SNGS-121 LOSES 8, because a stoppage leaves the ball sitting still off any spot —
+SNGS-121 is a Yellow card, and the ball waits on the grass while the referee books somebody.
+"Nothing legitimate is stationary away from a restart spot" is false, and 0.20 is what fits
+between a placed ball and a mark that never moves.
+
+    clip        within 3 m       median
+    SNGS-147    44.4 -> 59.3%    4.67 -> 1.75 m
+    SNGS-116    59.6 -> 58.5%    1.94 -> 1.95 m
+    the other nine             unchanged
+
+**And it moved no board at all.** All eleven are identical through `boardFromTracks`, for the
+same reason four were after D59: SNGS-147's window is f195-264 and everything that improved is
+in f1-163. Kept anyway — it removes balls that are systematically wrong, and the window will
+not always miss them — but it ships as a source fix, not a board fix.
+
+**Ball accuracy is now in `ft score`.** `ft truth` writes SoccerNet's `category_id` 4 into
+truth.json's ball, and scoring is a diff of two files in one format, the way D12 set it up for
+players. Six throwaway scripts measured the ball across the two decisions above; none of them
+survives, and the next ball change would have been judged by eye.
+
+**D61 — the kit signature separates the two teams almost perfectly, and gating on it still
+does not fix the id switch. Written, measured, reverted.** Two recorded beliefs were wrong and
+worth correcting before the next attempt repeats them.
+
+*The switches are not team-mates.* `stage2_track` says a steal happens "where kit colour says
+nothing because they are team-mates". Measured against ground truth, on the clips where
+switches are worst, they are mostly OPPOSITE kits:
+
+    clip        opposite   same   immediate (1-frame gap)   separation
+    SNGS-116      166       48           70%                  0.8 m
+    SNGS-110      174       32           60%                  1.1 m
+    SNGS-121       56       12           70%                  1.6 m
+    SNGS-067       47       51           45%                  1.6 m
+
+*And they are immediate, not after a gap.* D19's "88 of 98 happened AFTER A GAP" is a fact
+about SNGS-147, the clip it was measured on, and 147 is the outlier: 36% of its switches follow
+a gap of more than six frames against 15% on SNGS-116. `MAX_AGE_S` is therefore not the lever
+on the crowded clips.
+
+*The signature is excellent.* Sampled over 2,400 detection pairs on SNGS-116 with ground-truth
+teams, same-team pairs run to 0.62 at p90 and opposite-team pairs begin at 0.68 at p10 — no
+overlap at all, and NO opposite-team pair looks more alike than the median team-mate pair.
+
+So the signal is there, it is clean, and the switches are exactly the kind it should catch.
+Raising `COLOR_WEIGHT` from 0.6 to 4.0 does nothing (SNGS-116 purity 71.9 -> 70.6 -> 71.8 ->
+70.6, recall unmoved), which is what the existing comment already claimed. A hard GATE that
+refuses an association outright rather than pricing it does slightly better:
+
+    clip        purity           switches      recall
+    SNGS-067    63.5 -> 66.0%    157 -> 149    unchanged
+    SNGS-110    56.7 -> 58.3%    268 -> 264    unchanged
+    SNGS-147    76.2 -> 76.4%     59 ->  51    unchanged
+    SNGS-116    71.9 -> 71.5%    250 -> 251    unchanged
+
+And through `boardFromTracks` it is a net regression: observed player-seconds across eleven
+clips fall from 114.7 to 111.9, four boards worse, two better, five identical. SNGS-116 loses
+almost six seconds of window and SNGS-066 goes from 92 curved runs to 65. The one real gain is
+SNGS-069, whose home side goes from 0 players to 2.
+
+Reverted. The board is the test (D35), and a metric that improves while the board does not is
+not a reason to ship.
+
+**Why it does not work, which is the useful part.** The track count barely moves — 56 to 55 on
+SNGS-116 — so the gate is almost never the thing that refuses a match. At the moment of a steal
+the track's own colour has already been pulled toward the thief by the rolling average
+(`0.8 * prior + 0.2 * seen` reaches a new kit in about five frames), so what the gate compares
+against is a blend rather than an opponent.
+
+**Holding the colour still was then tried, and is worse than either.** Freezing a track's
+signature after its first few observations should have left the gate something clean to test.
+It costs purity everywhere instead:
+
+    clip        rolling   freeze 5   freeze 10   freeze 5 + gate
+    SNGS-116     71.9%     67.4%      68.4%        66.5%
+    SNGS-067     63.5%     59.3%      58.3%        64.2%
+    SNGS-121     71.8%     70.1%      69.2%        70.3%
+
+and SNGS-116's switches go from 250 to 281, 263 and 291. The rolling average is not a bug to
+be removed: a kit signature genuinely changes with pose, shadow and a turned back, so a frozen
+one stops matching THE SAME PLAYER.
+
+That is the real finding, and it closes this line of attack. Adapting to a player and
+discriminating between players are the same mechanism pulling opposite ways, and 0.2 is already
+a reasonable place to stand between them.
+
+**And the evidence a steal needs is present, which rules out the two remaining excuses.** At the
+frame a switch happens, the player who should have been taken IS detected -- 98% of the time on
+SNGS-116, 93 to 95% on the other crowded clips, 80% on SNGS-147. So the detector is not the
+constraint and the tracker is choosing wrongly with the right answer in front of it.
+
+Nor is the crop spoiled by the occlusion that caused the crossing. Measured against per-team
+reference signatures, at 120 of SNGS-116's switch frames the correct detection's kit sits at
+0.45 from its OWN team and 0.87 from the other, and only 16% look more like the other team.
+
+    at a switch    the right player is detected     98%
+                   its kit still reads as its own   84%
+                   the two kits are separable       no overlap at all
+
+The detection exists, its appearance is right, and the signature discriminates. The failure is
+therefore in the ASSIGNMENT rather than in any of the evidence it is given, and no amount of
+work on the appearance model will reach it. That is where the next attempt has to start:
+whether the correct pairing is inside the distance gate at all, and whether the optimal
+assignment is sacrificing it to a track that wants it more.
+
 **D35 — snapping the camera model onto the painted lines improves the camera model and
 makes the tracks worse. Off by default.** Propagation is open-loop, so `refine.py` closes
 the loop: project the model's markings into the frame, find the paint they should be lying

@@ -151,6 +151,7 @@ def truth(
 
     labels = c.labels()
     built = soccernet.to_tracks(labels, keep_referees=referees)
+    ball = soccernet.to_ball(labels)
     info = labels["info"]
     frames = [int(img["file_name"].split(".")[0]) for img in labels["images"]]
 
@@ -162,6 +163,7 @@ def truth(
         start_frame=min(frames),
         end_frame=max(frames),
         tracks=built,
+        ball=ball,
         width=labels["images"][0]["width"],
         height=labels["images"][0]["height"],
         interval_s=interval_s,
@@ -169,7 +171,10 @@ def truth(
 
     named = sum(1 for t in built if t.number is not None)
     total_samples = sum(len(t.samples) for t in built)
-    typer.echo(f"{len(built)} tracks, {total_samples} samples, {named} with a shirt number")
+    typer.echo(
+        f"{len(built)} tracks, {total_samples} samples, {named} with a shirt number,"
+        f" ball on {len(ball)} frames"
+    )
     typer.echo(f"wrote {path}")
 
 

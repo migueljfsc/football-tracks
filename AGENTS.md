@@ -284,6 +284,27 @@ work/calib/                 segmenter weights and training logs. Gitignored — 
 - **Only corners and kick-offs have a canonical position** (D59). Kick-offs sit on the centre
   spot to 1.2 m; direct free-kicks are taken wherever the foul was. A positional prior covers
   13 of the 19 set pieces in this dataset and cannot be stretched to the rest.
+- **At a steal the tracker has the right answer and does not take it** (D61). The correct player
+  is detected on 93-98% of switch frames and their kit still reads as their own team 84% of the
+  time. Detection and appearance are both fine; the failure is in the ASSIGNMENT. Measure that
+  before improving any evidence it is fed.
+- **Id switches are mostly between OPPOSITE kits, and they happen with no gap** (D61). The
+  comments in `stage2_track` say the opposite on both counts; they were measured on SNGS-147,
+  which is the outlier. On the crowded clips it is 3.5:1 opposite kit and 70% immediate, so
+  `MAX_AGE_S` is not the lever there.
+- **The kit signature is clean and NOTHING built on it fixes the switch** (D61). Same-team pairs
+  reach 0.62 at p90, opposite-team start at 0.68 at p10 — no overlap. Weighting it harder does
+  nothing, a hard gate at 0.65 lifts purity and loses on the board, and freezing the signature
+  so the gate has something clean to test costs up to 5 points of purity. Adapting to a player
+  and telling players apart are the same mechanism pulling opposite ways; `0.8 * prior + 0.2 *
+  seen` is already the compromise. Do not re-open this without a new mechanism.
+- **A stationary ball is only wrong if it is stationary somewhere ODD** (D60). `_painted_spots`
+  cannot lower its floor globally: a ball placed for a corner holds a square metre for a fifth
+  of a clip, the same share as the false positives that were freezing SNGS-147's and SNGS-151's
+  ball 5 m from the real one. The floor is 0.33 on a restart cell and 0.20 off it — and not
+  lower, because a stoppage parks the ball anywhere: at 0.15 a Yellow card clip loses 8 points.
+- **`ft score` measures the ball** (D60). `ft truth` writes SoccerNet's category-4 ball into
+  truth.json, so ball accuracy is a diff of two files rather than a throwaway script.
 - **A restart run's LENGTH is as load-bearing as its radius** (D59). Every run the prior gets
   wrong is short and transient — 5 frames on a centre spot during a free kick, 8 at a corner
   just after it was taken — and every run it gets right is 16 to 80. At `RESTART_MIN_FRAMES`

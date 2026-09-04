@@ -69,6 +69,16 @@ BALL_MAX_REACH_PX = 400.0
 # be kicked moves on within a few seconds, and a clip is thirty.
 STATIC_BIN_M = 1.0
 STATIC_SHARE = 0.33
+
+# The same test, for a square metre that is NOT a restart spot.
+#
+# A ball placed for a corner holds one square metre for about a fifth of a clip, which is
+# why STATIC_SHARE cannot go near that: the floor that catches scenery also catches every
+# set piece. Off a restart spot there is no such ball to protect, so the floor can drop --
+# but not far. A stoppage leaves the ball sitting anywhere: at 0.15 a booking's ball is
+# called scenery and SNGS-121 loses 8 points of accuracy with it. 0.20 is what fits between
+# a placed ball and a mark that never moves.
+STATIC_OFF_SPOT_SHARE = 0.20
 # Below this there is not enough clip to tell a stationary ball from a stationary mark.
 STATIC_MIN_FRAMES = 100
 
@@ -332,6 +342,13 @@ def homographies(
     ).homographies
 
 
+def _restart_cell(cell: tuple[int, int]) -> bool:
+    """Whether a square metre holds a restart spot, within the radius one is believed at."""
+    x, y = (cell[0] + 0.5) * STATIC_BIN_M, (cell[1] + 0.5) * STATIC_BIN_M
+    reach = RESTART_RADIUS_M + STATIC_BIN_M
+    return any(math.hypot(x - sx, y - sy) <= reach for sx, sy in RESTART_SPOTS)
+
+
 def _bin_of(x: float, y: float) -> tuple[int, int]:
     return (int(x // STATIC_BIN_M), int(y // STATIC_BIN_M))
 
@@ -368,7 +385,12 @@ def _painted_spots(
     if frames_with_a_homography < STATIC_MIN_FRAMES:
         return set()  # too short to tell a stationary ball from a painted one
     floor = STATIC_SHARE * frames_with_a_homography
-    return {cell for cell, fs in seen_at.items() if len(fs) >= floor}
+    off_floor = STATIC_OFF_SPOT_SHARE * frames_with_a_homography
+    return {
+        cell
+        for cell, fs in seen_at.items()
+        if len(fs) >= (floor if _restart_cell(cell) else off_floor)
+    }
 
 
 def _ball_near_pitch(x: float, y: float, margin_m: float = BALL_MARGIN_M) -> bool:

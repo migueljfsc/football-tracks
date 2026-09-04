@@ -118,3 +118,24 @@ def test_a_ball_far_off_the_pitch_is_refused_however_confident() -> None:
     frames = range(1, 13)
     seen = [Sighting(f=f, x=137.1, y=-33.4, score=0.90) for f in frames]
     assert auto.ball_path(seen, dict.fromkeys(frames, _eye()), list(frames)) == []
+
+
+def test_a_mark_off_a_restart_spot_is_judged_sooner() -> None:
+    """A fifth of a clip in one square metre is a placed ball on a spot and scenery off it.
+
+    SNGS-147 asserted a ball on 163 pre-action frames and none was within 3 m of the real
+    one: a stationary false positive 5 m away, held for 21% of the clip, under the floor
+    that catches paint.
+    """
+    per = {f: [Sighting(f=f, x=10.0, y=44.0, score=0.30)] for f in range(160)}
+    per.update({f: [Sighting(f=f, x=60.0 + f * 0.1, y=20.0, score=0.30)] for f in range(160, 750)})
+    static = auto._painted_spots(per, dict.fromkeys(per, _eye()))
+    assert auto._bin_of(10.0, 44.0) in static
+
+
+def test_a_ball_placed_on_a_spot_survives_the_same_share() -> None:
+    """The floor that catches that mark must not catch a corner, which sits just as long."""
+    per = {f: [Sighting(f=f, x=105.0, y=0.0, score=0.30)] for f in range(160)}
+    per.update({f: [Sighting(f=f, x=60.0 + f * 0.1, y=20.0, score=0.30)] for f in range(160, 750)})
+    static = auto._painted_spots(per, dict.fromkeys(per, _eye()))
+    assert auto._bin_of(105.0, 0.0) not in static
