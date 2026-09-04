@@ -1,3 +1,9 @@
+## v0.10.0 (2026-09-04)
+
+### Feat
+
+- **pipeline**: make the board match the footage, not the metrics
+
 ## v0.9.0 (2026-09-03)
 
 ### Feat
