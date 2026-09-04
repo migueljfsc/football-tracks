@@ -268,6 +268,31 @@ work/calib/                 segmenter weights and training logs. Gitignored — 
   to find. At its 0.15 floor the asserted ball is the real one 25% of the time. Anything
   loosening `BALL_ASSERT_CONF` must be measured against SoccerNet's category-4 annotations,
   not judged by how often a ball appears.
+- **`on_pitch`'s margin is a SHARE of the pitch, not metres** (D58). `mx = PITCH_LENGTH *
+  margin`, so a "1.5 m" margin is 157 m and admits every projection the detector can make.
+  The ball has `_ball_near_pitch` for metre-space; players keep `on_pitch`. A unit that lives
+  in a name and not in a type is worth one look per use.
+- **`action_position` is when the set piece is TAKEN, not when the ball is placed** (D59). At
+  the labelled frame the ball is already airborne and projects off the pitch — SNGS-116's
+  corner lands at (107.5, -3.9). The still ball is in the frames BEFORE it.
+- **The restart prior is safe because of its VETO, not its radius** (D59). Within 1.5 m of a
+  corner arc or the centre spot, 89 of 91 candidates are the real ball on a clip with a corner
+  in it — and on a clip WITHOUT one, the same region is 32 false positives at the corner flag.
+  What separates them is that the pass only speaks where the pipeline would emit no ball at
+  all. Read that veto from the SMOOTHED output: two isolated wrong sightings are not a tracked
+  ball, and letting them veto costs 66 frames of a real corner.
+- **Only corners and kick-offs have a canonical position** (D59). Kick-offs sit on the centre
+  spot to 1.2 m; direct free-kicks are taken wherever the foul was. A positional prior covers
+  13 of the 19 set pieces in this dataset and cannot be stretched to the rest.
+- **A restart run's LENGTH is as load-bearing as its radius** (D59). Every run the prior gets
+  wrong is short and transient — 5 frames on a centre spot during a free kick, 8 at a corner
+  just after it was taken — and every run it gets right is 16 to 80. At `RESTART_MIN_FRAMES`
+  of 4 the free-kick clip SNGS-066 gained 12 fabricated frames; at 10 it gains none.
+- **A better ball does not mean a better board, and here it mostly did not** (D59). Pitchboard's
+  `chooseWindow` maximises trackable PLAYERS and never looks at the ball, so it picks the open
+  play after a set piece over the set piece itself — players bunched in a box occlude each
+  other and their coverage drops. Four of five improved clips produced a byte-identical board.
+  Measure a ball change through `boardFromTracks` before believing it shipped anything.
 - **Judge a change by `boardFromTracks`, never by `observed_error` alone** (D36). The
   4 September segmenter work improved every per-frame metric in this repo and made the board
   in the sibling repo strictly worse — 19 players to 10, 15 m of travel to 4.9 m. Per-frame

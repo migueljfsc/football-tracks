@@ -48,3 +48,73 @@ def test_a_confident_sighting_is_kept() -> None:
     seen = [Sighting(f=f, x=50.0, y=30.0, score=0.9) for f in range(1, 12)]
     out = auto.ball_path(seen, dict.fromkeys(range(1, 12), _eye()), list(range(1, 12)))
     assert out, "a confident, moving ball must survive every filter"
+
+
+def _weak_decoy(frames: range) -> list[Sighting]:
+    """A moving, unconfident sighting far from any restart spot.
+
+    Its only job is to give `_painted_spots` enough frames to have an opinion, the way a
+    real clip does. It is never emitted itself.
+    """
+    return [Sighting(f=f, x=10.0 + f * 0.1, y=30.0, score=0.20) for f in frames]
+
+
+def test_a_ball_placed_on_the_corner_is_believed_below_the_confidence_floor() -> None:
+    """The set-piece prior, measured on SNGS-116's corner.
+
+    A ball waiting to be struck is small, still and far away, so it scores about 0.2 and
+    never clears BALL_ASSERT_CONF - and that clip asserted no ball at all across the
+    whole 157-frame corner that opens it. Within 1.5 m of a restart spot the position is
+    the evidence instead: 79 of the 80 frames this admits are the real ball.
+    """
+    span = range(1, 61)
+    seen = _weak_decoy(range(1, 301)) + [Sighting(f=f, x=105.0, y=0.0, score=0.20) for f in span]
+    out = auto.ball_path(seen, dict.fromkeys(range(1, 301), _eye()), list(range(1, 301)))
+    placed = [s for s in out if abs(s.x - 105.0) < 1.0 and abs(s.y) < 1.0]
+    assert placed, "a ball sitting on the corner arc must survive the confidence gate"
+
+
+def test_a_tracked_ball_silences_the_restart_pass() -> None:
+    """The veto, not the position, is what makes the prior safe.
+
+    SNGS-121's corner region holds 32 sightings that are all false and 25 m from the real
+    ball. What separates it from SNGS-116 is that there the ball IS being tracked, so the
+    restart pass must not speak at all.
+    """
+    frames = range(1, 301)
+    seen = [Sighting(f=f, x=10.0 + f * 0.1, y=30.0, score=0.90) for f in frames] + [
+        Sighting(f=f, x=105.0, y=0.0, score=0.20) for f in range(1, 61)
+    ]
+    out = auto.ball_path(seen, dict.fromkeys(frames, _eye()), list(frames))
+    assert out, "the tracked ball itself is still emitted"
+    assert not [s for s in out if s.x > 100.0], "a tracked ball must veto the corner"
+
+
+def test_a_moment_at_a_restart_spot_is_not_a_placed_ball() -> None:
+    """A mark that reads as a ball for a frame or two is not a ball somebody put there."""
+    frames = range(1, 51)
+    seen = [Sighting(f=f, x=105.0, y=0.0, score=0.20) for f in (10, 11, 12)]
+    assert auto.ball_path(seen, dict.fromkeys(frames, _eye()), list(frames)) == []
+
+
+def test_the_penalty_spot_is_not_a_restart_spot() -> None:
+    """It is where the detector's favourite false positive lives - a painted white disc.
+
+    Opening the floor there would admit exactly what `_painted_spots` exists to remove,
+    and a penalty is the one restart this footage never contains.
+    """
+    frames = range(1, 301)
+    seen = _weak_decoy(frames) + [Sighting(f=f, x=94.0, y=34.0, score=0.20) for f in range(1, 61)]
+    out = auto.ball_path(seen, dict.fromkeys(frames, _eye()), list(frames))
+    assert not [s for s in out if s.x > 90.0], "the penalty spot must earn its confidence"
+
+
+def test_a_ball_far_off_the_pitch_is_refused_however_confident() -> None:
+    """The ball's margin is METRES; tracks.on_pitch's is a SHARE of the pitch.
+
+    Handing that function metres opened the gate to 157 m and kept every airborne
+    projection there is - SNGS-116 was emitting a ball at (137.1, -33.4).
+    """
+    frames = range(1, 13)
+    seen = [Sighting(f=f, x=137.1, y=-33.4, score=0.90) for f in frames]
+    assert auto.ball_path(seen, dict.fromkeys(frames, _eye()), list(frames)) == []

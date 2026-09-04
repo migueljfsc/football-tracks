@@ -34,6 +34,7 @@ from . import (
     stage2_track,
 )
 from . import seed as seed_mod
+from .config import PITCH_LENGTH, PITCH_WIDTH
 from .stage3_teams import assign
 from .tracks import PLAYER_MARGIN, Sample, Track, on_pitch
 
@@ -82,8 +83,10 @@ MIN_SMOOTH_SAMPLES = 3
 BALL_MISSING = 0.9
 BALL_EMISSION = 1.2
 
-# How far outside the pitch a ball may sit and still be kept, in metres. Wider than a
-# player's, because a corner is taken from ON the line and homography error puts it just
+# How far outside the pitch a ball may sit and still be kept, IN METRES -- which is NOT
+# what tracks.on_pitch's margin means. That one is a SHARE of the pitch, so handing it
+# metres opens the gate to 157 m and keeps every airborne projection there is. Wider than
+# a player's, because a corner is taken from ON the line and homography error puts it just
 # outside; narrow enough to still reject an airborne ball's projection, which lands tens
 # of metres away.
 BALL_MARGIN_M = 1.5
@@ -108,6 +111,44 @@ BALL_MARGIN_M = 1.5
 # is better with no ball than with a wrong one -- Pitchboard represents "no ball" natively
 # (its D44) and draws a phantom pass for a wrong one. 0.65 buys 84% correctness.
 BALL_ASSERT_CONF = 0.65
+
+# Where a restart puts the ball: the four corner arcs and the centre spot.
+#
+# NOT the penalty spots. They are where the detector's favourite false positive lives --
+# a painted white disc on grass is what a ball looks like to a model trained on
+# photographs (see _painted_spots) -- and a penalty is the one restart these clips never
+# contain, so opening the floor there would admit exactly what that filter exists to
+# remove and buy nothing.
+RESTART_SPOTS = (
+    (0.0, 0.0),
+    (0.0, PITCH_WIDTH),
+    (PITCH_LENGTH, 0.0),
+    (PITCH_LENGTH, PITCH_WIDTH),
+    (PITCH_LENGTH / 2, PITCH_WIDTH / 2),
+)
+
+# How close to one of those a sighting must land, and how many frames it must keep
+# landing there, before the ball is believed at the detector's own floor rather than at
+# BALL_ASSERT_CONF.
+#
+# Measured on SNGS-116's corner against SoccerNet's ball annotations. Within 1.5 m of a
+# spot the position IS the evidence: 79 of the 80 frames this admits are within 3 m of
+# the real ball, while confidence separates nothing there -- the true sightings score
+# 0.15 to 0.37 and the two false ones score 0.18 and 0.32, which is why the confidence
+# gate could never find this ball and why lowering it globally would only add junk.
+#
+# 1.5 m rather than 2.0 m is a deliberate trade. 2.0 m finds four more frames of the
+# corner and puts EIGHT fabricated ones into SNGS-121, a clip with no restart in it,
+# where the corner flag reads as a ball. At 1.5 m the two non-set-piece clips admit
+# nothing at all. Few and right beats many and wrong (BALL_ASSERT_CONF says the same).
+#
+# Ten frames is 0.4 s, and the length is doing as much work as the radius. Every run this
+# gets WRONG across eight clips is short and transient -- 5 frames on the centre spot
+# during a free kick, 8 at a corner just after it was taken, 4 more on a centre spot --
+# while every run it gets right is 16 to 80 frames of a ball genuinely sitting there. At
+# 4 frames the free-kick clip SNGS-066 gained 12 fabricated frames; at 10 it gains none.
+RESTART_RADIUS_M = 1.5
+RESTART_MIN_FRAMES = 10
 
 
 @dataclass(slots=True)
@@ -330,9 +371,99 @@ def _painted_spots(
     return {cell for cell, fs in seen_at.items() if len(fs) >= floor}
 
 
+def _ball_near_pitch(x: float, y: float, margin_m: float = BALL_MARGIN_M) -> bool:
+    """`tracks.on_pitch`, but with a margin in METRES rather than a share of the pitch."""
+    return -margin_m <= x <= PITCH_LENGTH + margin_m and -margin_m <= y <= PITCH_WIDTH + margin_m
+
+
 def _is_static(b: detect.Sighting, h: Any, static: set[tuple[int, int]]) -> bool:
     x, y = calibration.to_pitch(h, b.x, b.y)
     return _bin_of(x, y) in static
+
+
+def _smoothed(best: dict[int, tuple[float, float]], frames: list[int], smooth: int) -> list[Sample]:
+    """Per-frame positions, median-filtered over their neighbours."""
+    out: list[Sample] = []
+    for f in frames:
+        near = [best[g] for g in range(f - smooth, f + smooth + 1) if g in best]
+        # A median of ONE value is that value, not a median. With sightings this sparse a
+        # single detection was filling eleven frames with a ball, at up to five frames'
+        # remove from the only evidence for it -- which is how SNGS-116's board came to
+        # assert a carrier at a scene where our ball was 25 m from the real one.
+        if len(near) < MIN_SMOOTH_SAMPLES:
+            continue
+        x = float(np.median([p[0] for p in near]))
+        y = float(np.median([p[1] for p in near]))
+        # A BALL's margin, not a player's. A corner is taken from the corner arc, so the
+        # ball legitimately sits on the line -- SoccerNet's own annotation of SNGS-116's
+        # corner projects to (105.2, -0.4). Still bounded, because a ball in flight
+        # projects anywhere: that same clip has one at (135.5, -16.6).
+        if _ball_near_pitch(x, y):
+            out.append(Sample(f=f, x=x, y=y))
+    return out
+
+
+def _restart_balls(
+    per_frame: dict[int, list[detect.Sighting]],
+    homs: dict[int, Any],
+    static: set[tuple[int, int]],
+    emitted: set[int],
+    smooth: int,
+) -> dict[int, tuple[float, float]]:
+    """The ball sitting still on a restart spot, believed without the confidence gate.
+
+    A set piece is the one moment the ball's position is known before it is seen: it is
+    on the corner arc, or the centre spot, and it stays there for seconds. That is worth
+    a rule of its own because it is precisely where the ordinary selector fails - the
+    ball is small, still and far away, so it scores 0.2 and never clears
+    BALL_ASSERT_CONF. SNGS-116 asserted NO ball at all across the whole 157-frame corner
+    that opens the clip, which is what left the board with a ball already in the box.
+
+    This only speaks where the pipeline would otherwise emit nothing, and that veto is
+    what makes it safe rather than the position. The same corner region on SNGS-121 holds
+    32 sightings that are all false, 25 m from the real ball - but there the ball IS
+    being tracked, so the veto silences this pass entirely. Vetoing on the SMOOTHED
+    output rather than the raw sightings matters: SNGS-116's confident pass fires twice
+    before the corner, at frames 98 and 100, and both are wrong by over 30 m. Two
+    isolated blips are not a tracked ball, MIN_SMOOTH_SAMPLES already says so, and
+    letting them veto costs 66 frames of a corner that is really there.
+    """
+    cand: dict[int, tuple[float, float]] = {}
+    for f in sorted(per_frame):
+        h = homs.get(f)
+        if h is None:
+            continue
+        near: list[tuple[float, float, float]] = []
+        for b in per_frame[f]:
+            if _is_static(b, h, static):
+                continue
+            x, y = calibration.to_pitch(h, b.x, b.y)
+            d = min(math.hypot(x - sx, y - sy) for sx, sy in RESTART_SPOTS)
+            if d <= RESTART_RADIUS_M:
+                near.append((d, x, y))
+        if near:
+            _, x, y = min(near)
+            cand[f] = (x, y)
+
+    quiet = {
+        f: p
+        for f, p in cand.items()
+        if not any(g in emitted for g in range(f - smooth, f + smooth + 1))
+    }
+
+    # A ball somebody placed sits there; a mark that reads as a ball for a frame or two
+    # does not. Runs tolerate gaps, because the detector loses the ball between frames
+    # without it having moved.
+    out: dict[int, tuple[float, float]] = {}
+    run: list[int] = []
+    for nxt in [*sorted(quiet), None]:
+        if run and (nxt is None or nxt - run[-1] > smooth):
+            if len(run) >= RESTART_MIN_FRAMES:
+                out.update({g: quiet[g] for g in run})
+            run = []
+        if nxt is not None:
+            run.append(nxt)
+    return out
 
 
 def ball_path(
@@ -396,25 +527,13 @@ def ball_path(
         last = (f, top.x, top.y)
         best[f] = calibration.to_pitch(h, top.x, top.y)
 
-    out: list[Sample] = []
-    for f in frames:
-        near = [best[g] for g in range(f - smooth, f + smooth + 1) if g in best]
-        # A median of ONE value is that value, not a median. With sightings this sparse a
-        # single detection was filling eleven frames with a ball, at up to five frames'
-        # remove from the only evidence for it -- which is how SNGS-116's board came to
-        # assert a carrier at a scene where our ball was 25 m from the real one.
-        if len(near) < MIN_SMOOTH_SAMPLES:
-            continue
-        x = float(np.median([p[0] for p in near]))
-        y = float(np.median([p[1] for p in near]))
-        # A BALL's margin, not a player's. A corner is taken from the corner arc, so the
-        # ball legitimately sits on the line -- SoccerNet's own annotation of SNGS-116's
-        # corner projects to (105.2, -0.4) and a 0.05 m player margin throws it away, 7%
-        # of all true ball positions with it. Still bounded, because a ball in flight
-        # projects anywhere: that same clip has one at (135.5, -16.6).
-        if on_pitch(x, y, margin=BALL_MARGIN_M):
-            out.append(Sample(f=f, x=x, y=y))
-    return out
+    # The confident pass first, then the one that knows where a restart puts the ball.
+    # Second because it defers to it: it fills the stretches this leaves empty.
+    first = _smoothed(best, frames, smooth)
+    extra = _restart_balls(per_frame, homs, static, {s.f for s in first}, smooth)
+    if not extra:
+        return first
+    return _smoothed({**best, **extra}, frames, smooth)
 
 
 def build(

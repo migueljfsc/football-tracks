@@ -1303,6 +1303,113 @@ cannot choose between are 11 m apart and one of them is ON THE CORNER ARC. The l
 are already in the clips: `info.action_class` and `info.action_position`, 60 clips, 19 of them
 set pieces (7 Corner, 6 Direct free-kick, 6 Kick-off), each with the exact frame.
 
+**D58 — the ball's margin was a share of the pitch and was read as metres, so the gate was
+157 m wide.** `tracks.on_pitch(x, y, margin)` scales its margin BY THE PITCH -- `mx = 105 *
+margin` -- and D54 introduced `BALL_MARGIN_M = 1.5` to let a corner sit on the line, named in
+metres and passed straight into it. 1.5 became 157 m and 102 m, which is every projection the
+detector can produce. The constant's own comment says it is "narrow enough to still reject an
+airborne ball's projection, which lands tens of metres away", and SNGS-116 was emitting a ball
+at (137.1, -33.4) while it said so.
+
+The ball has its own metre-space check now (`_ball_near_pitch`); `on_pitch` keeps its fraction
+for players, where every caller already means a fraction. It is a pure removal of wrong balls:
+
+    clip        within 3 m of the real ball    median error
+    SNGS-116        44.5% -> 47.6%             3.56 -> 3.37 m
+    SNGS-121        72.9% -> 74.7%             1.77 -> 1.76 m
+    SNGS-147        38.5% -> 44.4%             4.84 -> 4.67 m
+
+A unit that lives in a name and not in a type is worth one look per use. This one survived a
+review that quoted the comment back approvingly.
+
+**D59 — a set piece is the one moment the ball's position is known before it is seen, and
+that is worth a rule of its own.** A ball waiting to be struck is small, still and far away,
+so it scores about 0.2 and never clears `BALL_ASSERT_CONF`. SNGS-116 asserted NO ball at all
+across the whole 157-frame corner that opens the clip -- the board therefore began with the
+ball already in the box, which is what was reported.
+
+Three things had to be measured before it could be built, and two of them contradicted the
+obvious design.
+
+*`action_position` marks the EXECUTION, not the placement.* At SNGS-116's labelled corner
+frame the ball projects to (107.5, -3.9): already struck, airborne, and off the pitch. Every
+set-piece clip looks like this. The stationary ball is BEFORE the labelled frame, and in 12 of
+13 corner and kick-off clips it rests within 2 m of a canonical point for the entire
+pre-action period -- 150 frames, six seconds.
+
+*Only corners and kick-offs have a canonical position.* Kick-offs land on the centre spot to
+within 1.2 m. Direct free-kicks are taken at (21.6, 7.2), (78.6, 10.4), (7.0, 54.6) -- nowhere
+in particular. A positional prior covers 13 of the 19 set pieces and cannot be stretched to
+the rest, so it does not try.
+
+*Position alone is not enough, and this is what nearly shipped a regression.* Within 2 m of a
+restart spot on SNGS-116, 89 of 91 candidates are the real ball, and the scores separate
+nothing -- the true ones run 0.15 to 0.37 and the two false ones score 0.18 and 0.32, which is
+exactly why the confidence gate could never find this ball. But the SAME region on clips with
+no restart in them holds only false positives: 32 of 32 on SNGS-121, at the corner flag, 25 m
+from the real ball. A low floor near a restart spot, on its own, is a regression.
+
+What makes it safe is the VETO: the pass speaks only where the pipeline would emit no ball at
+all. On SNGS-121 the ball is being tracked throughout, so it never speaks. And the veto has to
+be read from the SMOOTHED output rather than the raw sightings -- SNGS-116's confident pass
+fires twice before the corner, at frames 98 and 100, and both are wrong by over 30 m. Two
+isolated blips are not a tracked ball, `MIN_SMOOTH_SAMPLES` already says exactly that, and
+letting them veto costs 66 frames of a corner that is really there.
+
+Radius 1.5 m, and a run of at least 10 frames. 2.0 m finds four more frames of SNGS-116's
+corner and puts eight fabricated ones into SNGS-121. The run length is doing as much work as
+the radius: at 4 frames the free-kick clip SNGS-066 gained 12 fabricated frames on the centre
+spot, and every run the pass gets WRONG across eleven clips is short and transient -- 5 frames
+on a centre spot, 8 at a corner just after it was taken, 4 more on a centre spot -- while
+every run it gets right is 16 to 80 frames of a ball genuinely sitting there. Ten frames is
+0.4 s, which is the shortest thing that can be called placed.
+
+    clip        [action]            ball frames   within 3 m      median
+    SNGS-116    Corner               252 -> 336   47.6 -> 59.6%   3.37 -> 1.94 m
+    SNGS-067    Corner               232 -> 356   60.3 -> 74.2%   2.23 -> 1.03 m
+    SNGS-110    Corner               333 -> 423   18.0 -> 36.1%   6.22 -> 4.83 m
+    SNGS-075    Corner               319 -> 373   90.6 -> 91.9%   1.06 -> 1.45 m
+    SNGS-060    Kick-off             620 -> 641   92.4 -> 92.7%   0.89 -> 0.88 m
+    SNGS-069    Kick-off             336 -> 336        unchanged
+    SNGS-151    Kick-off             547 -> 547        unchanged
+    SNGS-066    Direct free-kick     342 -> 342        unchanged
+    SNGS-100    Direct free-kick     200 -> 200        unchanged
+    SNGS-121    Yellow card          515 -> 515        unchanged
+    SNGS-147    Clearance            552 -> 552        unchanged
+
+Five improved, six untouched, none worse. It adds 460 pre-action frames across the five and
+two of them are wrong. SNGS-075's median rises while its within-3 m improves: the frames it
+adds are all correct and looser than the tight ones already there, which moves a median
+without putting a wrong ball anywhere.
+
+The penalty spots are deliberately NOT restart spots. A painted white disc on grass is the
+detector's favourite false positive -- it is what `_painted_spots` was built for -- and a
+penalty is the one restart this footage never contains.
+
+**And it barely reaches the board, which is the thing that actually ships.** Through
+`boardFromTracks` the boards for SNGS-067, SNGS-075, SNGS-110 and SNGS-060 are IDENTICAL
+before and after. Only SNGS-116's changed, where the carrier sequence went from `home-5` for
+seven scenes then `away-1` to `home-10`, `home-5`, `away-1` -- the taker, the header, and the
+keeper claiming it, which is the sequence in the footage.
+
+The cause is `chooseWindow` in the Pitchboard repo. It maximises the number of player tracks
+at or above `MIN_COVERAGE` and never looks at the ball, so it reliably picks the open play
+AFTER a set piece over the set piece itself -- during a corner the players are bunched in the
+box occluding each other, their tracks fragment, and coverage drops.
+
+    clip        set piece at   window chosen
+    SNGS-067       f172          f311-437     outside
+    SNGS-110       f158          f416-682     outside
+    SNGS-060        f22          f221-434     outside
+    SNGS-075       f156          f34-405      inside, ball was already right
+    SNGS-116       f157          f88-424      inside, board changed
+
+So the ball is now right in frames the board never opens. The next move for set pieces is not
+in this repo: it is teaching `chooseWindow` that a ball resting on a restart spot is worth
+starting at. That signal needs no labels -- it is sitting in our own tracks.json, a ball still
+on a corner arc for 80 frames.
+
+
 **D35 — snapping the camera model onto the painted lines improves the camera model and
 makes the tracks worse. Off by default.** Propagation is open-loop, so `refine.py` closes
 the loop: project the model's markings into the frame, find the paint they should be lying
