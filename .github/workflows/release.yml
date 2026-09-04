@@ -36,6 +36,10 @@ jobs:
         with:
           github_token: ${{ secrets.CZ_TOKEN || github.token }}
           changelog_increment_filename: body.md
+          # For .cz.yaml's pre_bump_hooks, which re-locks uv.lock so the bump commit
+          # carries a lockfile that agrees with the version it just wrote. uv ships as a
+          # wheel with the binary in it, so pip is enough to get one here.
+          extra_requirements: uv
 
       # Only when cz actually bumped - a push with no feat/fix produces no tag.
       - if: ${{ env.REVISION != '' }}
