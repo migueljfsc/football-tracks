@@ -1,3 +1,9 @@
+## v0.12.0 (2026-09-04)
+
+### Feat
+
+- **ball**: score the ball, and judge a still one by where it stands
+
 ## v0.11.0 (2026-09-04)
 
 ### Feat
