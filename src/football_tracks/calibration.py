@@ -17,6 +17,7 @@ model supplies them later, and nothing else in this module changes.
 
 from __future__ import annotations
 
+import itertools
 import math
 from typing import Any
 
@@ -39,7 +40,8 @@ GOAL_AREA_HALF = 9.16
 #
 # Circles and goal frames are deliberately absent. A circle is not a line, and a goal
 # post is not on the ground plane at all - projecting it with a ground homography puts
-# it metres from where it is.
+# it metres from where it is. Where a circle CROSSES a line it is a different matter:
+# see CURVE_CROSSINGS.
 H = npt.NDArray[np.float64]
 
 PITCH_LINES: dict[str, Line] = {
@@ -66,6 +68,52 @@ PITCH_LINES: dict[str, Line] = {
 # here is axis-aligned in pitch space, so "both ways" means at least two of the x = k
 # lines and two of the y = k lines: four parallel lines constrain four of the eight
 # degrees of freedom and leave the rest floating.
+CENTRE_RADIUS = 9.15
+
+# How much closer to one candidate than the other a LONE crossing's estimated pitch y must
+# be before it is named. The two candidates are 18.3 m apart on the centre circle and 14.6
+# on a penalty arc, and the estimate is a linear read of a perspective image, so it is
+# rough -- but it only has to beat a coin flip by this margin, and naming one wrong
+# mirrors the fit.
+CROSSING_NAMING_MARGIN_M = 4.0
+
+# Points a curve's polyline needs before it is treated as an arc at all.
+MIN_CURVE_POINTS = 6
+
+# Where a curve meets the straight marking that cuts it, as an exact spot on the pitch.
+#
+# A circle cannot be a correspondence on its own: a pixel somewhere on one says only that
+# it lies along 57 m of paint, and forcing it to name a point is the 0.26 m systematic bias
+# D35 measured, which took a 0.16 m fit to 1.03 m. A CROSSING is not that. The halfway line
+# runs through the centre spot, so it cuts the centre circle at exactly two places, 9.15 m
+# either side; a penalty arc is 9.15 m from the penalty spot where the box's main line is
+# 5.5 m from it, so they meet at exactly two places too. Each is one spot, known to the
+# millimetre, and worth two equations rather than one.
+#
+# Which of the pair is which cannot be read off the image -- see `calib._crossings`, which
+# resolves it from the lines already in the frame rather than guessing.
+_ARC_HALF = math.sqrt(CENTRE_RADIUS**2 - 5.5**2)
+CURVE_CROSSINGS: tuple[tuple[str, str, Point, Point], ...] = (
+    (
+        "Circle central",
+        "Middle line",
+        (PITCH_LENGTH / 2, _HALF_W - CENTRE_RADIUS),
+        (PITCH_LENGTH / 2, _HALF_W + CENTRE_RADIUS),
+    ),
+    (
+        "Circle left",
+        "Big rect. left main",
+        (16.5, _HALF_W - _ARC_HALF),
+        (16.5, _HALF_W + _ARC_HALF),
+    ),
+    (
+        "Circle right",
+        "Big rect. right main",
+        (PITCH_LENGTH - 16.5, _HALF_W - _ARC_HALF),
+        (PITCH_LENGTH - 16.5, _HALF_W + _ARC_HALF),
+    ),
+)
+
 MIN_LINES_PER_AXIS = 2
 
 # And it must show MORE than the bare minimum. Four lines is eight constraints for
@@ -144,6 +192,117 @@ def fit(
     return np.asarray(h / h[2, 2], dtype=np.float64)
 
 
+def _fit_line(points: list[tuple[float, float]]) -> tuple[float, float, float, float] | None:
+    """A direction and a point through a marking's annotated vertices."""
+    if len(points) < 2:
+        return None
+    a = np.array(points, dtype=np.float64)
+    centre = a.mean(axis=0)
+    _, _, vt = np.linalg.svd(a - centre)
+    vx, vy = float(vt[0][0]), float(vt[0][1])
+    return vx, vy, float(centre[0]), float(centre[1])
+
+
+def _y_ruler(
+    lines: dict[str, list[dict[str, float]]], width: int, height: int
+) -> tuple[tuple[float, float], float, float, float, float] | None:
+    """A crude screen-to-pitch-y ruler, from markings of known and different y.
+
+    Returns the on-screen direction of increasing pitch y, and the two reference
+    markings' positions along it with the pitch y each one stands for. Two uses: ordering
+    a PAIR of crossings, which needs only the direction, and naming a LONE crossing,
+    which needs the scale as well.
+    """
+    seen: list[tuple[float, float, float]] = []
+    for name, poly in lines.items():
+        ln = PITCH_LINES.get(name)
+        if ln is None or abs(ln[1]) <= abs(ln[0]) or not poly:
+            continue
+        xs = [q["x"] * width for q in poly]
+        ys = [q["y"] * height for q in poly]
+        seen.append((-ln[2] / ln[1], sum(xs) / len(xs), sum(ys) / len(ys)))
+    if len(seen) < 2:
+        return None
+    seen.sort()
+    (ly_pitch, lx, ly), (hy_pitch, hx, hy) = seen[0], seen[-1]
+    dx, dy = hx - lx, hy - ly
+    length = math.hypot(dx, dy)
+    if length < 1.0 or hy_pitch - ly_pitch < 1.0:
+        return None
+    axis = (dx / length, dy / length)
+    return axis, lx * axis[0] + ly * axis[1], ly_pitch, hx * axis[0] + hy * axis[1], hy_pitch
+
+
+def _y_axis_of(
+    lines: dict[str, list[dict[str, float]]], width: int, height: int
+) -> tuple[float, float] | None:
+    ruler = _y_ruler(lines, width, height)
+    return None if ruler is None else ruler[0]
+
+
+def curve_crossings(
+    lines: dict[str, list[dict[str, float]]], width: int, height: int
+) -> list[tuple[Point, Point]]:
+    """Exact correspondences where an annotated curve crosses the marking that cuts it.
+
+    The same idea `calib._touching` applies to predicted pixels, and easier here because
+    an annotation is a polyline: the crossing is where a segment of the curve changes
+    side of the cutter, found exactly rather than clustered.
+
+    It matters most where there is least paint. Every one of SNGS-121's first 369 frames
+    is a midfield view carrying at most FOUR usable straight markings against a MIN_LINES
+    of five, so the ground truth could not register any of them -- and `--mode seed` then
+    seeded at frame 370 and carried BACKWARDS across a pan to cover half the clip, which
+    is a 10.7 m median camera error and the reason that clip scored 15.8% recall.
+    """
+    ruler = _y_ruler(lines, width, height)
+    if ruler is None:
+        return []
+    axis = ruler[0]
+    out: list[tuple[Point, Point]] = []
+    for curve, cutter, low, high in CURVE_CROSSINGS:
+        if curve not in lines or cutter not in lines:
+            continue
+        fitted = _fit_line([(q["x"] * width, q["y"] * height) for q in lines[cutter]])
+        if fitted is None:
+            continue
+        vx, vy, x0, y0 = fitted
+        crv = [(q["x"] * width, q["y"] * height) for q in lines[curve]]
+        if len(crv) < MIN_CURVE_POINTS:
+            # Two points are a chord, not an arc. Where they cross a line is not where
+            # the CIRCLE crosses it, and a wrong exact correspondence drags the whole fit
+            # -- `test_unknown_line_names_are_ignored_rather_than_guessed_at` moves 1.9 m
+            # on a two-point stub. A real annotated circle carries 14 to 32 points.
+            continue
+        hits: list[tuple[float, float]] = []
+        for (ax, ay), (bx, by) in itertools.pairwise(crv):
+            da = (ax - x0) * -vy + (ay - y0) * vx
+            db = (bx - x0) * -vy + (by - y0) * vx
+            if da == db or (da > 0) == (db > 0):
+                continue  # this segment stays on one side; no crossing in it
+            t = da / (da - db)
+            hits.append((ax + t * (bx - ax), ay + t * (by - ay)))
+        if len(hits) == 2:
+            hits.sort(key=lambda h: h[0] * axis[0] + h[1] * axis[1])
+            out.extend(zip(hits, (low, high), strict=True))
+        elif len(hits) == 1 and ruler is not None:
+            # A curve clipped by the frame edge crosses ONCE, and that lone crossing is
+            # still an exact spot -- the only question is which of the two it is. Every
+            # one of SNGS-121's midfield frames is this case: the centre circle runs off
+            # the left of frame, so the halfway line cuts the visible arc once.
+            #
+            # Naming it wrong would mirror the fit, so it is named from the two markings
+            # of known pitch y the axis gate already guarantees, and only when the answer
+            # is not close to the midpoint between the candidates.
+            _, ref_a, y_a, ref_b, y_b = ruler
+            at = hits[0][0] * axis[0] + hits[0][1] * axis[1]
+            guess = y_a + (y_b - y_a) * (at - ref_a) / (ref_b - ref_a)
+            near, far = (low, high) if abs(guess - low[1]) < abs(guess - high[1]) else (high, low)
+            if abs(guess - near[1]) + CROSSING_NAMING_MARGIN_M < abs(guess - far[1]):
+                out.append((hits[0], near))
+    return out
+
+
 def homography(
     lines: dict[str, list[dict[str, float]]], width: int, height: int
 ) -> npt.NDArray[np.float64] | None:
@@ -183,8 +342,26 @@ def homography(
         return None
     if min(len(axes[True]), len(axes[False])) < MIN_LINES_PER_AXIS:
         return None
-    if len(axes[True]) + len(axes[False]) < MIN_LINES:
-        return None
+
+    # Crossings are a LAST RESORT, not an improvement. Measured on SNGS-147, adding them
+    # to a frame that already has enough straight paint takes the fit's own residual from
+    # 0.128 m to 0.305 m and is worse on 46% of frames -- which is D35's finding about
+    # circle-derived constraints arriving by a different door. An annotated circle is
+    # thirty-odd CHORDS, so a crossing computed from them sits inside the true arc, and
+    # that bias swamps a fit the straight lines already had right.
+    #
+    # Where there is no fit at all the trade reverses, because the alternative is nothing:
+    # every one of SNGS-121's first 369 frames is a midfield view with at most four usable
+    # markings, and without this the clip is registered by carrying a frame-370 seed
+    # BACKWARDS across a pan, at 10.7 m median error.
+    on_lines = list(zip(pts, used, strict=True))
+    if len(axes[True]) + len(axes[False]) >= MIN_LINES:
+        crossings = []
+    else:
+        crossings = curve_crossings(lines, width, height)
+        if len(axes[True]) + len(axes[False]) + 2 * len(crossings) < MIN_LINES:
+            return None
+        return fit(crossings, on_lines, width, height)
 
     image = np.array(pts, dtype=np.float64)
     normed, t_img = _normalise(image)

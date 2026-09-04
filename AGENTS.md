@@ -39,6 +39,8 @@ src/football_tracks/
   soccernet.py              GSR fetch and ground truth -> Tracks
   tracks.py                 the tracks.json writer, shared by every producer
   calibration.py            named pitch lines -> a homography
+  calib.py                  the LEARNED detector — frame -> named lines, no seed (D36)
+  refine.py                 snap a homography onto the painted lines. Off by default (D35)
   stage1_register.py        fit per frame, and measure what it costs
   stage1_propagate.py       carry a homography across gaps by tracking the grass
   video.py                  a recording -> the numbered-JPEG layout, bars removed
@@ -55,7 +57,9 @@ src/football_tracks/
   cli.py                    one command per stage
 tests/                      the pure helpers only
 data/clips/                 source video, never committed
+data/calib2023/             SN-Calibration-2023, training data for the segmenter only
 work/<clip>/                every stage's artefacts, all reproducible
+work/calib/                 segmenter weights and training logs. Gitignored — see below
 ```
 
 ## Conventions
@@ -223,16 +227,102 @@ work/<clip>/                every stage's artefacts, all reproducible
   is, and they drift the way preview and export do in Pitchboard.
 - **The stands are green too, sometimes.** The pitch test leans on the saturation floor, not
   the hue: grey has no meaningful hue, so hue alone calls it green.
+- **A label lookup that does not `.strip()` fails as silence.** SN-Calibration-2023 writes
+  `"Goal left post left "` with a trailing space, and `INDEX.get(name)` returns `None` for it
+  — 1,101 instances dropped as an unknown marking, and a class that then appears in no label
+  at all. Nothing raises, nothing warns, the class simply never learns. The strip lives at the
+  single lookup site in `rasterise`, not at each caller.
+- **A training frame with no match tag silently disables the leakage guard.** `split_by_game`
+  can only hold a match out if every `Frame` knows which match it came from, and a dataset
+  read without its `match_info.json` would tag them all alike. The split would go on passing
+  and testing nothing. Any new source of frames owes a real match key before it owes anything
+  else.
+- **Regenerate `work/*/truth.json` before trusting a score, and only with `--interval-s 0`**
+  (D55). `ft score` counts samples, so a yardstick written on a 0.1 s grid holds two fifths of
+  what a 25 fps run holds and halves every precision figure without any pipeline change. The
+  files in `work/` outlive the code that made them and record nothing about their provenance.
+- **Max travel on a board is a SWITCH detector, not a quality metric** (D56). A track that
+  hops between players covers more ground than a player can, so the boards with the most
+  movement are often the ones with the worst identities. Check that the longest run belongs to
+  one ground-truth player before calling it a good board.
+- **Split identity switches into steals and fragments before fixing them** (D56). They have
+  opposite cures -- a steal wants a better position prior, a fragment wants a longer or
+  re-joined track -- and the ratio differs per clip: 93% steals on SNGS-116, 48% fragments on
+  SNGS-147. A single "switches" number hides which one you have.
+- **Seed from the best-evidenced frame, never the earliest** (D55). Count visible markings, not
+  the fit's own residual -- a barely-solvable frame minimises that residual for the same reason
+  it is fragile. Seeding SNGS-121 on its first solvable frame instead of its best cost 56 points
+  of recall.
+- **Check the detector's INPUT SIZE before tuning anything downstream of it** (D57). The
+  processor resizes to 640x640, so a 1920x1080 frame loses two thirds of its width and the
+  ball arrives three pixels across. Four separate ball fixes were made before anyone asked
+  whether the ball was in the candidate pool at all.
+- **`info.action_class` names the set piece and `info.action_position` gives its frame**, in
+  every GSR clip -- 19 set pieces across the 60 on disk. An evaluation set for whether a board
+  tells the right story, without training anything.
+- **Ask the ANNOTATIONS before blaming the footage** (D54). "The corner is off-camera" was
+  written from looking at a frame and missing a ball that SoccerNet annotates at the corner
+  flag. `category_id` 4 is the ball and it is labelled in 724 of SNGS-116's 750 frames.
+- **The ball is right or frequent, never both** (D54). The detector sees it in 41% of frames
+  and calls the PENALTY SPOT a ball — a white circle on grass is exactly what it was trained
+  to find. At its 0.15 floor the asserted ball is the real one 25% of the time. Anything
+  loosening `BALL_ASSERT_CONF` must be measured against SoccerNet's category-4 annotations,
+  not judged by how often a ball appears.
+- **Judge a change by `boardFromTracks`, never by `observed_error` alone** (D36). The
+  4 September segmenter work improved every per-frame metric in this repo and made the board
+  in the sibling repo strictly worse — 19 players to 10, 15 m of travel to 4.9 m. Per-frame
+  accuracy is a proxy; the board is the product. Run the variant through `src/import/` before
+  believing any of it, which costs twenty minutes.
+- **A confidence gate on a panning camera is a spatial filter in disguise.** "Refuse the frames
+  you fit worst" and "refuse the frames looking at the far end" are the same instruction, so
+  gating on fit residual quietly restricted the board to a third of the pitch and left
+  `chooseWindow` no window but a static one.
+- **Resolution is the segmenter's binding constraint, not match diversity** (D36). The
+  opposite was written here after run 2 and it was wrong: run 3 raised the matches from five
+  to 350 and made two benchmark clips of three WORSE, while run 4 raised the resolution alone
+  and improved all three. Trust that ordering only as far as it was measured — it comes from
+  the one run in the series that changed a single variable.
+- **A training run that moves two variables cannot be read** (D36). Runs 1-3 each changed
+  resolution and data together, and the scatter between them turned out to be as large as the
+  differences they were supposed to demonstrate. Change one thing and keep the log header
+  byte-identical to its baseline; run 4 is the pattern.
+- **Never train the combined set above 960×540.** SN-Calibration-2023 is natively 960×540, so
+  a higher `WIDTH, HEIGHT` upsamples 82% of the frames — no added detail, and the model learns
+  to expect a blur that inference will not supply. GSR is 1920×1080, so above 960×540 pass
+  `--no-extra` and train on GSR alone. `LINE_PX` scales with the resolution for the same
+  reason: it is a dilation of a line whose apparent width grows with the image.
+- **The validation loss does not predict `observed_error`.** Run 3 had the worse loss and a
+  better median on SNGS-147; the two only agreed once, between runs 2 and 4. The verdict is
+  `calib-eval` on all three clips. Losses from runs with different validation sets are not
+  comparable at all.
+- **Five matches overfits at epoch 2**, at every resolution tried. Only the best checkpoint is
+  kept, so a long run is not wrong, merely wasteful — budget ~4 epochs to find the checkpoint
+  and treat the rest as confirmation.
+- **Do not chain `refine` after the segmenter by default.** It rescues two benchmark clips
+  and wrecks the third — p90 2.76 m to 17.65 m (D36). And do not try to choose between the two
+  fits by which better explains the segmenter's own pixels: the mask fit was fitted to minimise
+  exactly that quantity, so the test is rigged and picks it 45 times out of 65. Selecting on
+  the data you fitted on is not selection.
 - **Ultralytics YOLO is AGPL-3.0** (D9) while this repo is MIT. Fine for a local proof that
   distributes nothing; a real question the moment anything ships. RT-DETR and RF-DETR are
   Apache and are the swap — which is why the detector sits behind a stage boundary.
 
-## Credentials
+## Credentials and weights
 
 The SoccerNet password is under their NDA. It lives in `.env` (gitignored) and is read from
 the environment. It is never committed, never hard-coded, and never pasted into a chat
 transcript — including to an assistant, which does not need to see it to write code that
 reads `SOCCERNET_PASSWORD`.
+
+**Not every SoccerNet task needs it, and one of them rejects it.** calibration-2023 is public:
+the NDA password gets a 401 there where the library's own public default gets a 200. Neither
+dataset used here is actually gated — GSR-2025 comes ungated from HuggingFace — so the
+password has never been exercised. If a download 401s, check whether the task is public before
+assuming the credential is wrong.
+
+**Trained weights are never committed.** `work/` and `*.pt` are gitignored, which is what keeps
+a 42 MB checkpoint derived from licensed data out of a public MIT repo. That is a structural
+guard, not a habit — do not add a path that escapes it.
 
 ## Definition of done
 

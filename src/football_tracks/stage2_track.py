@@ -89,6 +89,23 @@ COLOR_WEIGHT = 0.6
 # wait and it was never reachable, and the two settings score the same.
 MAX_AGE_S = 0.24
 
+# How much of a new velocity measurement to believe. The rest is carried from the estimate
+# so far, which is what makes the prediction steady enough to break a tie.
+#
+# Swept on SNGS-116, the crowded clip, with everything else held:
+#
+#     smoothing   identity purity   switches
+#     1.0 (none)      67.3%           266
+#     0.5             70.5%           256
+#     0.3             70.7%           246
+#
+# Recall and precision do not move at any setting -- this only changes WHICH track a
+# sample lands on, never whether it is found. Tightening MIN_GATE_BOXES was tried at the
+# same time and is the wrong lever: 0.20 reaches 71.8% purity with 292 switches, because a
+# tighter gate tears tracks rather than keeping them straight, which is what that constant
+# already says it exists to prevent.
+VELOCITY_SMOOTHING = 0.3
+
 MIN_TRACK_LENGTH = 5
 
 # Stands in for "cannot be paired" in the cost matrix. Any value a real pair cannot
@@ -241,7 +258,19 @@ def run(
                 # player actually was, moved by the camera alone, versus where they
                 # turned up. Skipping the compensation stores the pan as their speed.
                 wx, wy = warp(track.last.x, track.last.y, motion)
-                track.velocity = ((o.x - wx) / dt, (o.y - wy) / dt)
+                # Smoothed, for exactly the reason the kit colour below is. A player at
+                # 5 m/s covers 13.6 px between frames at this scale and the detector's
+                # box centre wanders a few, so a ONE-FRAME velocity is a quarter noise --
+                # and this is the only thing that can tell two players apart when they
+                # cross. 93% of SNGS-116's identity switches are a steal with no gap at
+                # all, at a median separation of 0.73 m, where kit colour says nothing
+                # because they are team-mates and the position prior is all there is.
+                vx, vy = (o.x - wx) / dt, (o.y - wy) / dt
+                if track.observations:
+                    ax, ay = track.velocity
+                    vx = VELOCITY_SMOOTHING * vx + (1.0 - VELOCITY_SMOOTHING) * ax
+                    vy = VELOCITY_SMOOTHING * vy + (1.0 - VELOCITY_SMOOTHING) * ay
+                track.velocity = (vx, vy)
                 track.observations.append(o)
                 seen = colors[oi]
                 if seen is not None:

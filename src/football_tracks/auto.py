@@ -8,12 +8,16 @@ how much of the error belongs to which stage:
              fixed, so what comes out is stage 2 and 3's error alone.
 * `seed`   - ONLY frame one's lines, then carried by tracking the grass. This is the
              real question: what a human clicking four corners once actually buys.
+* `segmenter` - a homography per frame from the LEARNED lines, with no seed, no carry
+             and no ground truth. The same shape as `truth` but sourced from the picture,
+             which is the whole claim of D36.
 
-Both write the same tracks.json, scored by the same `ft score`.
+All three write the same tracks.json, scored by the same `ft score`.
 """
 
 from __future__ import annotations
 
+import math
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Literal
@@ -21,12 +25,19 @@ from typing import Any, Literal
 import cv2
 import numpy as np
 
-from . import calibration, detect, stage1_propagate, stage1_register, stage2_track
+from . import (
+    calibration,
+    detect,
+    stage1_propagate,
+    stage1_register,
+    stage2_stitch,
+    stage2_track,
+)
 from . import seed as seed_mod
 from .stage3_teams import assign
 from .tracks import PLAYER_MARGIN, Sample, Track, on_pitch
 
-Mode = Literal["truth", "seed"]
+Mode = Literal["truth", "seed", "segmenter"]
 
 
 # How many frames either side the ball's position is taken a median over.
@@ -36,6 +47,67 @@ Mode = Literal["truth", "seed"]
 # the impostors is that it MOVES SMOOTHLY, so a median over neighbouring frames throws
 # them out without having to know which is which.
 BALL_SMOOTH_FRAMES = 5
+
+# How far the ball may move between consecutive frames, in pixels, and still be the same
+# ball. Generous: a struck ball near the camera crosses a lot of image in 40 ms. It is a
+# continuity gate, not a physics model -- its job is to reject the 21% of frames where the
+# per-frame argmax jumped over 500 px to a different white object entirely.
+BALL_MAX_PX_PER_FRAME = 220.0
+
+# How long a trajectory survives without a sighting before the ball counts as lost. Past
+# this the position prior is worthless and re-acquisition has to earn its place again.
+BALL_COAST_FRAMES = 8
+
+# The widest the continuity gate may open, however long the wait. Without this the gate
+# grows with the gap and a coasting trajectory eventually reaches the whole frame, which
+# is the exact failure stage 2's MAX_AGE_S comment describes.
+BALL_MAX_REACH_PX = 400.0
+
+# A square metre of pitch, and how much of a clip a "ball" may spend inside one before it
+# is judged to be painted on. A third is far beyond any real ball: even a ball waiting to
+# be kicked moves on within a few seconds, and a clip is thirty.
+STATIC_BIN_M = 1.0
+STATIC_SHARE = 0.33
+# Below this there is not enough clip to tell a stationary ball from a stationary mark.
+STATIC_MIN_FRAMES = 100
+
+# Sightings a frame's neighbourhood needs before a ball position is believed. One sighting
+# smeared over eleven frames is not a measurement of where the ball was on ten of them.
+MIN_SMOOTH_SAMPLES = 3
+
+# What a frame costs when the path declares the ball unseen, and how much a candidate's
+# confidence weighs against the distance it would have to have travelled. Missing must be
+# dearer than an ordinary step or the path goes dark rather than follow a real ball, and
+# cheaper than a long jump or it never abstains at all.
+BALL_MISSING = 0.9
+BALL_EMISSION = 1.2
+
+# How far outside the pitch a ball may sit and still be kept, in metres. Wider than a
+# player's, because a corner is taken from ON the line and homography error puts it just
+# outside; narrow enough to still reject an airborne ball's projection, which lands tens
+# of metres away.
+BALL_MARGIN_M = 1.5
+
+# What a sighting must score before a ball is asserted AT ALL.
+#
+# High, and measured against SoccerNet's own ball annotations on SNGS-116, which is the
+# only honest way to set it. The detector's floor is 0.15 and at that floor the chosen
+# ball is within 20 px of the real one in 25% of frames -- so for three frames in four the
+# board was shown a ball that was somewhere else entirely. That is where the phantom shot
+# came from, and the ball that sat in the six-yard box through a corner taken off-camera.
+#
+#     conf   frames with a ball   of those, actually the ball
+#     0.15         74%                      25%
+#     0.35         27%                      48%
+#     0.55         12%                      74%
+#     0.65         10%                      84%
+#     0.75          9%                      94%
+#
+# The ball can be frequent or right, and not both: the detector finds it at all in only
+# 41% of frames, so no selection rule can do better than that. Given the choice, a board
+# is better with no ball than with a wrong one -- Pitchboard represents "no ball" natively
+# (its D44) and draws a phantom pass for a wrong one. 0.65 buys 84% correctness.
+BALL_ASSERT_CONF = 0.65
 
 
 @dataclass(slots=True)
@@ -98,6 +170,7 @@ def from_seeds(
     max_carry: int | None,
     motions: dict[int, Any] | None = None,
     snap: Any = None,
+    max_residual_m: float | None = None,
 ) -> dict[int, Any]:
     """Clicked frames, carried across the clip in both directions.
 
@@ -116,6 +189,60 @@ def from_seeds(
     ).homographies
 
 
+def segmenter_homographies(
+    frames_dir: Path, weights: Path | None = None, max_residual_m: float | None = None
+) -> dict[int, Any]:
+    """A homography per frame from the segmenter, fitted from the picture and nothing else.
+
+    No seed, no carry and no fill, which is the entire point: every frame is solved from
+    its own pixels, so there is no chain to drift and a bad frame cannot poison its
+    neighbours. D19 measured what carrying costs -- identity purity 62.9% against 82.9%
+    with it off -- and this is the source that owes nothing to it.
+
+    A frame the fitter cannot solve stays `None` rather than borrowing an answer. That is
+    the honest gap `fill` would have hidden, and it keeps the mode's claim exactly as
+    strong as its name. The caller may bridge those gaps with a short carry; this function
+    does not, so what it returns is always the segmenter's own opinion and nothing else.
+    """
+    from . import calib
+
+    net = calib.model(weights or calib.WEIGHTS).to(calib.device()).eval()
+    out: dict[int, Any] = {}
+    for path in sorted(frames_dir.glob("*.jpg")):
+        image = cv2.imread(str(path))
+        if image is None:
+            continue
+        mask = calib.predict(net, image)
+        out[int(path.stem)] = calib.fit_from_mask(
+            mask, image.shape[1], image.shape[0], max_residual_m
+        )
+    return out
+
+
+def _best_seed(labels: dict[str, Any], direct: dict[int, Any]) -> int | None:
+    """The solvable frame with the most pitch markings in shot, earliest breaking ties.
+
+    Counting markings rather than scoring the fit on its own residual: a fit is chosen to
+    minimise that residual, so a frame with barely enough evidence scores well on it for
+    the same reason it is fragile -- which is D35's rigged-selection trap.
+    """
+    frame_of = {
+        img["image_id"]: stage1_register._frame_index(img["file_name"]) for img in labels["images"]
+    }
+    evidence: dict[int, int] = {}
+    for a in labels["annotations"]:
+        if a.get("category_id") != 5:
+            continue
+        f = frame_of.get(a["image_id"])
+        if f is None or direct.get(f) is None:
+            continue
+        lines = calibration.lines_of(a)
+        evidence[f] = sum(1 for k in lines if calibration.PITCH_LINES.get(k) is not None)
+    if not evidence:
+        return next((f for f in sorted(direct) if direct[f] is not None), None)
+    return min(evidence, key=lambda f: (-evidence[f], f))
+
+
 def homographies(
     labels: dict[str, Any],
     frames_dir: Path,
@@ -124,23 +251,88 @@ def homographies(
     max_carry: int | None,
     motions: dict[int, Any] | None = None,
     snap: Any = None,
+    max_residual_m: float | None = None,
 ) -> dict[int, Any]:
-    """Per-frame homographies, either from every frame's lines or from frame one's."""
+    """Per-frame homographies: from every frame's lines, from frame one's, or from the
+    segmenter's."""
+    if mode == "segmenter":
+        direct = segmenter_homographies(frames_dir, max_residual_m=max_residual_m)
+        # No carry by default, which is the mode's whole claim. A SHORT carry is offered
+        # because refusals turned out to be the binding constraint -- half of SNGS-121 is
+        # declined -- and bridging a two-frame gap is not the unbounded chain D19
+        # condemned. `--carry 0` keeps the gaps honest.
+        if max_carry is None or max_carry <= 0:
+            return direct
+        return stage1_propagate.fill(
+            frames_dir, direct, max_carry=max_carry, motion=motions
+        ).homographies
     direct = stage1_register.fit_all(labels)
     if mode == "truth":
         return stage1_propagate.fill(
             frames_dir, direct, max_carry=max_carry, motion=motions
         ).homographies
 
-    # Everything except the first solvable frame is thrown away, which is what a
-    # human clicking once actually leaves you with.
-    first = next((f for f in sorted(direct) if direct[f] is not None), None)
+    # Everything except ONE frame is thrown away, which is what a human clicking once
+    # actually leaves you with -- but the frame is the best-EVIDENCED one, not the
+    # earliest. A person seeding a clip picks a view where they can see the pitch; taking
+    # whatever comes first models a worse human than the one being modelled.
+    #
+    # It is not a nicety. SNGS-121 opens on 369 midfield frames carrying four usable
+    # markings, which `curve_crossings` can just about rescue at a 0.385 m residual
+    # against 0.123 m at frame 370. Seeding on the earliest put that error into every
+    # frame of the clip and took recall from 15.8% to 9.4%; the fits it seeds from are by
+    # construction the ones the fitter was least sure of.
+    best = _best_seed(labels, direct)
     seeded: dict[int, Any] = dict.fromkeys(direct)
-    if first is not None:
-        seeded[first] = direct[first]
+    if best is not None:
+        seeded[best] = direct[best]
     return stage1_propagate.fill(
         frames_dir, seeded, max_carry=max_carry, motion=motions, snap=snap
     ).homographies
+
+
+def _bin_of(x: float, y: float) -> tuple[int, int]:
+    return (int(x // STATIC_BIN_M), int(y // STATIC_BIN_M))
+
+
+def _painted_spots(
+    per_frame: dict[int, list[detect.Sighting]], homs: dict[int, Any]
+) -> set[tuple[int, int]]:
+    """Places on the pitch a "ball" sits at for far too much of the clip to be a ball.
+
+    The detector calls the PENALTY SPOT a ball. On SNGS-116 it does so on almost every
+    frame of the corner, at pixel (1069, 612) -- a white circle painted on grass, which is
+    what a ball looks like to a detector trained on photographs. Projected, it lands at
+    93.5, 33.7 m, and the right-hand penalty spot is at 94, 34. That is the ball a coach
+    sees sitting in the six-yard box while the corner is being taken off-camera, the ball
+    the keeper appears to hold for ever, and half of the phantom shot.
+
+    Rather than hardcode the spots -- which would miss the centre spot's twin, litter
+    behind the goal, and whatever else a given ground has painted on it -- this asks the
+    data: in PITCH metres, where does a candidate keep appearing? Camera motion is already
+    divided out by the homography, so a mark on the grass has one position for the whole
+    clip and a ball has a different one every second. Anything occupying one square metre
+    for more than a third of the frames it could be seen in is scenery.
+    """
+    seen_at: dict[tuple[int, int], set[int]] = {}
+    frames_with_a_homography = 0
+    for f, cands in per_frame.items():
+        h = homs.get(f)
+        if h is None:
+            continue
+        frames_with_a_homography += 1
+        for b in cands:
+            x, y = calibration.to_pitch(h, b.x, b.y)
+            seen_at.setdefault(_bin_of(x, y), set()).add(f)
+    if frames_with_a_homography < STATIC_MIN_FRAMES:
+        return set()  # too short to tell a stationary ball from a painted one
+    floor = STATIC_SHARE * frames_with_a_homography
+    return {cell for cell, fs in seen_at.items() if len(fs) >= floor}
+
+
+def _is_static(b: detect.Sighting, h: Any, static: set[tuple[int, int]]) -> bool:
+    x, y = calibration.to_pitch(h, b.x, b.y)
+    return _bin_of(x, y) in static
 
 
 def ball_path(
@@ -160,31 +352,67 @@ def ball_path(
     so a ball in flight lands metres from where it is. They are good for one question -
     who is nearest - and that question is all a board needs (D29).
     """
-    best: dict[int, tuple[float, float]] = {}
     per_frame: dict[int, list[detect.Sighting]] = {}
     for b in balls:
         per_frame.setdefault(b.f, []).append(b)
 
-    for f, seen in per_frame.items():
+    static = _painted_spots(per_frame, homs)
+
+    # Confidence, continuity and abstention -- NOT a shortest path over candidates.
+    #
+    # The path was written, measured and reverted, and the reason is worth keeping. Tiling
+    # made the ball findable (SNGS-116: present in 74% of frames against 39%, and on 67 of
+    # its 70 corner frames) and made choosing harder: 15 candidates a frame against 3. A
+    # global shortest path over them is the natural answer and it scored 31% within 3 m on
+    # SNGS-116 against this selector's 97%, because at frame 110 the filtered candidates
+    # include the real ball at pitch (105.1, -0.3) scoring 0.18 AND a false positive at
+    # (105.9, 10.9) scoring 0.33. Both are stationary, so continuity cannot separate them;
+    # both sit under the static filter's occupancy floor, so that cannot either. The path
+    # follows the confident one for the whole clip, where this abstains.
+    #
+    # Few and right beats many and wrong: a wrong ball puts a pass on the board that never
+    # happened, and Pitchboard represents "no ball" natively (its D44).
+    best: dict[int, tuple[float, float]] = {}
+    last: tuple[int, float, float] | None = None
+    for f in sorted(per_frame):
         h = homs.get(f)
         if h is None:
             continue
-        # The most confident candidate ANYWHERE, then checked against the pitch after
-        # smoothing. Choosing among only the candidates that already land on the grass
-        # was tried and is worse: it answers 630 frames against 589, but 17 of those 41
-        # extra answers are wrong, because a low-confidence false positive ON the pitch
-        # then wins a frame the ball was not in. Abstaining is the better trade (D5).
-        top = max(seen, key=lambda b: b.score)
+        seen = [
+            b for b in per_frame[f] if b.score >= BALL_ASSERT_CONF and not _is_static(b, h, static)
+        ]
+        if not seen:
+            continue
+        if last is not None and f - last[0] <= BALL_COAST_FRAMES:
+            # CAPPED, because a gate that grows with the gap eventually reaches the whole
+            # frame and adopts whatever appears next -- stage 2 documents that at MAX_AGE_S.
+            reach = min(BALL_MAX_PX_PER_FRAME * (f - last[0]), BALL_MAX_REACH_PX)
+            usable = [b for b in seen if math.hypot(b.x - last[1], b.y - last[2]) <= reach]
+        else:
+            usable = seen  # cold: nothing to be consistent with, so confidence decides
+        if not usable:
+            continue
+        top = max(usable, key=lambda b: b.score)
+        last = (f, top.x, top.y)
         best[f] = calibration.to_pitch(h, top.x, top.y)
 
     out: list[Sample] = []
     for f in frames:
         near = [best[g] for g in range(f - smooth, f + smooth + 1) if g in best]
-        if not near:
+        # A median of ONE value is that value, not a median. With sightings this sparse a
+        # single detection was filling eleven frames with a ball, at up to five frames'
+        # remove from the only evidence for it -- which is how SNGS-116's board came to
+        # assert a carrier at a scene where our ball was 25 m from the real one.
+        if len(near) < MIN_SMOOTH_SAMPLES:
             continue
         x = float(np.median([p[0] for p in near]))
         y = float(np.median([p[1] for p in near]))
-        if on_pitch(x, y):
+        # A BALL's margin, not a player's. A corner is taken from the corner arc, so the
+        # ball legitimately sits on the line -- SoccerNet's own annotation of SNGS-116's
+        # corner projects to (105.2, -0.4) and a 0.05 m player margin throws it away, 7%
+        # of all true ball positions with it. Still bounded, because a ball in flight
+        # projects anywhere: that same clip has one at (135.5, -16.6).
+        if on_pitch(x, y, margin=BALL_MARGIN_M):
             out.append(Sample(f=f, x=x, y=y))
     return out
 
@@ -198,6 +426,7 @@ def build(
     fps: float,
     motions: dict[int, Any] | None = None,
     balls: list[detect.Sighting] | None = None,
+    stitch: bool = True,
 ) -> Result:
     """Detections plus a camera model -> tracks in pitch metres.
 
@@ -249,6 +478,12 @@ def build(
             samples.append(Sample(f=o.f, x=x, y=y, conf=o.det.score))
         if samples:
             positions[t.id] = samples
+
+    if stitch:
+        # After registration, because whether two fragments are one player is a question
+        # about metres per second, and before team assignment, because a joined track
+        # should be assigned once rather than voted on by its halves.
+        positions = stage2_stitch.stitch(positions, {t.id: t.color for t in raw}, fps)
 
     mean_x = {tid: float(np.mean([s.x for s in ss])) for tid, ss in positions.items()}
     teams = assign([t for t in raw if t.id in positions], mean_x)

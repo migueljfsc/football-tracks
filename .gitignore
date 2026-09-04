@@ -11,6 +11,10 @@ data/clips/*
 work/*
 !work/.gitkeep
 
+# SN-Calibration-2023, 2.9 GB of training images for the segmenter. Downloaded, not
+# authored -- see "Getting the training data back" in PLAN.md.
+data/calib2023/
+
 # Model weights, downloaded on first run.
 models/
 *.pt

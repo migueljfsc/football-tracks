@@ -27,6 +27,7 @@ tracking is the part that gets tuned, so they are separate stages on purpose.
 from __future__ import annotations
 
 import json
+import math
 import os
 import ssl
 from dataclasses import asdict, dataclass
@@ -126,6 +127,54 @@ def load_model(dev: str | None = None) -> tuple[Any, Any, str]:
     return model, processor, dev
 
 
+# The frame is sliced into this grid for the BALL pass, at native resolution.
+#
+# The whole reason the ball is missed: the processor resizes any input to 640x640, so a
+# 1920x1080 frame arrives at a third of its width, and a ball 16 px across in the original
+# -- 11 px while it waits at a corner flag -- reaches the detector as three or four pixels.
+# It is not a thresholding problem and no amount of prior fixes it. Measured on SNGS-116's
+# corner: the ball sits within a 0.54 m spread for 120 frames, in clear view, and the
+# full-frame pass finds it on three of them.
+#
+# 3 x 2 divides 1920 x 1080 exactly into 640 x 540 tiles, so a ball arrives at very nearly
+# its true size. People are NOT re-detected here: they are large, already found reliably at
+# full frame, and slicing would cut them across tile edges.
+BALL_TILES = (3, 2)
+
+# Fraction of a tile that overlaps its neighbour, so a ball on a seam is whole in one of
+# them. A ball is small, so this can be small.
+BALL_TILE_OVERLAP = 0.12
+
+# Two sightings of one ball, in metres of image. Tiles overlap, so the same ball is found
+# twice and the duplicate must go before anything counts candidates per frame.
+BALL_MERGE_PX = 24.0
+
+
+def _tiles(width: int, height: int) -> list[tuple[int, int, int, int]]:
+    """Overlapping crops covering the frame, as (x0, y0, x1, y1)."""
+    cols, rows = BALL_TILES
+    tw, th = width / cols, height / rows
+    ox, oy = tw * BALL_TILE_OVERLAP, th * BALL_TILE_OVERLAP
+    out = []
+    for r in range(rows):
+        for c in range(cols):
+            x0 = max(0, int(c * tw - ox))
+            y0 = max(0, int(r * th - oy))
+            x1 = min(width, int((c + 1) * tw + ox))
+            y1 = min(height, int((r + 1) * th + oy))
+            out.append((x0, y0, x1, y1))
+    return out
+
+
+def _merge(seen: list[tuple[float, float, float]]) -> list[tuple[float, float, float]]:
+    """Drop duplicates of one ball found in overlapping tiles, keeping the most confident."""
+    out: list[tuple[float, float, float]] = []
+    for x, y, score in sorted(seen, key=lambda s: -s[2]):
+        if all(math.hypot(x - a, y - b) > BALL_MERGE_PX for a, b, _ in out):
+            out.append((x, y, score))
+    return out
+
+
 def on_frame(
     model: Any,
     processor: Any,
@@ -133,9 +182,13 @@ def on_frame(
     bgr: Any,
     conf: float = DEFAULT_CONF,
     ball_conf: float = BALL_CONF,
+    tile_ball: bool = True,
 ) -> tuple[list[tuple[float, ...]], list[tuple[float, float, float]]]:
-    """People and balls in one pass. Two lists, because they are not the same thing:
-    a person is tracked and a ball is only ever asked about."""
+    """People and balls. Two lists, because they are not the same thing: a person is
+    tracked and a ball is only ever asked about.
+
+    People come from one full-frame pass. The ball also gets a TILED pass at native
+    resolution, because at 640x640 it is three pixels across (see `BALL_TILES`)."""
     import torch
 
     rgb = cv2.cvtColor(bgr, cv2.COLOR_BGR2RGB)
@@ -160,7 +213,27 @@ def on_frame(
             # The centre, not the foot. A ball has no feet, and where it meets the grass
             # is exactly what a ground homography cannot tell you when it is in the air.
             seen.append(((x1 + x2) / 2, (y1 + y2) / 2, float(score)))
-    return found, seen
+
+    if tile_ball:
+        for x0, y0, x1t, y1t in _tiles(rgb.shape[1], rgb.shape[0]):
+            crop = rgb[y0:y1t, x0:x1t]
+            if crop.size == 0:
+                continue
+            tin = processor(images=crop, return_tensors="pt").to(dev)
+            with torch.no_grad():
+                tout = model(**tin)
+            tres = processor.post_process_object_detection(
+                tout, target_sizes=torch.tensor([crop.shape[:2]]), threshold=ball_conf
+            )[0]
+            for box, label, score in zip(
+                tres["boxes"], tres["labels"].tolist(), tres["scores"].tolist(), strict=True
+            ):
+                if label not in balls:
+                    continue
+                bx1, by1, bx2, by2 = (float(v) for v in box.cpu().numpy())
+                seen.append(((bx1 + bx2) / 2 + x0, (by1 + by2) / 2 + y0, float(score)))
+
+    return found, _merge(seen)
 
 
 def run(

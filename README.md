@@ -10,7 +10,8 @@ This repo knows nothing about Pitchboard's schema, and Pitchboard knows nothing 
 They meet at `schema/tracks.schema.json`.
 
 **Read [PLAN.md](PLAN.md).** It has the stages, what each one has to prove before the next is
-worth starting, and the decisions behind the shape of all this.
+worth starting, and the decisions behind the shape of all this. Its first section, *Where this
+stands*, is what is happening right now and what to do next — start there.
 
 ## Running it
 
@@ -44,6 +45,19 @@ uv run ft render work/my_goal/tracks.json  # the top-down proof
 uv run ft segment data/clips/foo.mp4 # stage 0, for arbitrary broadcast footage
 ```
 
+Stage 1's detector — a segmenter that names every pitch marking, so a frame is registered with
+no seed and nothing carried (D36). In training; see *Where this stands*.
+
+```sh
+uv run ft calib-train --stride 10 --epochs 6 --batch 6 --holdout-games "7,8"
+uv run ft calib-train --resume               # continue from work/calib/segmenter.pt
+uv run ft calib-eval SNGS-147 --stride 25    # median error per frame, against ground truth
+```
+
+The held-out games are the benchmark clips' own matches, and they are held out **by match**,
+never by clip: SNGS-116 and SNGS-121 are both game 7, so a clip-level split would put the same
+stadium, camera and kit on both sides of it.
+
 `ft truth` produces a real tracks file with no CV in the loop. It is the yardstick every
 stage is scored against, and it is what Pitchboard's importer is built against today.
 Ground truth is `truth.json` and a prediction is `tracks.json` — same format, two names, so
@@ -65,7 +79,7 @@ uv sync --extra ocr      # shirt numbers
 |---|---|---|
 | — | SoccerNet fetch, ground truth, render, score | **done** |
 | 0 | segment — find the tactical camera | built, unproven |
-| 1 | registration — pixels to metres | solver done, detector next |
+| 1 | registration — pixels to metres | solver done; seed works. Learned detector at 0.67 m vs a 0.5 m bar (D36) |
 | 2 | detect and track | RT-DETR; purity 86% at 7s, but 60% in a crowded box |
 | 3 | teams | 87% of samples on the right side; keepers found |
 | 4 | project — **the proof** | working |

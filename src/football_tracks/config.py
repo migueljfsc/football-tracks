@@ -17,6 +17,10 @@ PITCH_WIDTH = 68.0
 ROOT = Path(__file__).resolve().parents[2]
 WORK = ROOT / "work"
 CLIPS = ROOT / "data" / "clips"
+# SN-Calibration-2023: single frames with line annotations, from 345 named matches.
+# Training data only -- it has no video and no tracks, so no stage but the segmenter
+# has anything to read here.
+CALIB_DATA = ROOT / "data" / "calib2023"
 
 
 def work_dir(clip: Path, *, create: bool = True) -> Path:

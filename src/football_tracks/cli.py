@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Annotated, Any
+from typing import Annotated, Any, cast
 
 import cv2
 import typer
@@ -17,7 +17,7 @@ from . import render as render_mod
 from . import score as score_mod
 from . import seed as seed_mod
 from . import video as video_mod
-from .config import CLIPS, work_dir
+from .config import CALIB_DATA, CLIPS, work_dir
 
 app = typer.Typer(add_completion=False, help="Broadcast clip -> player tracks in pitch metres.")
 
@@ -124,11 +124,26 @@ def truth(
     referees: Annotated[
         bool, typer.Option(help="Keep referees rather than dropping them.")
     ] = False,
+    interval_s: Annotated[
+        float,
+        typer.Option(
+            "--interval-s",
+            help="Seconds between stored positions. 0 keeps every frame, which is what a"
+            " yardstick wants.",
+        ),
+    ] = 0.0,
 ) -> None:
     """Ground-truth labels -> tracks.json, with no CV in the loop.
 
     The yardstick every later stage is scored against, and a real file for
     Pitchboard's importer to be built against before any of the vision works.
+
+    Interval defaults to 0 HERE, unlike everywhere else, for the reason `ft bench` gives:
+    `ft score` counts samples, so a truth file reduced to a 0.1 s grid holds two fifths of
+    the samples of the 25 fps run being scored against it, and every recall and precision
+    number is then a fact about the grid. Writing this file at the default silently halved
+    SNGS-116's true samples from 10,148 to 5,104 and took its precision from 74.9% to
+    37.5% without a line of pipeline code changing.
     """
     c = soccernet.Clip(name=clip, root=CLIPS / clip)
     if not c.labels_path.exists():
@@ -149,6 +164,7 @@ def truth(
         tracks=built,
         width=labels["images"][0]["width"],
         height=labels["images"][0]["height"],
+        interval_s=interval_s,
     )
 
     named = sum(1 for t in built if t.number is not None)
@@ -196,6 +212,12 @@ def calib_train(
             " benchmark clips come from, so the benchmark stays honest."
         ),
     ] = "7,8",
+    extra: Annotated[
+        bool, typer.Option(help="Add SN-Calibration-2023, if it has been fetched.")
+    ] = True,
+    extra_stride: Annotated[
+        int, typer.Option(help="Use every Nth calibration frame; they are single shots, not runs.")
+    ] = 1,
 ) -> None:
     """Train the pitch-line segmenter (D36).
 
@@ -206,13 +228,22 @@ def calib_train(
     from . import calib
 
     frames = calib.index_clips(CLIPS)[::stride]
-    if not frames:
-        raise typer.BadParameter(f"no annotated frames under {CLIPS} - run `ft fetch` first")
     held = {g.strip() for g in holdout_games.split(",") if g.strip()} or None
     train_set, val_set = calib.split_by_game(frames, holdout=holdout, games=held)
-    games = sorted({f.game for f in frames})
+
+    # SN-Calibration-2023 arrives with its OWN match-disjoint split, so it is added on
+    # either side of ours rather than re-split: 290 matches to train on and 55 to validate
+    # against, none shared. It is what makes the set diverse enough to be worth training on
+    # at all, and GSR stays in because the benchmark clips are GSR footage.
+    if extra:
+        train_set += calib.index_calibration(CALIB_DATA, "train")[::extra_stride]
+        val_set += calib.index_calibration(CALIB_DATA, "valid")[::extra_stride]
+
+    if not train_set:
+        raise typer.BadParameter(f"no annotated frames under {CLIPS} - run `ft fetch` first")
+    games = sorted({f.game for f in train_set + val_set})
     typer.echo(
-        f"{len(frames)} frames over {len(games)} matches"
+        f"{len(train_set) + len(val_set)} frames over {len(games)} matches"
         f" -> train {len(train_set)}, validate {len(val_set)}"
     )
     if not val_set:
@@ -559,16 +590,22 @@ def detect(
 
 @app.command()
 def _pipeline(
-    clip: str, mode: str, carry: int, interval_s: float, snap: bool
+    clip: str,
+    mode: str,
+    carry: int,
+    interval_s: float,
+    snap: bool,
+    max_residual: float = 0.0,
+    stitch: bool = True,
 ) -> tuple[Path, auto_mod.Result]:
     """Frames in, tracks.json out. Shared by `ft auto` and `ft bench`.
 
     Extracted so the benchmark runs the SAME pipeline the user runs, rather than a
     second copy of it that can drift away from it silently.
     """
-    if mode not in ("truth", "seed"):
-        raise typer.BadParameter("mode must be 'truth' or 'seed'")
-    picked: auto_mod.Mode = "truth" if mode == "truth" else "seed"
+    if mode not in ("truth", "seed", "segmenter"):
+        raise typer.BadParameter("mode must be 'truth', 'seed' or 'segmenter'")
+    picked: auto_mod.Mode = cast("auto_mod.Mode", mode)
 
     c = soccernet.Clip(name=clip, root=CLIPS / clip)
     out = work_dir(Path(clip))
@@ -591,6 +628,7 @@ def _pipeline(
             max_carry=None if carry < 0 else carry,
             motions=motions,
             snap=refine_mod.refine if snap else None,
+            max_residual_m=max_residual or None,
         )
     elif seed_path.exists():
         # A real clip: one seeded frame is all the camera information there is.
@@ -620,6 +658,7 @@ def _pipeline(
         fps=_fps(CLIPS / clip, labels),
         motions=motions,
         balls=balls,
+        stitch=stitch,
     )
 
     path = tracks.write(
@@ -641,7 +680,11 @@ def _pipeline(
 def auto(
     clip: Annotated[str, typer.Argument(help="A clip already fetched into data/clips/.")],
     mode: Annotated[
-        str, typer.Option(help="'truth' uses every frame's lines; 'seed' uses only frame one's.")
+        str,
+        typer.Option(
+            help="'truth' uses every frame's lines; 'seed' uses only frame one's;"
+            " 'segmenter' uses the learned ones and no annotations at all."
+        ),
     ] = "seed",
     carry: Annotated[int, typer.Option(help="Frames a homography may be carried.")] = -1,
     interval_s: Annotated[
@@ -659,20 +702,27 @@ def auto(
             " Improves the camera model and makes the tracks WORSE (D35); off by default."
         ),
     ] = False,
+    max_residual: Annotated[
+        float,
+        typer.Option(
+            help="Segmenter mode: refuse a frame whose fit disagrees with its own predicted"
+            " pixels by more than this many metres. 0 keeps every solvable frame."
+        ),
+    ] = 0.0,
+    stitch: Annotated[
+        bool,
+        typer.Option(help="Join track fragments that are each other's best continuation."),
+    ] = True,
 ) -> None:
     """The automatic path end to end - frames in, tracks.json out.
 
     `--mode truth` holds stage 1 fixed so the score is stages 2 and 3 alone.
     `--mode seed` throws away every line annotation but frame one's, which is what a
     human clicking four corners once actually leaves you with.
+    `--mode segmenter` uses no annotations at all: every frame is registered from the
+    learned pitch lines, so there is nothing to seed and nothing to carry (D36).
     """
-    """The automatic path end to end - frames in, tracks.json out.
-
-    `--mode truth` holds stage 1 fixed so the score is stages 2 and 3 alone.
-    `--mode seed` throws away every line annotation but frame one's, which is what a
-    human clicking four corners once actually leaves you with.
-    """
-    path, result = _pipeline(clip, mode, carry, interval_s, snap)
+    path, result = _pipeline(clip, mode, carry, interval_s, snap, max_residual, stitch)
     typer.echo(
         f"mode {mode}: {result.detections} detections -> {result.raw_tracks} raw tracks"
         f" -> {len(result.tracks)} kept"
