@@ -4,4 +4,4 @@ The pipeline runs as independent stages, each reading the previous stage's artef
 from work/<clip>/ and writing its own. See PLAN.md.
 """
 
-__version__ = "0.10.0"
+__version__ = "0.11.0"

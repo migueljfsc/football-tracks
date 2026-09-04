@@ -1,3 +1,13 @@
+## v0.11.0 (2026-09-04)
+
+### Feat
+
+- **ball**: believe a ball placed on a restart spot
+
+### Fix
+
+- **ci**: type-check cleanly with and without the torch extra
+
 ## v0.10.0 (2026-09-04)
 
 ### Feat
