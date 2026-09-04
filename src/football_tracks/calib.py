@@ -549,7 +549,9 @@ def train(
             loss = F.cross_entropy(result["out"], masks, weight=weights)
             loss = loss + 0.4 * F.cross_entropy(result["aux"], masks, weight=weights)
             opt.zero_grad()
-            loss.backward()  # type: ignore[no-untyped-call]
+            # torch is an optional extra, so CI type-checks this file without it and the
+            # call is Any there. unused-ignore keeps the same line honest in both.
+            loss.backward()  # type: ignore[no-untyped-call, unused-ignore]
             opt.step()
             total += float(loss.detach()) * len(images)
             seen += len(images)
