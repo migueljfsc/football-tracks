@@ -49,7 +49,7 @@ KIT_AXES = 3
 
 def split_kits(
     points: Vec,
-    feasible: Callable[[npt.NDArray[np.int_]], bool] | None = None,
+    crowding: Callable[[npt.NDArray[np.int_]], int] | None = None,
 ) -> npt.NDArray[np.int_]:
     """Two groups of kits: project onto the axis they differ along, and cut.
 
@@ -68,11 +68,15 @@ def split_kits(
     Exhaustive over cut points and so reproducible. A pipeline that relabels the teams
     on a rerun is one nobody can check.
 
-    `feasible` rejects a labelling on something colour cannot see. Between-class variance
-    resists one side swallowing the other but does not forbid it: a handful of tracks far
-    enough along the axis outscores an even cut, and the result is every player on one
-    team. The caller supplies what a football pitch allows and the best cut that satisfies
-    it wins. When none does, the highest-scoring cut stands rather than nothing.
+    `crowding` scores a labelling on something colour cannot see: how many players over
+    what a pitch holds the worst moment puts on one side. Zero is allowed, and the
+    best-scoring cut that manages it wins. Between-class variance resists one side
+    swallowing the other but does not forbid it -- a handful of tracks far enough along
+    the axis outscores an even cut, and the result is every player on one team.
+
+    When no cut manages zero, the LEAST crowded one stands. Falling back to the
+    highest-scoring cut instead returns the collapsed answer this exists to refuse,
+    which is what SNGS-060 got.
 
     The search runs over the top `KIT_AXES` components rather than the first alone. The
     largest axis of variance is the kits only when the kits are what varies most; when it
@@ -90,7 +94,7 @@ def split_kits(
     _, _, vt = np.linalg.svd(centred, full_matrices=False)
     # Without a feasibility test there is no way to prefer one axis over another, so the
     # unconstrained answer stays what it always was: the first component.
-    axes = min(KIT_AXES, len(vt)) if feasible is not None else 1
+    axes = min(KIT_AXES, len(vt)) if crowding is not None else 1
 
     orders, scored = [], []
     for ax in range(axes):
@@ -110,12 +114,18 @@ def split_kits(
         labels[orders[ax][cut:]] = 1
         return labels
 
-    if feasible is not None:
-        for _, ax, cut in scored:
-            labels = labelling(ax, cut)
-            if feasible(labels):
-                return labels
-    return labelling(scored[0][1], scored[0][2])
+    if crowding is None:
+        return labelling(scored[0][1], scored[0][2])
+
+    best, over = None, None
+    for _, ax, cut in scored:
+        labels = labelling(ax, cut)
+        crowd = crowding(labels)
+        if crowd == 0:
+            return labels
+        if over is None or crowd < over:
+            best, over = labels, crowd
+    return best if best is not None else labelling(scored[0][1], scored[0][2])
 
 
 def _outliers(points: Vec, labels: npt.NDArray[np.int_], ratio: float) -> npt.NDArray[np.bool_]:
@@ -133,10 +143,10 @@ def _outliers(points: Vec, labels: npt.NDArray[np.int_], ratio: float) -> npt.ND
     return np.asarray(d > ratio * median, dtype=np.bool_)
 
 
-def _too_many_on_one_side(
+def _crowding(
     tracks: list[Track], frames: dict[int, list[int]] | None
-) -> Callable[[npt.NDArray[np.int_]], bool] | None:
-    """A labelling is refused when one side has more players in shot than a team has.
+) -> Callable[[npt.NDArray[np.int_]], int] | None:
+    """How many players over a team's worth a labelling puts on one side at once.
 
     Fragments of one player never overlap in time -- the tracker ends one and starts the
     next -- so the number of tracks carrying a sample at a frame is a number of people.
@@ -161,13 +171,11 @@ def _too_many_on_one_side(
         for f in fs:
             present[i, at[f]] = 1
 
-    def feasible(labels: npt.NDArray[np.int_]) -> bool:
-        return all(
-            int(np.max(present[labels == k].sum(axis=0), initial=0)) <= MAX_CONCURRENT_PER_SIDE
-            for k in (0, 1)
-        )
+    def crowd(labels: npt.NDArray[np.int_]) -> int:
+        worst = max(int(np.max(present[labels == k].sum(axis=0), initial=0)) for k in (0, 1))
+        return max(0, worst - MAX_CONCURRENT_PER_SIDE)
 
-    return feasible
+    return crowd
 
 
 def assign(
@@ -211,7 +219,7 @@ def assign(
     if len(outfield) >= 2:
         labels = split_kits(
             np.array([t.color for t in outfield], dtype=np.float64),
-            _too_many_on_one_side(outfield, frames),
+            _crowding(outfield, frames),
         )
     else:
         outfield, labels = usable, first

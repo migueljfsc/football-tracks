@@ -1635,7 +1635,14 @@ it has a feasible cut. Without a feasibility test the search does not run at all
 would be nothing to tell a kit axis from a lighting one -- so the unconstrained answer is
 byte for byte what it was.
 
-SNGS-067 gains 9.6 points from that and no clip loses any. Its board reaches ELEVEN A SIDE,
+**And when nothing fits, the fallback matters.** Falling back to the highest-scoring cut
+hands back the collapse the rule exists to refuse -- which is what SNGS-060 got. The
+feasibility test is now a COST, how many players over a team's worth the worst moment puts
+on one side, and the least crowded cut stands when none reaches zero. With the shipping kit
+signature nothing reaches the fallback and the output is identical; it is a floor under a
+case that has already happened once.
+
+SNGS-067 gains 9.6 points from the axis search and no clip loses any. Its board reaches ELEVEN A SIDE,
 the first complete one in this repo, and SNGS-069 gains two players; nine boards are
 untouched. Across the eleven that is 222 to 226 players and 2108.9 to 2087.1 player-seconds
 -- more players, one percent fewer observed seconds, because a fuller roster is available
@@ -1663,8 +1670,26 @@ track wearing NOW", which is the right question for the next frame's match and t
 one for which team it is on. Combined with the axis search it gives the best team split of
 any configuration tried, best-of-both on all five clips. And it still loses at the board,
 because SNGS-060 -- which has no ground truth, so no team-split number can see it --
-collapses under it even across three axes. It is not shipped. What it establishes is that
-the kit FEATURE is not the binding constraint and the cut is.
+collapses under it even across three axes. Measured again with the least-crowded fallback
+underneath, SNGS-060 survives -- and the boards still come out behind the shipping answer,
+223 players to 226 and 1976.1 player-seconds to 2087.1, losing the eleven-a-side board on
+SNGS-067. Twice measured, not shipped. What it establishes is that the kit FEATURE is not
+the binding constraint and the cut is.
+
+**`team split` is not what the board sees, and that is why this section has two changes
+that scored well and were not shipped.** `ft score` measures team accuracy over samples
+across EVERY track; a board fields the twenty or so best-covered ones. Relabelling
+fragments that never reach a board moves the first number and not the second. Counting
+fielded players on the wrong side instead, on the five clips with ground truth:
+
+    configuration                    fielded players on the wrong side
+    cap + axis search (shipping)              15 of 92   (16%)
+    plus the whole-track mean                 16 of 89   (18%)
+
+-- which agrees with the boards and disagrees with the +30 points of team split the mean
+wins. Anything about team assignment has to be judged this way or it is measuring the part
+of the pipeline the product throws away. 16% is also the honest size of what is left: three
+players a board, on the wrong side.
 
 **And this one reaches the board**, which is what four of the last five per-frame wins did
 not do. Eleven clips, same flags both sides:

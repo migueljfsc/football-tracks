@@ -243,16 +243,34 @@ def test_a_cut_that_fields_an_impossible_side_is_refused() -> None:
     collapsed = split_kits(pts)
     assert max(int((collapsed == k).sum()) for k in (0, 1)) == 16
 
-    kept = split_kits(pts, lambda labels: all(int((labels == k).sum()) <= 12 for k in (0, 1)))
+    def over_twelve(labels: np.ndarray) -> int:
+        return max(0, max(int((labels == k).sum()) for k in (0, 1)) - 12)
+
+    kept = split_kits(pts, over_twelve)
     assert max(int((kept == k).sum()) for k in (0, 1)) <= 12
 
 
 def test_the_refusal_falls_back_rather_than_returning_nothing() -> None:
-    # No cut can satisfy a test nothing passes. A labelling is still owed, so the
-    # highest-scoring one stands.
+    # No cut can satisfy a test nothing passes. A labelling is still owed, and with every
+    # cut equally bad the best-scoring one stands.
     pts = np.array([[1.0, 0.0]] * 5 + [[0.0, 1.0]] * 5)
-    labels = split_kits(pts, lambda _: False)
+    labels = split_kits(pts, lambda _: 1)
     assert np.array_equal(labels, split_kits(pts))
+
+
+def test_when_nothing_fits_the_least_crowded_cut_wins_not_the_best_scoring_one() -> None:
+    # The failure this exists for: on a clip where no cut leaves a legal side, falling
+    # back to the highest-scoring one hands back the collapse the rule refuses. Here the
+    # widest gap is the lopsided 9-1, and the answer must be the 5-5 that overflows least.
+    pts = np.array([[float(i), 0.0] for i in range(9)] + [[100.0, 0.0]])
+
+    def crowding(labels: np.ndarray) -> int:
+        return max(0, max(int((labels == k).sum()) for k in (0, 1)) - 4)
+
+    labels = split_kits(pts, crowding)
+    assert max(int((labels == k).sum()) for k in (0, 1)) == 5
+    unconstrained = split_kits(pts)
+    assert max(int((unconstrained == k).sum()) for k in (0, 1)) == 9
 
 
 def test_teams_are_split_by_what_a_pitch_allows_not_by_colour_alone() -> None:
@@ -285,9 +303,9 @@ def test_a_cut_is_looked_for_beyond_the_first_component() -> None:
     pts = np.column_stack([wide, narrow])
     target = {0, 1, 2, 3}
 
-    def separates(labels: np.ndarray) -> bool:
+    def apart(labels: np.ndarray) -> int:
         side = {i for i, lab in enumerate(labels) if lab == labels[0]}
-        return side in (target, set(range(8)) - target)
+        return 0 if side in (target, set(range(8)) - target) else 1
 
-    assert not separates(split_kits(pts))
-    assert separates(split_kits(pts, separates))
+    assert apart(split_kits(pts)) == 1
+    assert apart(split_kits(pts, apart)) == 0
