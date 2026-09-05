@@ -1,3 +1,9 @@
+## v0.14.0 (2026-09-05)
+
+### Feat
+
+- **teams**: refuse a split that fields more players than a pitch holds
+
 ## v0.13.0 (2026-09-05)
 
 ### Feat
