@@ -232,3 +232,62 @@ def test_an_unreachable_pair_is_never_accepted() -> None:
     # Those pairings have to be dropped afterwards or a track teleports across the pitch.
     far = Track(id=1, observations=[obs(1, 100.0, 200.0)])
     assert _cost(far, obs(2, 3000.0, 200.0), None, FPS, None) is None
+
+
+def test_a_cut_that_fields_an_impossible_side_is_refused() -> None:
+    # Between-class variance resists one side swallowing the other but does not forbid
+    # it: sixteen kits close together and four far along the axis outscore an even cut,
+    # and every one of the sixteen lands on one team. Sixteen players of a side in shot
+    # at once cannot happen, and that is visible without knowing which kit is which.
+    pts = np.array([[i / 100.0, 0.0] for i in range(16)] + [[10.0, 0.0]] * 4)
+    collapsed = split_kits(pts)
+    assert max(int((collapsed == k).sum()) for k in (0, 1)) == 16
+
+    kept = split_kits(pts, lambda labels: all(int((labels == k).sum()) <= 12 for k in (0, 1)))
+    assert max(int((kept == k).sum()) for k in (0, 1)) <= 12
+
+
+def test_the_refusal_falls_back_rather_than_returning_nothing() -> None:
+    # No cut can satisfy a test nothing passes. A labelling is still owed, so the
+    # highest-scoring one stands.
+    pts = np.array([[1.0, 0.0]] * 5 + [[0.0, 1.0]] * 5)
+    labels = split_kits(pts, lambda _: False)
+    assert np.array_equal(labels, split_kits(pts))
+
+
+def test_teams_are_split_by_what_a_pitch_allows_not_by_colour_alone() -> None:
+    # The clip shape this exists for: one side takes nearly every track and the other
+    # keeps a handful. Everybody is in shot for the same ten frames, so a side holding
+    # sixteen of them is refused and the cut moves.
+    left = [[0.0 + i / 100.0, 0.0] for i in range(16)]
+    right = [[10.0, 0.0]] * 4
+    tracks = [
+        Track(id=i, observations=[obs(f, 100.0 + i, 50.0) for f in range(10)], color=np.array(c))
+        for i, c in enumerate(left + right)
+    ]
+    mean_x = {t.id: 20.0 if t.id < 10 else 80.0 for t in tracks}
+    frames = {t.id: list(range(10)) for t in tracks}
+
+    sides = assign(tracks, mean_x, frames)
+    counts = {"home": 0, "away": 0}
+    for label in sides.values():
+        if label in counts:
+            counts[label] += 1
+    assert max(counts.values()) <= 12
+
+
+def test_a_cut_is_looked_for_beyond_the_first_component() -> None:
+    # The first component is the direction of greatest variance, which is the kits only
+    # when the kits are what varies most. Here it is not: the wide axis cuts across both
+    # groups and no threshold on it separates them, while the narrow one does.
+    wide = np.array([0.0, 3.0, 6.0, 9.0] * 2) * 10.0
+    narrow = np.array([0.0] * 4 + [1.0] * 4)
+    pts = np.column_stack([wide, narrow])
+    target = {0, 1, 2, 3}
+
+    def separates(labels: np.ndarray) -> bool:
+        side = {i for i, lab in enumerate(labels) if lab == labels[0]}
+        return side in (target, set(range(8)) - target)
+
+    assert not separates(split_kits(pts))
+    assert separates(split_kits(pts, separates))

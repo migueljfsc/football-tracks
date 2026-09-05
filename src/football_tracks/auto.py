@@ -629,7 +629,11 @@ def build(
         positions = stage2_stitch.stitch(positions, {t.id: t.color for t in raw}, fps)
 
     mean_x = {tid: float(np.mean([s.x for s in ss])) for tid, ss in positions.items()}
-    teams = assign([t for t in raw if t.id in positions], mean_x)
+    teams = assign(
+        [t for t in raw if t.id in positions],
+        mean_x,
+        {tid: [s.f for s in ss] for tid, ss in positions.items()},
+    )
 
     return Result(
         ball=ball_path(balls or [], homs, frames),

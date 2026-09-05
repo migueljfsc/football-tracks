@@ -36,7 +36,8 @@ that changes what to do next.
 | 1 | 640×360 | 5 matches | 0.84 m | 3.76 m | 1.54 m |
 | 2 | 960×540 | 5 matches | 1.13 m | 3.20 m | 0.69 m |
 | 3 | 960×540 | 350 matches | 0.90 m | 5.19 m | 1.13 m |
-| **4** | **1280×720** | **5 matches** | **0.67 m** | **2.87 m** | **0.67 m** |
+| 4 | 1280×720 | 5 matches | 0.67 m | 2.87 m | 0.67 m |
+| **5** | **1920×1080** | **5 matches** | **0.71 m** | **0.70 m** | **0.70 m** |
 | | | *bar* | *0.5 m* | *0.5 m* | *0.5 m* |
 
 Medians of `observed_error`. No run has yet cleared the bar.
@@ -48,11 +49,26 @@ SNGS-116 and **51% of SNGS-121** — it refuses the rest rather than guessing, w
 behaviour and a very different number. Any claim about the solve rate has to say which
 population it counted.
 
-**Run 4 is the best on every clip and on every p90** (147: 1.70 m, 116: 5.37 m, 121: 1.20 m),
-and it is the only run that improved all three at once. It is also the only controlled
-comparison in the table: runs 2 and 4 share a training set, a holdout and a validation set
-byte for byte, so the difference between them is resolution and nothing else. Run 3 changed
-two things at once and is not comparable with either.
+**Run 4 is the best on every p90** (147: 1.70 m, 116: 5.37 m, 121: 1.20 m), and it was the
+only run that improved all three clips at once. Runs 2, 4 and 5 share a training set, a
+holdout and a validation set byte for byte, so resolution is the only thing separating them.
+Run 3 changed two things at once and is not comparable with either.
+
+**Run 5 halves the median error of the table and falsifies what this document said about
+SNGS-116.** That clip had sat at 2.87-5.19 m across four configurations, and the conclusion
+drawn here was that it was a property of the clip that no amount of resolution had touched.
+At native 1080p it fits at 0.70 m. Nothing else changed.
+
+**Its tails are much worse, and that is the reason it does not ship.** p90 goes to 9.96 m on
+147 and 7.80 m on 121, against run 4's 1.70 and 1.20 -- a better typical fit bought with a
+worse worst case. No clip clears the 0.5 m bar, which now stands unmet after five runs.
+`winnow` (D62) rejects fits on neighbour disagreement and is aimed at exactly this tail, but
+it has not been measured against one this heavy. Run 5's weights are kept as
+`segmenter.1920x1080.s10.pt`; whether `WIDTH, HEIGHT` moves to 1920x1080 is not decided.
+
+Batch had to fall from 8 to 3 to fit 1920x1080 in memory, so run 5's epochs hold 2.7x the
+optimiser steps of run 4's. Best-checkpoint error is comparable between them; per-epoch loss
+is not.
 
 The weights on disk, kept so the table above stays reproducible rather than remembered:
 
@@ -108,10 +124,9 @@ nohup uv run ft calib-train --stride 10 --epochs 4 --batch 2 --no-extra \
 including it upsamples 82% of the set and trains the model to expect blur it will not meet at
 inference. Batch has to come down as the resolution goes up or MPS runs out of memory.
 
-**2. Diagnose SNGS-116 instead of throwing pixels at it.** It has sat at 2.87–5.19 m across
-four configurations while the other two clips swung by a factor of two. That is a property of
-the clip, not of the model, and no amount of resolution has touched it. Look at which frames
-fail before assuming the next run fixes it.
+**2. ~~Diagnose SNGS-116 instead of throwing pixels at it.~~ Done, and the premise was
+wrong.** It was resolution after all: run 5 fits it at 0.70 m. What is left to diagnose is the
+tail that came with it, on 147 and 121.
 
 Then re-score, always all three, against the bar set before any of this was trained — **beat
 0.5 m median `observed_error` and solve 80% of frames**:
@@ -1564,6 +1579,111 @@ candidates are under a metre apart, and the prediction that separates them carri
 error -- which is why VELOCITY_SMOOTHING was worth 3.4 points (D56) when none of this was worth
 anything. A better motion model, or an association that defers the decision across frames
 instead of committing every frame, is where the next attempt belongs.
+
+**D63 — a labelling that fields nineteen players on one side is wrong whatever the kit
+colours say, and a pitch knows it with no ground truth at all.** The boards that came out
+badly were not small, they were LOPSIDED, which is a different defect and points somewhere
+else:
+
+    clip        board       home tracks / away tracks in the file
+    SNGS-067    11 v 1            65 / 5
+    SNGS-060    11 v 2            58 / 5
+    SNGS-069     2 v 11            5 / 35
+    SNGS-151     6 v 11           11 / 44
+    SNGS-066    11 v 10           36 / 41   (healthy)
+
+Against ground truth the team split on SNGS-067 is 51.1%, which is a coin flip, and nothing
+downstream could tell: `unknown` was emitted on zero tracks across eleven clips, so a
+collapsed split and a good one look identical to the importer.
+
+**The collapse is provable from the file alone.** Counting tracks that hold a sample at one
+frame — fragments of one player never overlap in time, so that count is a count of people:
+
+    clip        concurrent home / away, sampled through the clip
+    SNGS-067        [10, 15, 19, 10, 13] / [2, 1, 1, 1, 1]
+    SNGS-069        [ 1,  1,  1,  1,  1] / [16, 18, 15, 8, 7]
+    SNGS-066        [11, 10, 13, 10,  7] / [10, 6, 8, 11, 9]   (healthy)
+
+Nineteen players of one side are not on a football pitch. `split_kits` is the thing that
+failed, and it failed the way its own docstring says k-means did before it. Between-class
+variance RESISTS one side swallowing the other -- that is what the `len(a) * len(b)` term is
+for -- but it does not FORBID it: a handful of tracks far enough along the axis outscore an
+even cut, and the light and pose within one kit vary more than two kits differ.
+
+So the cut is now chosen as the best-scoring one that a pitch allows, and only the cut that
+labels the teams is constrained -- the earlier one that hunts odd kits is left alone, or
+keeper detection moves with it. The cap is twelve rather than eleven: a keeper that was not
+pulled out as an outlier, somebody on the touchline, and two fragments either side of a
+one-frame break each read as one player more than there is, and the failure being caught is
+at nineteen, where the extra slack costs nothing.
+
+    clip        team split, collapse rule -> and searching the axes
+    SNGS-067       51.1 -> 69.2 -> 78.8%
+    SNGS-147       70.5 -> 81.4 -> 81.4%
+    SNGS-110       70.3 -> 70.3 -> 70.3%
+    SNGS-116       71.6 -> 71.6 -> 71.6%
+    SNGS-121       86.0 -> 86.0 -> 86.0%
+
+**The rule needs somewhere to look, and one component was not enough.** On SNGS-060 with
+the kit signature averaged over the whole track, no cut on the FIRST component leaves fewer
+than twenty players on one side -- so the rule has nothing to choose and falls back to the
+collapsed answer it exists to refuse. The largest axis of variance is the kits only when
+the kits are what varies most; when it is the light, every cut along it is lopsided.
+`split_kits` now searches the top `KIT_AXES` components and takes the best-scoring feasible
+cut across all of them. Scores are compared raw, so the first component still wins wherever
+it has a feasible cut. Without a feasibility test the search does not run at all -- there
+would be nothing to tell a kit axis from a lighting one -- so the unconstrained answer is
+byte for byte what it was.
+
+SNGS-067 gains 9.6 points from that and no clip loses any. Its board reaches ELEVEN A SIDE,
+the first complete one in this repo, and SNGS-069 gains two players; nine boards are
+untouched. Across the eleven that is 222 to 226 players and 2108.9 to 2087.1 player-seconds
+-- more players, one percent fewer observed seconds, because a fuller roster is available
+over a shorter passage. Player-seconds counts how much was watched and not whether it was
+attributed to the right side, so it cannot see this change's point.
+
+Recall, precision and identity purity are unchanged to the digit on all five, which is the
+check that matters: the constraint moves team labels and touches nothing else.
+
+**Four other things were tried and none of them worked**, which is worth as much as the two
+that did. Measured on the five clips with ground truth, against a 69.2 / 70.3 / 71.6 / 86.0
+/ 81.4 baseline:
+
+    change                                        team split      board
+    grass masked out of the torso crop            net -0.6        not run
+    plus a saturation split for achromatic kits   net -2.0        not run
+    classify each sighting and vote per track     worse or equal  not run
+    kit averaged over the track, not an EMA       net +5.2        222 -> 215 players
+
+The last is the interesting one. Averaging over the whole track IS a better estimator --
+the ceiling, measured as nearest-centroid against ground-truth centroids, goes 86.0 -> 92.0
+on SNGS-067, 92.1 -> 97.4 on SNGS-116 and 81.4 -> 86.0 on SNGS-147, because `color` is an
+exponential average with a window of about five sightings and answers "which kit is this
+track wearing NOW", which is the right question for the next frame's match and the wrong
+one for which team it is on. Combined with the axis search it gives the best team split of
+any configuration tried, best-of-both on all five clips. And it still loses at the board,
+because SNGS-060 -- which has no ground truth, so no team-split number can see it --
+collapses under it even across three axes. It is not shipped. What it establishes is that
+the kit FEATURE is not the binding constraint and the cut is.
+
+**And this one reaches the board**, which is what four of the last five per-frame wins did
+not do. Eleven clips, same flags both sides:
+
+    clip        before            after
+    SNGS-060    13 (11 v 2)       21 (10 v 11)
+    SNGS-067    12 (11 v 1)       20 (11 v 9)
+    SNGS-069    11 ( 0 v 11)      19 (11 v 8)
+    SNGS-151    17 ( 6 v 11)      21 (10 v 11)
+    SNGS-147    18 (10 v 8)       18 (10 v 8), window 3.2 -> 8.6 s
+
+Five improved, six were untouched, none lost a player. Observed player-seconds across the
+eleven go 1906.6 to 2108.9.
+
+**One board trades honestly and it is worth naming.** SNGS-067 gains eight players and loses
+player-seconds, 153.9 to 116.7, because a fuller roster is available over a shorter passage
+and `chooseWindow` takes it. By D52's measure that is a regression; a board with one opponent
+on it is not a tactics board, so it is accepted. Average coverage per player is 0.43 either
+way -- the window halved, the observation did not thin.
 
 **D62 — the camera model is the biggest lever in the pipeline, and the segmenter's problem is
 neither coverage nor accuracy but a tail of confidently wrong fits.** Measuring where

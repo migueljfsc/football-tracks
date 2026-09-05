@@ -17,6 +17,8 @@ things at once - a colour unlike either team, and standing near a goal.
 
 from __future__ import annotations
 
+from collections.abc import Callable
+
 import numpy as np
 import numpy.typing as npt
 
@@ -33,8 +35,22 @@ OUTLIER_RATIO = 2.0
 # track to be read as that goal's keeper rather than a player in a strange light.
 KEEPER_ZONE_M = 22.0
 
+# Most tracks of one side that may be in shot at once before the split is read as having
+# collapsed. A team fields eleven; the slack covers a keeper that was not pulled out as an
+# outlier, somebody on the touchline, and two fragments either side of a one-frame break.
+MAX_CONCURRENT_PER_SIDE = 12
 
-def split_kits(points: Vec) -> npt.NDArray[np.int_]:
+# Principal axes searched for a cut a pitch allows. The first is the direction of greatest
+# variance, which is the kits when the kits are what varies most and the light when they
+# are not. Only reached when a feasibility test is supplied, because without one there is
+# nothing to tell those two cases apart.
+KIT_AXES = 3
+
+
+def split_kits(
+    points: Vec,
+    feasible: Callable[[npt.NDArray[np.int_]], bool] | None = None,
+) -> npt.NDArray[np.int_]:
     """Two groups of kits: project onto the axis they differ along, and cut.
 
     NOT k-means, which was the first version and collapses. k-means minimises inertia,
@@ -51,6 +67,20 @@ def split_kits(points: Vec) -> npt.NDArray[np.int_]:
 
     Exhaustive over cut points and so reproducible. A pipeline that relabels the teams
     on a rerun is one nobody can check.
+
+    `feasible` rejects a labelling on something colour cannot see. Between-class variance
+    resists one side swallowing the other but does not forbid it: a handful of tracks far
+    enough along the axis outscores an even cut, and the result is every player on one
+    team. The caller supplies what a football pitch allows and the best cut that satisfies
+    it wins. When none does, the highest-scoring cut stands rather than nothing.
+
+    The search runs over the top `KIT_AXES` components rather than the first alone. The
+    largest axis of variance is the kits only when the kits are what varies most; when it
+    is the light instead, EVERY cut along it is lopsided and choosing between them cannot
+    help -- measured on SNGS-060, where no cut on the first component left fewer than
+    twenty players on one side. Scores are compared raw across axes, so the first
+    component wins wherever it has a feasible cut and the others are reached only when it
+    does not.
     """
     n = len(points)
     if n < 2:
@@ -58,19 +88,34 @@ def split_kits(points: Vec) -> npt.NDArray[np.int_]:
 
     centred = points - points.mean(axis=0)
     _, _, vt = np.linalg.svd(centred, full_matrices=False)
-    projected = centred @ vt[0]
-    order = np.argsort(projected)
+    # Without a feasibility test there is no way to prefer one axis over another, so the
+    # unconstrained answer stays what it always was: the first component.
+    axes = min(KIT_AXES, len(vt)) if feasible is not None else 1
 
-    best, cut = -1.0, n // 2
-    for i in range(1, n):
-        a, b = projected[order[:i]], projected[order[i:]]
-        score = len(a) * len(b) * (float(a.mean()) - float(b.mean())) ** 2
-        if score > best:
-            best, cut = score, i
+    orders, scored = [], []
+    for ax in range(axes):
+        projected = centred @ vt[ax]
+        order = np.argsort(projected)
+        orders.append(order)
+        for i in range(1, n):
+            a, b = projected[order[:i]], projected[order[i:]]
+            score = len(a) * len(b) * (float(a.mean()) - float(b.mean())) ** 2
+            scored.append((score, ax, i))
+    # Ties keep the earliest axis and the lowest cut, which is what the running maximum
+    # this replaced did.
+    scored.sort(key=lambda s: (-s[0], s[1], s[2]))
 
-    labels = np.zeros(n, dtype=np.int_)
-    labels[order[cut:]] = 1
-    return labels
+    def labelling(ax: int, cut: int) -> npt.NDArray[np.int_]:
+        labels = np.zeros(n, dtype=np.int_)
+        labels[orders[ax][cut:]] = 1
+        return labels
+
+    if feasible is not None:
+        for _, ax, cut in scored:
+            labels = labelling(ax, cut)
+            if feasible(labels):
+                return labels
+    return labelling(scored[0][1], scored[0][2])
 
 
 def _outliers(points: Vec, labels: npt.NDArray[np.int_], ratio: float) -> npt.NDArray[np.bool_]:
@@ -88,7 +133,48 @@ def _outliers(points: Vec, labels: npt.NDArray[np.int_], ratio: float) -> npt.ND
     return np.asarray(d > ratio * median, dtype=np.bool_)
 
 
-def assign(tracks: list[Track], mean_x: dict[int, float]) -> dict[int, TeamLabel]:
+def _too_many_on_one_side(
+    tracks: list[Track], frames: dict[int, list[int]] | None
+) -> Callable[[npt.NDArray[np.int_]], bool] | None:
+    """A labelling is refused when one side has more players in shot than a team has.
+
+    Fragments of one player never overlap in time -- the tracker ends one and starts the
+    next -- so the number of tracks carrying a sample at a frame is a number of people.
+    Twenty of them on one side is not a close call about kit colour; it is the cut having
+    collapsed, and it is visible without any ground truth.
+
+    Frames come from the stitched pitch samples where the caller has them, because a
+    joined track's own observations are only the half the tracker kept.
+    """
+    seen = (
+        [set(frames.get(t.id, ())) for t in tracks]
+        if frames is not None
+        else [{o.f for o in t.observations} for t in tracks]
+    )
+    every = sorted(set().union(*seen)) if seen else []
+    if not every:
+        return None
+
+    at = {f: i for i, f in enumerate(every)}
+    present = np.zeros((len(tracks), len(every)), dtype=np.int_)
+    for i, fs in enumerate(seen):
+        for f in fs:
+            present[i, at[f]] = 1
+
+    def feasible(labels: npt.NDArray[np.int_]) -> bool:
+        return all(
+            int(np.max(present[labels == k].sum(axis=0), initial=0)) <= MAX_CONCURRENT_PER_SIDE
+            for k in (0, 1)
+        )
+
+    return feasible
+
+
+def assign(
+    tracks: list[Track],
+    mean_x: dict[int, float],
+    frames: dict[int, list[int]] | None = None,
+) -> dict[int, TeamLabel]:
     """Track id -> team label.
 
     `mean_x` is each track's average position along the pitch, in metres, which is what
@@ -97,6 +183,10 @@ def assign(tracks: list[Track], mean_x: dict[int, float]) -> dict[int, TeamLabel
 
     Keepers are excluded from the clustering and then placed by the goal they stand in,
     which is both more accurate and the only way to label them `gkHome`/`gkAway` at all.
+
+    `frames` is the frames each track holds a sample at, which is what tells a collapsed
+    split from a real one. It is optional only so a caller with nothing but tracks still
+    gets a labelling; the observations are a poorer answer once fragments are stitched.
     """
     usable = [t for t in tracks if t.color is not None and t.id in mean_x]
     if len(usable) < 2:
@@ -119,7 +209,10 @@ def assign(tracks: list[Track], mean_x: dict[int, float]) -> dict[int, TeamLabel
 
     outfield = [t for i, t in enumerate(usable) if not keeper[i]]
     if len(outfield) >= 2:
-        labels = split_kits(np.array([t.color for t in outfield], dtype=np.float64))
+        labels = split_kits(
+            np.array([t.color for t in outfield], dtype=np.float64),
+            _too_many_on_one_side(outfield, frames),
+        )
     else:
         outfield, labels = usable, first
 
