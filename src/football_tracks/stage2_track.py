@@ -142,10 +142,33 @@ class Track:
     observations: list[Observation] = field(default_factory=list)
     color: np.ndarray | None = None
     velocity: tuple[float, float] = (0.0, 0.0)
+    kit_sum: np.ndarray | None = None
+    kit_seen: int = 0
 
     @property
     def last(self) -> Observation:
         return self.observations[-1]
+
+    @property
+    def kit_mean(self) -> np.ndarray | None:
+        """Every sighting of the shirt, weighted equally.
+
+        `color` answers a different question and answers it correctly: which kit is this
+        track wearing NOW, for the next frame's match, where a stale average would fight
+        the very change that identifies a player. Which TEAM it is on is a question about
+        the whole track, and a rolling average answers it from a window of about five
+        sightings -- whatever the player happened to be doing when last seen, back turned
+        or in shadow.
+        """
+        if self.kit_sum is None or self.kit_seen == 0:
+            return self.color
+        return self.kit_sum / self.kit_seen
+
+    def saw_kit(self, seen: np.ndarray) -> None:
+        # Rolling average: one frame of shadow should not redefine a kit.
+        self.color = seen if self.color is None else 0.8 * self.color + 0.2 * seen
+        self.kit_sum = seen.astype(np.float64) if self.kit_sum is None else self.kit_sum + seen
+        self.kit_seen += 1
 
     def predict(self, dt: float, motion: np.ndarray | None) -> tuple[float, float]:
         """Where they should be after `dt` seconds, in the NEXT frame's pixels.
@@ -274,13 +297,15 @@ def run(
                 track.observations.append(o)
                 seen = colors[oi]
                 if seen is not None:
-                    # Rolling average: one frame of shadow should not redefine a kit.
-                    prior = track.color
-                    track.color = seen if prior is None else 0.8 * prior + 0.2 * seen
+                    track.saw_kit(seen)
 
         for oi, o in enumerate(obs):
             if oi not in used_o:
-                live.append(Track(id=next_id, observations=[o], color=colors[oi]))
+                started = Track(id=next_id, observations=[o])
+                first = colors[oi]
+                if first is not None:
+                    started.saw_kit(first)
+                live.append(started)
                 next_id += 1
 
     done.extend(live)

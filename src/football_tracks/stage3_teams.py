@@ -185,6 +185,9 @@ def assign(
 ) -> dict[int, TeamLabel]:
     """Track id -> team label.
 
+    Clustered on `kit_mean` and not `color`: the tracker's rolling average is about the
+    next frame's match, and which team a track is on is about the whole track.
+
     `mean_x` is each track's average position along the pitch, in metres, which is what
     decides which cluster is which. Tracks with no colour signature at all come back
     as "unknown" rather than being guessed into a side (D5's rule, applied to teams).
@@ -196,11 +199,11 @@ def assign(
     split from a real one. It is optional only so a caller with nothing but tracks still
     gets a labelling; the observations are a poorer answer once fragments are stitched.
     """
-    usable = [t for t in tracks if t.color is not None and t.id in mean_x]
+    usable = [t for t in tracks if t.kit_mean is not None and t.id in mean_x]
     if len(usable) < 2:
         return {t.id: "unknown" for t in tracks}
 
-    points = np.array([t.color for t in usable], dtype=np.float64)
+    points = np.array([t.kit_mean for t in usable], dtype=np.float64)
     first = split_kits(points)
 
     # A kit far from both teams, standing near a goal, is that goal's keeper. Both
@@ -218,7 +221,7 @@ def assign(
     outfield = [t for i, t in enumerate(usable) if not keeper[i]]
     if len(outfield) >= 2:
         labels = split_kits(
-            np.array([t.color for t in outfield], dtype=np.float64),
+            np.array([t.kit_mean for t in outfield], dtype=np.float64),
             _crowding(outfield, frames),
         )
     else:

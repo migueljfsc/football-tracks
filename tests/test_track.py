@@ -309,3 +309,27 @@ def test_a_cut_is_looked_for_beyond_the_first_component() -> None:
 
     assert apart(split_kits(pts)) == 1
     assert apart(split_kits(pts, apart)) == 0
+
+
+def test_the_team_signature_is_the_whole_track_and_the_match_signature_is_not() -> None:
+    # Two questions, two estimators. `color` is a rolling average so a match against the
+    # next frame follows a kit that is changing, and it forgets at about 0.8 a sighting.
+    # `kit_mean` weights every sighting equally, because which team a track is on is a
+    # question about all of it -- so it still carries what the average has discarded.
+    front = np.array([1.0, 0.0])
+    back = np.array([0.0, 1.0])
+    t = Track(id=1)
+    t.saw_kit(back)
+    for _ in range(20):
+        t.saw_kit(front)
+
+    mean, rolling = t.kit_mean, t.color
+    assert mean is not None and rolling is not None
+    assert t.kit_seen == 21
+    assert np.isclose(mean[1], 1 / 21)
+    assert rolling[1] < mean[1] / 3
+
+
+def test_a_track_that_never_showed_a_kit_has_no_mean_to_give() -> None:
+    assert Track(id=1).kit_mean is None
+    assert Track(id=2, color=np.array([1.0, 0.0])).kit_mean is not None

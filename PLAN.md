@@ -1652,44 +1652,52 @@ attributed to the right side, so it cannot see this change's point.
 Recall, precision and identity purity are unchanged to the digit on all five, which is the
 check that matters: the constraint moves team labels and touches nothing else.
 
-**Four other things were tried and none of them worked**, which is worth as much as the two
-that did. Measured on the five clips with ground truth, against a 69.2 / 70.3 / 71.6 / 86.0
-/ 81.4 baseline:
+**Four other things were tried and three of them failed**, which is worth as much as the
+rest of this. Team split measured on the five clips with ground truth, against a 69.2 /
+70.3 / 71.6 / 86.0 / 81.4 baseline:
 
-    change                                        team split      board
-    grass masked out of the torso crop            net -0.6        not run
-    plus a saturation split for achromatic kits   net -2.0        not run
-    classify each sighting and vote per track     worse or equal  not run
-    kit averaged over the track, not an EMA       net +5.2        222 -> 215 players
+    change                                        team split      outcome
+    grass masked out of the torso crop            net -0.6        dropped
+    plus a saturation split for achromatic kits   net -2.0        dropped
+    classify each sighting and vote per track     worse or equal  dropped
+    kit averaged over the track, not an EMA       net +5.2        SHIPPED
 
-The last is the interesting one. Averaging over the whole track IS a better estimator --
-the ceiling, measured as nearest-centroid against ground-truth centroids, goes 86.0 -> 92.0
-on SNGS-067, 92.1 -> 97.4 on SNGS-116 and 81.4 -> 86.0 on SNGS-147, because `color` is an
-exponential average with a window of about five sightings and answers "which kit is this
-track wearing NOW", which is the right question for the next frame's match and the wrong
-one for which team it is on. Combined with the axis search it gives the best team split of
-any configuration tried, best-of-both on all five clips. And it still loses at the board,
-because SNGS-060 -- which has no ground truth, so no team-split number can see it --
-collapses under it even across three axes. Measured again with the least-crowded fallback
-underneath, SNGS-060 survives -- and the boards still come out behind the shipping answer,
-223 players to 226 and 1976.1 player-seconds to 2087.1, losing the eleven-a-side board on
-SNGS-067. Twice measured, not shipped. What it establishes is that the kit FEATURE is not
-the binding constraint and the cut is.
+The last one shipped, and only on the third measurement. Averaging over the whole track is
+the better estimator: the ceiling, as nearest-centroid against ground-truth centroids, goes
+86.0 -> 92.0 on SNGS-067, 92.1 -> 97.4 on SNGS-116 and 81.4 -> 86.0 on SNGS-147. `color` is
+an exponential average over about five sightings and answers "which kit is this track
+wearing NOW" -- the right question for the next frame's match and the wrong one for which
+team it is on, so `kit_mean` answers that one instead.
 
-**`team split` is not what the board sees, and that is why this section has two changes
-that scored well and were not shipped.** `ft score` measures team accuracy over samples
-across EVERY track; a board fields the twenty or so best-covered ones. Relabelling
-fragments that never reach a board moves the first number and not the second. Counting
-fielded players on the wrong side instead, on the five clips with ground truth:
+It was rejected twice first. On its own it collapses SNGS-060, which the least-crowded
+fallback then fixes; and on the five clips that had ground truth it still looked like a
+regression, which is what the next paragraph is about. It fields three players fewer and
+5% fewer player-seconds, and puts twelve fewer of them on the wrong side. A player on the
+wrong side is worse than an absent one: it is an assertion the footage contradicts, and a
+coach has to notice it before they can correct it.
 
-    configuration                    fielded players on the wrong side
-    cap + axis search (shipping)              15 of 92   (16%)
-    plus the whole-track mean                 16 of 89   (18%)
+**`team split` is not what the board sees, and neither is the player count.** `ft score`
+measures team accuracy over samples across EVERY track, and a board fields the twenty or so
+best-covered ones -- so relabelling fragments that never reach a board moves the metric and
+not the product. `player-seconds` has the opposite blind spot: it counts how much was
+watched, never whether it was attributed to the right side, so a board that swaps three
+wrong players for three right ones scores identically. The measure that answers the
+question is FIELDED PLAYERS ON THE WRONG SIDE, and it needs ground truth for every clip
+that has a board:
 
--- which agrees with the boards and disagrees with the +30 points of team split the mean
-wins. Anything about team assignment has to be judged this way or it is measuring the part
-of the pipeline the product throws away. 16% is also the honest size of what is left: three
-players a board, on the wrong side.
+    configuration                fielded   wrong   correct
+    cap + axis search              214       44      170
+    plus the whole-track mean      211       32      179
+
+**Measured on five clips this reverses, and the five say the opposite of the eleven.** On
+SNGS-067/110/116/121/147 alone the mean scores 16 of 89 against 15 of 92 and looks like a
+regression; across all eleven it removes twelve wrong players for three fielded ones. Six
+clips had no `truth.json` for no better reason than that `ft truth` had never been run on
+them, though every one had its `Labels-GameState.json` on disk the whole time. The mean was
+rejected twice on that subset before the missing six were generated. Judge team assignment
+on the whole benchmark or not at all.
+
+15% is the honest size of what is left: two or three players a board on the wrong side.
 
 **And this one reaches the board**, which is what four of the last five per-frame wins did
 not do. Eleven clips, same flags both sides:
