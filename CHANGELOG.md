@@ -1,3 +1,9 @@
+## v0.15.0 (2026-09-05)
+
+### Feat
+
+- **teams**: cluster on the whole track's kit, not the tracker's rolling average
+
 ## v0.14.1 (2026-09-05)
 
 ### Fix
