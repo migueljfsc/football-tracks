@@ -1526,10 +1526,44 @@ reference signatures, at 120 of SNGS-116's switch frames the correct detection's
                    the two kits are separable       no overlap at all
 
 The detection exists, its appearance is right, and the signature discriminates. The failure is
-therefore in the ASSIGNMENT rather than in any of the evidence it is given, and no amount of
-work on the appearance model will reach it. That is where the next attempt has to start:
-whether the correct pairing is inside the distance gate at all, and whether the optimal
-assignment is sacrificing it to a track that wants it more.
+therefore in the ASSIGNMENT rather than in any of the evidence it is given.
+
+**Instrumenting the cost matrix says which part of the assignment**, and it is none of the
+suspects. Every cost enquiry on SNGS-116 was logged and joined against ground truth:
+
+    correct pairing gated out or never offered      1%
+    reachable, priced, and passed over             87%
+    right player genuinely undetected              12%
+
+    of those passed over: the wrong one was priced LOWER   91%
+                          the solver sacrificed it          9%
+    median cost   correct 0.290   taken 0.300
+
+So the gate is not it and the global assignment is not it. **The cost function is simply
+indifferent** -- a 3% margin between the right answer and the wrong one, decided by noise.
+
+**And the colour term contributes nothing to that margin, for a circular reason.** At those
+same moments the track sits 0.22 from the correct player and 0.24 from the one it takes, even
+though 59 of the 77 are OPPOSITE kits. A track's colour is learned from the identity it exists
+to verify: after a switch it follows the wrong player through dozens of unambiguous frames and
+correctly learns their kit. Two more attempts died on that:
+
+* **Refusing to learn from a contested frame** (a margin the chosen pairing must beat before
+  the kit updates) changes nothing at all, at any threshold from 0.05 to 0.4. The corruption
+  does not happen in the contested frame; it happens in the clear ones afterwards.
+* **A global team reference** -- kits fitted over every detection in the clip with
+  `split_kits`, each track carrying a running MAJORITY side rather than a rolling average, and
+  a penalty for pairing across it -- moves purity by less than two points in either direction
+  and makes switches consistently WORSE: SNGS-116 goes 250, 253, 258, 275, 277 as the penalty
+  rises, because a track that refuses an opponent dies and respawns instead.
+
+Five attempts, no gain, and they rule out the whole appearance family: weighting, gating,
+freezing, gating the learning, and replacing the signature with a global one. What is left is
+the term that actually decides these matches. `dist / gate` is the dominant cost, the two
+candidates are under a metre apart, and the prediction that separates them carries its own
+error -- which is why VELOCITY_SMOOTHING was worth 3.4 points (D56) when none of this was worth
+anything. A better motion model, or an association that defers the decision across frames
+instead of committing every frame, is where the next attempt belongs.
 
 **D35 — snapping the camera model onto the painted lines improves the camera model and
 makes the tracks worse. Off by default.** Propagation is open-loop, so `refine.py` closes

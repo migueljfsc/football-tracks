@@ -293,11 +293,16 @@ work/calib/                 segmenter weights and training logs. Gitignored — 
   which is the outlier. On the crowded clips it is 3.5:1 opposite kit and 70% immediate, so
   `MAX_AGE_S` is not the lever there.
 - **The kit signature is clean and NOTHING built on it fixes the switch** (D61). Same-team pairs
-  reach 0.62 at p90, opposite-team start at 0.68 at p10 — no overlap. Weighting it harder does
-  nothing, a hard gate at 0.65 lifts purity and loses on the board, and freezing the signature
-  so the gate has something clean to test costs up to 5 points of purity. Adapting to a player
-  and telling players apart are the same mechanism pulling opposite ways; `0.8 * prior + 0.2 *
-  seen` is already the compromise. Do not re-open this without a new mechanism.
+  reach 0.62 at p90, opposite-team start at 0.68 at p10 — no overlap. FIVE attempts failed:
+  weighting it harder does nothing, a hard gate lifts purity and loses on the board, freezing
+  the signature costs 5 points, refusing to learn from contested frames changes nothing, and a
+  global team reference makes switches worse at every penalty. A track's colour is learned from
+  the identity it verifies, so after a switch it correctly learns the wrong player's kit in the
+  clear frames afterwards. The appearance family is exhausted; the lever is `dist / gate`,
+  which decides these matches at a 3% margin.
+- **A track that refuses a match does not survive, it respawns** (D61). Anything that makes an
+  association impossible trades a switch for a fragment, and `score.id_switches` counts both —
+  which is why four of the five attempts above lifted purity while making the board worse.
 - **A stationary ball is only wrong if it is stationary somewhere ODD** (D60). `_painted_spots`
   cannot lower its floor globally: a ball placed for a corner holds a square metre for a fifth
   of a clip, the same share as the false positives that were freezing SNGS-147's and SNGS-151's
