@@ -1,3 +1,9 @@
+## v0.13.0 (2026-09-05)
+
+### Feat
+
+- **calib**: drop a fit that contradicts the frames before it
+
 ## v0.12.0 (2026-09-04)
 
 ### Feat
