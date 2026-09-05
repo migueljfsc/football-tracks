@@ -1,3 +1,9 @@
+## v0.14.1 (2026-09-05)
+
+### Fix
+
+- **teams**: fall back to the least crowded split, not the best-scoring one
+
 ## v0.14.0 (2026-09-05)
 
 ### Feat
