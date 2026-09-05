@@ -21,6 +21,7 @@ Two things this cannot do, and both are measured rather than assumed:
 from __future__ import annotations
 
 import json
+import math
 from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
@@ -140,6 +141,11 @@ def motions(frames_dir: Path, frames: list[int], *, cache: Path | None = None) -
     return out
 
 
+def _project(h: H, x: float, y: float) -> tuple[float, float]:
+    p = cv2.perspectiveTransform(np.array([[[x, y]]], dtype=np.float64), h)
+    return (float(p[0][0][0]), float(p[0][0][1]))
+
+
 def carry(h_prev: H, d: H) -> H | None:
     """Move a homography onto the next frame.
 
@@ -201,6 +207,68 @@ def _read(frames_dir: Path, f: int) -> MatLike | None:
 # frames and degrades sharply after; 50 frames is two seconds, well inside that, and it
 # costs little because most gaps are short.
 DEFAULT_MAX_CARRY = 50
+
+
+# Where a frame is probed to compare two camera models, in image fractions. The centre
+# and the four quarter-points: near the middle the models always agree, and at the corners
+# the horizon sends the answer to infinity for both.
+AGREEMENT_PROBES = ((0.25, 0.25), (0.75, 0.25), (0.25, 0.75), (0.75, 0.75), (0.5, 0.5))
+
+# How far two camera models may disagree, in metres, before the newer one is refused.
+#
+# The segmenter's failure is not coverage and not accuracy -- it solves as many frames as
+# the ground-truth annotations do (615 against 613 on SNGS-116) and its fits are as good
+# on the frames both solve. It is a tail: 84 of SNGS-147's 645 fitted frames put players
+# more than 3 m out, and those wreck recall and poison anything carried through them.
+#
+# The fit's own residual cannot find them, and says so in its docstring: it is in-sample,
+# so a frame with few constraints is confidently wrong and still scores well. Measured,
+# good frames sit at 0.47 and bad at 0.76 -- no separation. The previous fit, walked
+# forward by MEASURED motion, is independent of this frame's fit and separates them by
+# twenty times: 0.17-0.34 m against 3.2-4.8 m.
+AGREEMENT_M = 2.0
+
+
+def winnow(
+    direct: dict[int, H | None],
+    motion: dict[int, H],
+    *,
+    gate: float = AGREEMENT_M,
+    max_age: int = DEFAULT_MAX_CARRY,
+    width: int = 1920,
+    height: int = 1080,
+) -> dict[int, H | None]:
+    """Direct fits, with those that contradict the frames before them dropped.
+
+    Chained rather than pairwise: the reference is the last fit ACCEPTED, so a wrong fit
+    never becomes the standard its neighbours are judged against. The reference is given
+    up on after `max_age` frames, because a carry drifts and a stale one starts refusing
+    good fits for disagreeing with it.
+    """
+    probes = [(fx * width, fy * height) for fx, fy in AGREEMENT_PROBES]
+    out: dict[int, H | None] = {}
+    ref: tuple[int, H] | None = None
+    for f in sorted(direct):
+        h = direct[f]
+        if h is None:
+            out[f] = None
+            continue
+        if ref is not None and f - ref[0] <= max_age:
+            carried: H | None = ref[1]
+            for g in range(ref[0] + 1, f + 1):
+                d = motion.get(g)
+                carried = None if carried is None or d is None else carry(carried, d)
+                if carried is None:
+                    break
+            if carried is not None:
+                gaps = [math.dist(_project(h, x, y), _project(carried, x, y)) for x, y in probes]
+                gaps.sort()
+                if gaps[len(gaps) // 2] > gate:
+                    out[f] = None  # contradicts the frames before it
+                    continue
+        out[f] = h
+        ref = (f, h)
+    return out
 
 
 def fill(

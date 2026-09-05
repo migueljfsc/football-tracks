@@ -308,6 +308,8 @@ def homographies(
     segmenter's."""
     if mode == "segmenter":
         direct = segmenter_homographies(frames_dir, max_residual_m=max_residual_m)
+        if motions is not None:
+            direct = stage1_propagate.winnow(direct, motions)
         # No carry by default, which is the mode's whole claim. A SHORT carry is offered
         # because refusals turned out to be the binding constraint -- half of SNGS-121 is
         # declined -- and bridging a two-frame gap is not the unbounded chain D19

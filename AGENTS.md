@@ -284,6 +284,19 @@ work/calib/                 segmenter weights and training logs. Gitignored — 
 - **Only corners and kick-offs have a canonical position** (D59). Kick-offs sit on the centre
   spot to 1.2 m; direct free-kicks are taken wherever the foul was. A positional prior covers
   13 of the 19 set pieces in this dataset and cannot be stretched to the rest.
+- **Stage 1 is the biggest lever, and it was the last place anyone looked** (D62). The
+  homography loses 23-47% of correctly detected players; ground-truth registration is worth
+  12-21 points of recall and precision. Measure the funnel before optimising a stage.
+- **The segmenter is at parity with the annotations on solvability AND accuracy** (D62). It
+  solves 615 frames where the ground-truth lines solve 613, and beats them for players within
+  2 m. Retraining for coverage would buy one to nine frames a clip. Its defect is a TAIL of
+  confidently wrong fits.
+- **An in-sample residual cannot judge the fit that minimised it** (D62). Good frames score
+  0.470 and bad 0.756 — no separation. The previous fit walked forward by measured motion is
+  independent evidence and separates them twenty to one. That is `winnow`.
+- **A bad camera frame throws every player at once**, so it tears tracks together: winnowing
+  them took SNGS-147's identity purity from 69.3% to 90.3% (D62), which five direct attempts on
+  the tracker could not do (D61).
 - **At a steal the tracker has the right answer and does not take it** (D61). The correct player
   is detected on 93-98% of switch frames and their kit still reads as their own team 84% of the
   time. Detection and appearance are both fine; the failure is in the ASSIGNMENT. Measure that

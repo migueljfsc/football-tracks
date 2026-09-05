@@ -157,3 +157,44 @@ def test_observed_error_ignores_a_corner_the_camera_cannot_see() -> None:
     near[0, 2] = 0.5  # half a metre of pan, everywhere on screen
     got = calibration.observed_error(truth, near, (HGT, W, 3))
     assert 0.4 < got < 0.6
+
+
+def _scaled(tx: float = 0.0) -> npt.NDArray[np.float64]:
+    """A camera model mapping pixels to metres at a tenth, optionally shifted."""
+    return np.array([[0.1, 0.0, tx], [0.0, 0.1, 0.0], [0.0, 0.0, 1.0]], dtype=np.float64)
+
+
+def test_a_fit_agreeing_with_the_frame_before_it_is_kept() -> None:
+    direct: dict[int, npt.NDArray[np.float64] | None] = {1: _scaled(), 2: _scaled(), 3: _scaled()}
+    motion = dict.fromkeys((2, 3), np.eye(3, dtype=np.float64))
+    assert all(v is not None for v in prop.winnow(direct, motion).values())
+
+
+def test_a_fit_contradicting_the_frame_before_it_is_dropped() -> None:
+    """The segmenter's failure is a tail of confidently wrong fits, and its own residual
+    cannot see them: it is in-sample. The previous fit, walked forward by measured
+    motion, is independent evidence."""
+    direct: dict[int, npt.NDArray[np.float64] | None] = {
+        1: _scaled(),
+        2: _scaled(40.0),
+        3: _scaled(),
+    }
+    motion = dict.fromkeys((2, 3), np.eye(3, dtype=np.float64))
+    out = prop.winnow(direct, motion)
+    assert out[1] is not None
+    assert out[2] is None, "a fit 40 m from its neighbour is not a camera model"
+    assert out[3] is not None, "a rejected fit must not become the standard"
+
+
+def test_a_gap_is_left_alone() -> None:
+    direct: dict[int, npt.NDArray[np.float64] | None] = {1: _scaled(), 2: None, 3: _scaled()}
+    motion = dict.fromkeys((2, 3), np.eye(3, dtype=np.float64))
+    out = prop.winnow(direct, motion)
+    assert out[2] is None and out[3] is not None
+
+
+def test_a_stale_reference_stops_judging() -> None:
+    """A carry drifts, so an old reference starts refusing fits for disagreeing with it."""
+    direct: dict[int, npt.NDArray[np.float64] | None] = {1: _scaled(), 500: _scaled(40.0)}
+    motion = {f: np.eye(3, dtype=np.float64) for f in range(2, 501)}
+    assert prop.winnow(direct, motion, max_age=50)[500] is not None

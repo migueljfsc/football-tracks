@@ -1565,6 +1565,68 @@ error -- which is why VELOCITY_SMOOTHING was worth 3.4 points (D56) when none of
 anything. A better motion model, or an association that defers the decision across frames
 instead of committing every frame, is where the next attempt belongs.
 
+**D62 — the camera model is the biggest lever in the pipeline, and the segmenter's problem is
+neither coverage nor accuracy but a tail of confidently wrong fits.** Measuring where
+ground-truth players are lost, rather than following the last visible defect:
+
+    clip        detected in the image   projected within 2 m   the homography loses
+    SNGS-116          92.0%                   71.3%                  22.6%
+    SNGS-110          83.2%                   44.3%                  46.8%
+    SNGS-147          91.1%                   69.3%                  23.9%
+
+Detection is not the constraint. Swapping in ground-truth registration and changing nothing
+else is worth 12 to 21 points:
+
+    clip        seed recall/precision   truth recall/precision
+    SNGS-110       42.5 / 53.3             60.8 / 74.9
+    SNGS-147       72.8 / 72.5             85.3 / 85.8
+    SNGS-116       66.0 / 74.6             70.0 / 77.4
+
+**Two obvious explanations are both wrong, and measuring them first would have saved a day.**
+The segmenter is NOT short of coverage: it solves 615 frames on SNGS-116 where the ground-truth
+LINES solve 613, 428 against 419 on SNGS-110, 645 against 652 on SNGS-147. The frames neither
+can solve are views with too few markings to fit anything, so training could recover one to
+nine frames a clip. And it is not inaccurate: on the frames both solve it matches or beats the
+annotations, 92.7% of players within 2 m against 89.0% on SNGS-116.
+
+What it has is a TAIL. On SNGS-147, 84 of 645 fitted frames put players more than 3 m out, with
+a p90 of 10.81 m against the annotations' 2.41 m. Those frames wreck recall, and bridging them
+by carrying makes it worse rather than better -- carry 5 adds 36 frames to SNGS-147 and costs
+eight points of precision, because a carry from a bad anchor is bad immediately.
+
+**The fit's own residual cannot find them, and its docstring says why.** It is in-sample: the
+fit was chosen to minimise roughly that quantity, so a frame with few constraints is
+confidently wrong and scores well. Measured, good frames sit at 0.470 and bad at 0.756, and a
+gate at 1.0 m keeps 100% of the good and 87% of the bad. Nor is the homography self-evidently
+wrong: good frames also project image corners to absurd distances, because the horizon maps to
+infinity.
+
+**The previous fit, walked forward by measured motion, is independent of this frame's fit and
+separates them by twenty times.**
+
+    clip        neighbour disagreement, good   bad      gate 2.0 m keeps
+    SNGS-147          0.17 m median            4.44 m   96% of good, 35% of bad
+    SNGS-116          0.34 m                   4.80 m   99% of good, 50% of bad
+    SNGS-110          0.31 m                   3.22 m   96% of good, 25% of bad
+
+`stage1_propagate.winnow` applies it, chained so a rejected fit never becomes the standard its
+neighbours are judged against, and with the reference expiring after `DEFAULT_MAX_CARRY` because
+a stale carry drifts and starts refusing good fits. On segmenter mode it is a large per-frame
+win:
+
+    SNGS-147   recall 52.5 -> 48.7%   precision 75.6 -> 94.1%   purity 69.3 -> 90.3%
+
+90.3% identity purity is the best figure in this repo, and it came from stage 1. Five direct
+attempts on the tracker could not move purity at all (D61); removing the frames where the
+camera model throws every player at once did. That is the lesson worth keeping.
+
+**And the board does not care.** Within segmenter mode the gate improves two of three boards and
+loses the third, for a net of -0.7 observed player-seconds. Segmenter mode still loses to seed
+mode overall, because 48.7% recall fields thin rosters -- SNGS-147 comes out with one home
+player. So the gate is kept as a strict improvement to a mode that is not the default, and it
+does NOT change which mode to use. The 12-to-21-point prize from truth-grade registration is
+still unclaimed, and neither carry, retraining, nor this gate claims it.
+
 **D35 — snapping the camera model onto the painted lines improves the camera model and
 makes the tracks worse. Off by default.** Propagation is open-loop, so `refine.py` closes
 the loop: project the model's markings into the frame, find the paint they should be lying
