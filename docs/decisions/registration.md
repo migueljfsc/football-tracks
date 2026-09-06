@@ -794,3 +794,71 @@ ever reported it.
 finds 96.7% of visible players on SNGS-151 and 97.3% on SNGS-060 -- the clip that produces the
 best board and the one that produces the worst. Whatever separates those two boards, it is not
 detection.
+
+**D68 — the two registrations were joined, and the join makes no board better.** D67 asked for
+one thing: segmenter accuracy at seed coverage. `--mode hybrid` is it. The segmenter's fits are
+winnowed (D62), then refused if they sit further than five metres from where the seed's own
+chain says the camera is, then bled into that chain at a twentieth of the difference per frame
+rather than replacing it. `anchor_chain` is the filter; the carry supplies the motion and the
+anchors supply the position.
+
+Measured with `ft reg-eval`, which is the number D67 said nobody had ever reported — the share
+of ALL frames the ground truth can judge, with a frame that has no homography counted as a miss
+rather than skipped:
+
+    clip       registered           within 1 m / 2 m / 5 m of the annotated camera
+               seed  seg  hybrid    seed            segmenter       hybrid
+    SNGS-147   100%  82%   100%     55  62  97      64  81  81      63  86  96
+    SNGS-116   100%  97%   100%     39  51  99      48  68  96      46  59  98
+    SNGS-121   100%  80%   100%     85  85  85      62  74  74      84  84  85
+    SNGS-060   100%  85%   100%     96 100 100      69  79  83      75  89 100
+    SNGS-151   100%  64%   100%     73  85  93      21  49  63      24  73  93
+
+**It does what it was built to do on the two clips whose seed chain drifts** — SNGS-147 gains
+24 points inside two metres and SNGS-116 gains eight — and it cannot help the three where the
+seed is already better than the segmenter. There is no way to tell those apart from inside the
+pipeline: the near-seed disagreement between the two sources, which ought to say which is
+wrong, is 0.50 m on the clip where anchoring helps most and 1.16 m on the other one where it
+helps, against 0.69 m on the clip it hurts most.
+
+**Anchoring by REPLACEMENT is a per-frame win and a per-track disaster, and the mechanism is
+worth keeping.** Every anchor moves the whole camera model at once, so a standing player takes
+a step. Measured as the p90 metres a fixed point moves between adjacent frames:
+
+    anchor rate   jitter p90        SNGS-147 tracks
+    1.00 (hard)   0.27 - 0.85 m     precision 74.2 -> 58.9%, teams 79.4 -> 60.2%
+    0.05          0.02 - 0.05 m     precision 74.2 -> 71.2%, teams 79.4 -> 61.0%
+    seed          0.00 m            precision 74.2%,         teams 79.4%
+
+A twentieth per frame removes the jitter and keeps most of the registration gain. It does not
+recover the tracks, which is the finding.
+
+**Through the tracks and then through the board, it is neutral at best.** `ft auto --interval-s
+0` for both, scored the same way — and the interval matters: comparing a file written at 0.1 s
+against one written at 0 measures the grid and not the pipeline, which cost an hour here:
+
+    clip       recall        precision     position error   purity
+    SNGS-147   70.1 -> 66.4  74.2 -> 71.2  0.71 -> 0.78 m   77.2 -> 75.7%
+    SNGS-116   65.4 -> 64.1  78.2 -> 75.0  0.61 -> 0.51 m   72.9 -> 74.5%
+    SNGS-121   71.7 -> 55.3  74.1 -> 57.1  1.03 -> 0.63 m   71.9 -> 74.5%
+    SNGS-060   89.7 -> 89.6  92.8 -> 92.6  0.55 -> 0.74 m   79.6 -> 79.4%
+    SNGS-151   53.3 -> 50.8  59.2 -> 56.3  0.70 -> 1.08 m   85.3 -> 87.0%
+
+And through `pnpm board`, in observed player-seconds — coverage times duration, the thing the
+board is actually built from: SNGS-060 347 -> 348, SNGS-116 212 -> 212, SNGS-147 38 -> 35,
+SNGS-151 179 -> 159, SNGS-121 **303 -> 117**. Nothing gained, and one clip lost two thirds of
+its passage.
+
+**So `--mode seed` still ships**, and hybrid is kept the way `--snap` is: implemented, measured,
+off. What would change the answer is a segmenter that beats the drift on every clip rather than
+two of five — its per-clip accuracy runs from 0.35 m to 1.3 m and nothing in the file says
+which clip you are on. That is the coverage-and-accuracy training problem D67 describes, and
+this closes the question of whether the plumbing around it was what was missing. It was not.
+
+**Two measurement bugs found on the way, both older than this experiment.** `max_carry=None`
+meant "uncapped" in `fill` and "carry nothing" in the segmenter branch of `auto.homographies`,
+and `--carry -1` is the CLI default — so every segmenter number ever recorded, D67's included,
+carried nothing whatever was asked for, and asking for a carry was impossible. And
+`schema/tracks.schema.json` never declared `source.intervalS`, which the writer has emitted and
+Pitchboard has read for eleven releases: every shipped file was invalid against its own
+contract, because `test_contract.py` checked the top level and the tracks and never `source`.

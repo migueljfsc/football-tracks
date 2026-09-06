@@ -106,6 +106,12 @@ Each of these cost a day. Where one names a decision, the full account is in
 - **`pitch.py` is for looking, never for measuring.** It draws; `pitch.model()` is the one
   description of the markings.
 - **A carried homography drifts without bound and never announces it** (D18).
+- **`--carry -1` is uncapped, `--carry 0` is none**, and until D68 the segmenter branch read the
+  first as the second — so every segmenter measurement in this repo carried nothing, whatever
+  was asked for. Carrying off a learned fit is `--mode hybrid`.
+- **Replacing a carried homography with a fitted one moves every player at once.** A per-frame
+  anchor is a per-frame win and a per-track loss; correct a chain towards an anchor a twentieth
+  at a time (`anchor_chain`), never in one step (D68).
 
 ### Tracking
 
@@ -134,8 +140,17 @@ Each of these cost a day. Where one names a decision, the full account is in
 
 ### Measuring
 
-- **Judge a change by `boardFromTracks`, never by a per-frame metric alone** (D36). Six separate
-  per-frame wins have failed to reach the board.
+- **Judge a change by the BOARD, never by a per-frame metric alone** (D36). Seven separate
+  per-frame wins have now failed to reach it, D68 included. The board is one command in the
+  sibling repo: `pnpm board ../football-tracks/work/<clip>/tracks.json`, which runs the real
+  importer and prints the roster, the window, the observed player-seconds, the travel and the
+  curves. Do not write another throwaway script for it.
+- **`ft reg-eval` is the registration number; `ft calib-eval` is not.** The first counts a frame
+  with no homography as a miss, over every frame the ground truth can judge. The second scores
+  only the frames a model already solved, which rewards refusing the hard ones (D67).
+- **Two tracks files written at different `--interval-s` cannot be compared.** `ft score` counts
+  samples, so the one on a 0.1 s grid scores half the recall of the same pipeline at 0. Compare
+  at `--interval-s 0`, which is what `ft bench` does.
 - **`observed_error` is conditioned on the frames a model already solves**, so it rewards
   refusing the hard ones (D67). For registration, measure the share of ALL frames.
 - **One variable per run.** Runs 1-3 each moved two and none can be read.

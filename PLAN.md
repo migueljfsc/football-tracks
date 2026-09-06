@@ -84,27 +84,29 @@ frames a model already solves, so it rewards refusing the hard ones. The full ac
 five runs is in [`docs/decisions/registration.md`](docs/decisions/registration.md) under D36 and
 D67; what they established is in [`docs/benchmark.md`](docs/benchmark.md).
 
-### What to do next — registration that keeps segmenter accuracy at seed coverage
+### Anchoring was built and measured, and it does not reach the board (D68)
 
-This is the months-scale project and it is the only one with measured reason to expect a gain.
-Nothing else on this list is close.
+The move this section asked for — propagate, and re-anchor on segmenter fits — is
+`ft auto --mode hybrid`. Fits are winnowed (D62), refused if they contradict the seed's own
+chain, and then bled into it at a twentieth per frame rather than replacing it, because
+replacing moves every player at once: hard anchors put a 0.27-0.85 m step between adjacent
+frames and took SNGS-147 from 74.2% precision to 58.9%.
 
-**The goal.** Every frame registered, and registered within about a metre. Today one approach
-gives the first and the other gives the second. The shape of the answer is to propagate through
-frames with no markings and RE-ANCHOR on segmenter fits wherever the pitch is visible, so drift
-is corrected as it appears rather than accumulating to eight metres by the end of a clip.
+**It registers what it promised and delivers no board.** On the two clips whose seed chain
+drifts it is a real gain — SNGS-147 goes from 62% to 86% of frames inside two metres, SNGS-116
+from 51% to 59% — and on the three where the seed is already better than the segmenter it can
+only lose. Through `pnpm board`, in observed player-seconds: 060 347 -> 348, 116 212 -> 212,
+147 38 -> 35, 151 179 -> 159, 121 303 -> 117. `--mode seed` still ships.
 
-**Measure `registered within N metres, as a share of ALL frames`.** Not `observed_error`, which
-is conditioned on the frames a model already solves and therefore rewards refusing the hard
-ones. Every run so far reports the wrong number, which is how a segmenter three times cleaner
-than the shipping path was concluded to be worse than it.
+**The constraint is therefore the segmenter itself**, not the plumbing around it. Its per-clip
+accuracy runs 0.35-1.3 m and nothing available at inference says which clip you are on — the
+near-seed disagreement between the two sources, the obvious candidate, does not separate them.
 
-**Re-anchoring has been tried once and made things worse, so it has to be gated.** `--snap`
-refits each carried homography onto the painted lines it can see and is a plain regression on
-tracks (D35). What is different now is `winnow` (D62), which judges a fit by whether the
-PREVIOUS fit walked forward by measured motion agrees with it, separates good from bad by
-twenty to one, and took SNGS-147's identity purity from 69.3% to 90.3%. An anchor that has to
-pass winnow is not the anchor D35 measured.
+**Two instruments came out of this and both are new.** `ft reg-eval` reports *registered within
+N metres as a share of ALL frames*, counting an unsolved frame as a miss — the number D67 said
+nobody had ever produced. `pnpm board` in the sibling repo runs a tracks file through the real
+importer and prints the roster, window, observed player-seconds, travel and curves; the table
+that decided six earlier changes was written by hand each time and thrown away.
 
 **What training would then be for.** Raising the share of frames the segmenter can fit at all,
 which is a coverage problem and not an accuracy one. The evidence on how:
@@ -116,7 +118,8 @@ which is a coverage problem and not an accuracy one. The evidence on how:
 
 **Not this:** another detector. Another segmenter run scored on `observed_error`. Another
 attempt on the tracker's colour -- identity purity has resisted seven (D61). Another pass at
-the ball -- its three faults are diagnosed and two are closed (D66).
+the ball -- its three faults are diagnosed and two are closed (D66). Another way of joining the
+seed to the segmenter -- that is D68, and the join is not what was missing.
 
 **Before any of it, one evening.** The stated bar for v0 is 70%: good enough that a coach
 corrects the board instead of drawing it. A coach has now seen four boards and the answer is
@@ -129,7 +132,7 @@ project is one fix away or several, and it costs nothing.
 | # | done when | est. |
 |---|---|---|
 | M0 | scaffold, stage 0, and the ground-truth path: `ft truth`, `ft render`, `ft score` | **done** |
-| M1 | reprojected pitch lines sit on the real lines | **the binding constraint** (D67); the bar it was scored against measured the wrong axis |
+| M1 | reprojected pitch lines sit on the real lines | **the binding constraint** (D67); anchoring the two sources together is built, measured and does not reach the board (D68) |
 | M2 | tracks survive 10s with few enough id switches to count | **partly**; stitching ships, purity 57-86% and stuck (D61) |
 | M3 | teams cluster cleanly | **done** (D63); 85% of fielded players on the right side |
 | M4 | **the top-down dot video looks like football** | `ft render` exists; never judged by eye |

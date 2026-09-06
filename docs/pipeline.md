@@ -52,7 +52,9 @@ changes when it lands: `calibration.homography` takes named polylines and does n
 found them.
 
 Until it does, a clip is registered from a human seed (`ft seed`), which works and is measured
-below.
+below. Joining the two — the segmenter's fits as anchors, the seed carried across the frames it
+refuses — is built as `ft auto --mode hybrid`, registers more of two clips of five within two
+metres, and reaches no board (D68). It is off for the same reason `--snap` is.
 
 Measured on SNGS-147, feeding it the ground-truth lines. `carry` is how many frames a
 homography may be propagated across gaps the solver cannot fill:

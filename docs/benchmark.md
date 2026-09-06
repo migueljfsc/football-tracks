@@ -124,6 +124,30 @@ failure does not occur measures nothing.** Colour looked useless for most of thi
 because it was swept on SNGS-147, whose steals happen after gaps where the right player
 is simply absent and no colour could have helped.
 
+### How much of a clip is registered, and how well
+
+`ft calib-eval` scores the frames a model solved. `ft reg-eval` scores the CLIP: every frame the
+ground truth can judge, with an unsolved one counted as a miss. The two answer different
+questions and the second is the one a board asks (D67). Share of judged frames whose camera
+model lands within one, two and five metres of the annotated one:
+
+| clip | judged | seed | segmenter | hybrid |
+|---|---|---|---|---|
+| SNGS-147 | 652 | 55 / 62 / 97 | 64 / 81 / 81 | 63 / 86 / 96 |
+| SNGS-116 | 613 | 39 / 51 / 99 | 48 / 68 / 96 | 46 / 59 / 98 |
+| SNGS-121 | 413 | 85 / 85 / 85 | 62 / 74 / 74 | 84 / 84 / 85 |
+| SNGS-060 | 627 | 96 / 100 / 100 | 69 / 79 / 83 | 75 / 89 / 100 |
+| SNGS-151 | 358 | 73 / 85 / 93 | 21 / 49 / 63 | 24 / 73 / 93 |
+
+Seeding registers every frame and the segmenter registers 64-97% of them, which is why the
+seed column can be beaten on accuracy and still make the better board. **The judged population
+is not the clip**: SoccerNet annotates lines on 358 of SNGS-151's 750 frames and 652 of
+SNGS-147's, so this table says nothing about the frames it cannot see.
+
+**The segmenter's accuracy is a property of the clip, not of the model.** 0.35 m on SNGS-147
+and 1.3 m on SNGS-151, from the same weights — and nothing available at inference tells you
+which one you are on (D68).
+
 ### The automatic path, measured
 
 `ft detect` then `ft auto --mode seed` runs the whole pipeline with **only frame one's
