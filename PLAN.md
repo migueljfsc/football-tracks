@@ -108,6 +108,31 @@ nobody had ever produced. `pnpm board` in the sibling repo runs a tracks file th
 importer and prints the roster, window, observed player-seconds, travel and curves; the table
 that decided six earlier changes was written by hand each time and thrown away.
 
+### What limits a board now is fragmentation, and it has a number
+
+How much of a real player's life the best SINGLE predicted track covers, on the shipping path,
+beside what the board makes of it:
+
+    clip       best-track coverage p50   real players on the board   window
+    SNGS-060            74%                       21                 29.2 s
+    SNGS-147            54%                       11                 11.6 s
+    SNGS-151            48%                       17                 17.8 s
+    SNGS-121            47%                       14                 20.2 s
+    SNGS-116            44%                       18                 21.6 s
+
+**The clip that makes the good board is the one whose tracks hold three quarters of a player;
+everywhere else half of each player's life is in some other fragment.** That is stage 2, and it
+caps what any window can field: the importer drops a track covering too little of the passage,
+so a player split in three arrives as nobody. Counting *real* players rather than shirts is what
+makes this visible -- a board fielding 21 shirts on SNGS-151 is 17 people.
+
+**SNGS-147's board was the importer, and that one is fixed.** Its 3.2-second board of nineteen
+shirts was eight real players seen for a second each: `MIN_COVERAGE` is a share of the window,
+so a shorter window inflates the roster and the chooser walked into it. Pitchboard now requires
+a player to be WATCHED for a second and a half, whatever share that is, and 147 comes out at
+11.6 seconds and eleven real players with ten of the eleven other boards unchanged to the byte.
+That was the last cheap board win; the rest is fragmentation.
+
 **What training would then be for.** Raising the share of frames the segmenter can fit at all,
 which is a coverage problem and not an accuracy one. The evidence on how:
 
@@ -115,6 +140,11 @@ which is a coverage problem and not an accuracy one. The evidence on how:
   the one clip four earlier configurations could not move.
 - **More matches do not.** Run 3 multiplied them by seventy and made two clips of three worse.
 - **A bigger backbone is untried.** DeepLabv3 on MobileNetV3 was chosen to train on a laptop.
+
+**And the next lever is stage 2's continuation**, measured by best-track coverage above and
+judged on the board like everything else. Not the tracker's colour, which has resisted seven
+attempts (D61): the fragments to join are separated by TIME, and what says two of them are one
+player is where the second starts against where the first was going.
 
 **Not this:** another detector. Another segmenter run scored on `observed_error`. Another
 attempt on the tracker's colour -- identity purity has resisted seven (D61). Another pass at
