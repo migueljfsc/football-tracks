@@ -35,6 +35,11 @@ OUTLIER_RATIO = 2.0
 # track to be read as that goal's keeper rather than a player in a strange light.
 KEEPER_ZONE_M = 22.0
 
+# Most officials that may be picked out of one clip. A match has three on the pitch and
+# rarely more than two in shot, and the cap is what stops a player in strange light being
+# deleted: an odd kit is only read as an official while there is a slot left for one.
+MAX_REFEREES = 3
+
 # Most tracks of one side that may be in shot at once before the split is read as having
 # collapsed. A team fields eleven; the slack covers a keeper that was not pulled out as an
 # outlier, somebody on the touchline, and two fragments either side of a one-frame break.
@@ -128,8 +133,13 @@ def split_kits(
     return best if best is not None else labelling(scored[0][1], scored[0][2])
 
 
-def _outliers(points: Vec, labels: npt.NDArray[np.int_], ratio: float) -> npt.NDArray[np.bool_]:
-    """Which kits sit too far from their own group to belong to either team."""
+def _oddness(points: Vec, labels: npt.NDArray[np.int_]) -> Vec:
+    """How far each kit sits from its own group, as a multiple of the median distance.
+
+    Returned as the ratio rather than a verdict because two things are decided from it and
+    they need different amounts of it: a goalkeeper is whichever odd kit stands in a goal,
+    and an official is the oddest few that do not.
+    """
     centres = np.array(
         [
             points[labels == k].mean(axis=0) if np.any(labels == k) else points.mean(axis=0)
@@ -139,8 +149,8 @@ def _outliers(points: Vec, labels: npt.NDArray[np.int_], ratio: float) -> npt.ND
     d = np.linalg.norm(points - centres[labels], axis=1)
     median = float(np.median(d))
     if median <= 0:
-        return np.zeros(len(points), dtype=np.bool_)
-    return np.asarray(d > ratio * median, dtype=np.bool_)
+        return np.zeros(len(points), dtype=np.float64)
+    return np.asarray(d / median, dtype=np.float64)
 
 
 def _crowding(
@@ -209,15 +219,25 @@ def assign(
     # A kit far from both teams, standing near a goal, is that goal's keeper. Both
     # halves matter: colour alone catches a player in odd light, and position alone
     # catches every defender on a goal line.
-    odd = _outliers(points, first, OUTLIER_RATIO)
-    keeper = np.array(
+    oddness = _oddness(points, first)
+    odd = oddness > OUTLIER_RATIO
+    in_a_goal = np.array(
         [
-            bool(odd[i])
-            and (mean_x[t.id] <= KEEPER_ZONE_M or mean_x[t.id] >= PITCH_LENGTH - KEEPER_ZONE_M)
-            for i, t in enumerate(usable)
+            mean_x[t.id] <= KEEPER_ZONE_M or mean_x[t.id] >= PITCH_LENGTH - KEEPER_ZONE_M
+            for t in usable
         ]
     )
+    keeper = odd & in_a_goal
 
+    # An odd kit standing where no keeper stands is an official. They are the one thing on
+    # the pitch wearing neither team's colours and not tied to a goal, and left unnamed
+    # they reach the board as a player a coach has to delete. Only the oddest few, because
+    # colour alone also catches a player in strange light -- the same reason the keeper
+    # test asks for position as well.
+    #
+    # They stay in the clustering they are named out of. Removing three tracks moves the
+    # axis and the cut, and measured that way it cost four correct players to remove four
+    # officials; naming them afterwards leaves every other track's side exactly as it was.
     outfield = [t for i, t in enumerate(usable) if not keeper[i]]
     if len(outfield) >= 2:
         labels = split_kits(
@@ -226,6 +246,18 @@ def assign(
         )
     else:
         outfield, labels = usable, first
+
+    # Named against the FINAL split rather than the rough one that found the keepers: an
+    # outlier test is only as good as the model it measures distance from, and the first
+    # cut is a single unconstrained axis.
+    settled = _oddness(np.array([t.kit_mean for t in outfield], dtype=np.float64), labels)
+    at_a_goal = {t.id for i, t in enumerate(usable) if in_a_goal[i]}
+    candidates = [
+        i
+        for i in np.argsort(-settled)
+        if settled[i] > OUTLIER_RATIO and outfield[i].id not in at_a_goal
+    ]
+    referee = {outfield[i].id for i in candidates[:MAX_REFEREES]}
 
     sides = {}
     for k in (0, 1):
@@ -236,6 +268,9 @@ def assign(
     out: dict[int, TeamLabel] = {t.id: "unknown" for t in tracks}
     for t, lab in zip(outfield, labels, strict=True):
         out[t.id] = "home" if lab == left else "away"
+    for t in outfield:
+        if t.id in referee:
+            out[t.id] = "referee"
     for i, t in enumerate(usable):
         if keeper[i]:
             # The keeper of the goal they are standing in, whichever side that is.

@@ -333,3 +333,57 @@ def test_the_team_signature_is_the_whole_track_and_the_match_signature_is_not() 
 def test_a_track_that_never_showed_a_kit_has_no_mean_to_give() -> None:
     assert Track(id=1).kit_mean is None
     assert Track(id=2, color=np.array([1.0, 0.0])).kit_mean is not None
+
+
+def test_an_odd_kit_away_from_both_goals_is_an_official() -> None:
+    # A keeper is an odd kit standing in a goal; an official is an odd kit standing
+    # anywhere else. Left unnamed they reach the board as a player, and a coach deletes
+    # one on nearly every clip.
+    rng = np.random.default_rng(0)
+    tracks, mean_x = [], {}
+    for i in range(10):
+        kit = np.array([1.0, 0.0]) if i < 5 else np.array([0.0, 1.0])
+        tracks.append(
+            Track(
+                id=i,
+                observations=[obs(f, 100.0, 50.0) for f in range(6)],
+                color=kit + rng.normal(0, 0.01, 2),
+            )
+        )
+        mean_x[i] = 30.0 if i < 5 else 75.0
+    official = Track(
+        id=99, observations=[obs(f, 100.0, 50.0) for f in range(6)], color=np.array([0.5, 0.5])
+    )
+    tracks.append(official)
+    mean_x[99] = 52.5
+
+    sides = assign(tracks, mean_x, {t.id: [o.f for o in t.observations] for t in tracks})
+    assert sides[99] == "referee"
+    assert {sides[i] for i in range(5)} == {"home"} or {sides[i] for i in range(5)} == {"away"}
+
+
+def test_an_odd_kit_standing_in_a_goal_is_still_a_keeper() -> None:
+    # The same oddness, twenty metres from a goal line, is the case the referee rule must
+    # not steal: a keeper wears neither kit either.
+    rng = np.random.default_rng(0)
+    tracks, mean_x = [], {}
+    for i in range(10):
+        kit = np.array([1.0, 0.0]) if i < 5 else np.array([0.0, 1.0])
+        tracks.append(
+            Track(
+                id=i,
+                observations=[obs(f, 100.0, 50.0) for f in range(6)],
+                color=kit + rng.normal(0, 0.01, 2),
+            )
+        )
+        mean_x[i] = 30.0 if i < 5 else 75.0
+    keeper = Track(
+        id=99, observations=[obs(f, 100.0, 50.0) for f in range(6)], color=np.array([0.5, 0.5])
+    )
+    tracks.append(keeper)
+    mean_x[99] = 8.0
+
+    assert (
+        assign(tracks, mean_x, {t.id: [o.f for o in t.observations] for t in tracks})[99]
+        == "gkHome"
+    )

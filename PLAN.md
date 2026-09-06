@@ -15,19 +15,27 @@ does not know what a video is. See D3.
 Target accuracy for v0 is **70%** — good enough that a coach fixes the rest in the editor,
 which is cheaper than drawing it from nothing. This is a proof, not a product.
 
-## Where this stands — 4 September 2026
+## Where this stands — 6 September 2026
 
-**Nothing is running.** Four segmenter training runs are done and measured, plus a fitter
-change, a carry sweep and a quality gate.
+**Every one of the eleven benchmark clips now produces a complete board.** `ft auto --mode
+seed` is what ships, and through Pitchboard's importer it gives:
 
-**The headline is a negative result and it is the most useful thing here.** All of it improved
-per-frame accuracy — `observed_error` 1.33 m to 0.57 m, precision 40.4% to 91.4% — and all of
-it made the actual Pitchboard board worse: 19 players down to 10, and 15 m of player travel
-down to 4.9 m. The shipping `--mode seed` pipeline still makes the best board. Stage 1 is not
-what is limiting the product; stage 2's identity fragmentation is.
+    18-21 players of 22   12 scenes   23-115 curved runs   8.6-29.2 s windows
 
-Read this section, then D36 — starting from *"Measured through PITCHBOARD"*, which is the part
-that changes what to do next.
+Team assignment reached that in three steps on 5-6 September, all in D63: a split that fields
+more players than a pitch holds is refused, the cut is searched across three principal
+components rather than one, and it clusters on the whole track's kit rather than the tracker's
+rolling average. Boards went from 194 fielded players to 211, and from 21% of them on the
+wrong side to 15%.
+
+**The next question is not a metric.** The stated bar for v0 is 70% -- good enough that a coach
+corrects the board instead of drawing it. Roster is at 86-95% and teams at 85%, and nobody has
+yet opened a generated board in Pitchboard to ask whether correcting it actually beats drawing
+it. That is an evening's work and it is the only thing that decides whether this is done.
+
+**One line of attack is spent and should not be reopened without new evidence.** Five segmenter
+training runs have missed the 0.5 m bar set before any of them (the table below). Identity
+purity has now resisted seven attempts (D61). Neither is what limits the board today.
 
 ### The four runs
 
@@ -89,78 +97,30 @@ The weights on disk, kept so the table above stays reproducible rather than reme
 
 ### What to do next
 
-**0. Seeding was the biggest single defect in the pipeline and it is fixed (D55).** Recall
-72.6 / 66.0 / 71.6% across the three clips, against 41.3 / 67.3 / 15.8% this morning. Two
-measurement bugs were found underneath it -- read D55 before trusting any number in this
-document that predates it.
+**1. Look at a board.** Import a clip's `tracks.json` into Pitchboard and judge it as a coach
+would. `SNGS-060` is the fullest -- 21 players, 29 s, 115 curved runs. If correcting it beats
+drawing from nothing, v0 is done and the milestones below should say so; if it does not, what
+is wrong with it names the next piece of work, which is better than picking the next available
+metric. Everything measured since 4 September has been per-frame; this is not.
 
-**Then: stage 2 fragmentation is partly fixed; stage 1 is still not the thing to work on.**
-`stage2_stitch.py` joins fragments and is on by default (D53) — SNGS-116's board went from a
-5.8 s passage to 13.5 s. What remains is that a player is only in SHOT for about a third of a
-clip, which no amount of joining repairs and which sets the roster.
+**2. Judge team assignment on FIELDED PLAYERS ON THE WRONG SIDE, never on `team split`.**
+`ft score`'s team accuracy counts samples across every track, and a board fields the twenty
+best-covered ones -- so it moves on fragments the product discards. `player-seconds` has the
+opposite blind spot and cannot see a wrong shirt at all. Two changes were rejected on those
+metrics and one of them was right after all; see D63.
 
-**Was: nothing on stage 1 until stage 2 is fixed.** The segmenter work of 4 September improved
-every per-frame metric and made the Pitchboard board WORSE (D36). The board is the product;
-`observed_error` is not. Every variant, ground truth included, shatters 22 players into 43-88
-fragments and only five or six survive `MIN_COVERAGE` — so the binding constraint on a usable
-board is tracking identity, not the camera model. `ft auto --mode seed` remains what to ship.
+**3. Ground truth exists for all eleven clips.** `ft truth <clip>` had simply never been run on
+six of them. Anything measured on the five that had it -- which is most of this document --
+was measured on a subset that twice pointed the opposite way to the full set.
 
-Anything below this line was the plan BEFORE that was measured. It is kept because the
-reasoning is still sound about stage 1 in isolation, and stage 1 in isolation is no longer
-the thing to work on.
-
-**1. A run at 1920×1080.** GSR is natively 1080p, so this is the ceiling for the data with
-nothing resampled anywhere, and the trend says it is where the remaining gain is. It is
-cheaper than it sounds — the best checkpoint arrives at epoch 2, so it wants ~4 epochs, not
-14, which is about 2.5 hours rather than eight:
-
-```sh
-# set WIDTH, HEIGHT = 1920, 1080 and LINE_PX = 8 in calib.py first -- see the note there
-nohup uv run ft calib-train --stride 10 --epochs 4 --batch 2 --no-extra \
-  --holdout-games "7,8" > work/calib/train4.log 2>&1 &
-```
-
-`--no-extra` is not optional above 960×540: SN-Calibration-2023 is natively 960×540, so
-including it upsamples 82% of the set and trains the model to expect blur it will not meet at
-inference. Batch has to come down as the resolution goes up or MPS runs out of memory.
-
-**2. ~~Diagnose SNGS-116 instead of throwing pixels at it.~~ Done, and the premise was
-wrong.** It was resolution after all: run 5 fits it at 0.70 m. What is left to diagnose is the
-tail that came with it, on 147 and 121.
-
-Then re-score, always all three, against the bar set before any of this was trained — **beat
-0.5 m median `observed_error` and solve 80% of frames**:
-
-```sh
-uv run ft calib-eval SNGS-147 --stride 25
-uv run ft calib-eval SNGS-116 --stride 25
-uv run ft calib-eval SNGS-121 --stride 25
-```
-
-**If it clears the bar**, stage 1 needs no seed at all, drift and cut-detection stop being
-separate problems, and the manual path becomes the fallback D7 always intended it to be.
-
-**If it does not**, the honest retreat is to ship the segmenter as a seed *proposal* rather
-than a solver: it puts landmarks on the frame and a human drags the wrong ones. That is worth
-having at 0.67 m, and it is a smaller claim than the one D36 set out to make. Say which
-happened; do not quietly redefine the bar.
+**Not this:** another segmenter run, or another attempt on the tracker's colour. Both are
+documented dead ends (D36, D61). The one number still worth wanting is D62's 12-21 points from
+truth-grade registration, and it is not reachable by training a better segmenter.
 
 ### The three clips this is scored on
 
 `SNGS-147`, `SNGS-116`, `SNGS-121` — held out by match, never by clip (116 and 121 are both
 game 7, so a clip-level split would leak). `--holdout-games "7,8"` is what keeps them out.
-
-### State of the tree
-
-Uncommitted, and deliberately so — nothing here has been committed without being asked:
-
-    src/football_tracks/calib.py      index_calibration(), the trailing-space fix, 1280×720
-    src/football_tracks/cli.py        --extra / --extra-stride on calib-train
-    src/football_tracks/config.py     CALIB_DATA
-    tests/test_calib.py               three tests; 118 pass
-
-`work/` and `*.pt` are gitignored, so trained weights cannot be committed to a public repo by
-accident.
 
 ### Getting the training data back
 
@@ -473,12 +433,12 @@ of the pipeline is where the remaining error is.
 | # | done when | est. |
 |---|---|---|
 | M0 | scaffold, stage 0, and the ground-truth path: `ft truth`, `ft render`, `ft score` | **done** |
-| M1 | reprojected pitch lines sit on the real lines | **solver done**; detector at 0.67 m vs a 0.5 m bar (D36) |
-| M2 | tracks survive 10s with few enough id switches to count | 1–2 evenings |
-| M3 | teams cluster cleanly | 1 evening |
-| M4 | **the top-down dot video looks like football** | 1 evening |
-| M5 | numbers resolve for ~40% of tracks, matching the label ceiling | 1 evening |
-| M6 | Pitchboard's `src/import/` turns `tracks.json` into a `BoardDoc` | 1–2 weeks, other repo |
+| M1 | reprojected pitch lines sit on the real lines | **solver done**; detector at 0.70 m vs a 0.5 m bar after five runs (D36) |
+| M2 | tracks survive 10s with few enough id switches to count | **partly**; stitching ships, purity 57-86% and stuck (D61) |
+| M3 | teams cluster cleanly | **done** (D63); 85% of fielded players on the right side |
+| M4 | **the top-down dot video looks like football** | `ft render` exists; never judged by eye |
+| M5 | numbers resolve for ~40% of tracks, matching the label ceiling | **abandoned** (D32) |
+| M6 | Pitchboard's `src/import/` turns `tracks.json` into a `BoardDoc` | **done**; all eleven clips make a board |
 
 **M6 no longer waits for anything.** `ft truth` emits a real, correct `tracks.json` from
 ground truth with no CV in the loop, so the TypeScript reduction is built against genuine
@@ -1540,6 +1500,23 @@ reference signatures, at 120 of SNGS-116's switch frames the correct detection's
                    its kit still reads as its own   84%
                    the two kits are separable       no overlap at all
 
+**Two more attempts, after `kit_mean` existed, and both fail the same way.** The rolling
+average blending toward the thief was D61's stated cause, so comparing the association
+against the whole-track mean instead should have left something clean to match on. Switches
+rise on every clip tried -- SNGS-116 250 -> 268, SNGS-075 343 -> 353, SNGS-066 277 -> 287 --
+because over a long track the mean behaves like the frozen signature that already failed.
+
+Repairing a switch AFTERWARDS was the other shape worth trying, since that reasoning is what
+makes `stage2_stitch` work. The structure is wrong for it. Of the tracks that hold more than
+one true identity, only a quarter hold exactly two -- 6 of 24 on SNGS-116, 6 of 31 on
+SNGS-075, 6 of 26 on SNGS-110 -- so there is no single boundary to cut at; the rest flip
+repeatedly. And the best split of a track's kit sequence lands within three sightings of a
+true boundary 26-37% of the time against about 14% for guessing. A trace, not a lever.
+
+Seven attempts now. The one thing that HAS moved purity is stage 1: `winnow` took SNGS-147
+from 69.3 to 90.3% (D62) by removing frames where the camera model throws every player at
+once. Purity should be attacked from there, not from the tracker.
+
 The detection exists, its appearance is right, and the signature discriminates. The failure is
 therefore in the ASSIGNMENT rather than in any of the evidence it is given.
 
@@ -1579,6 +1556,92 @@ candidates are under a metre apart, and the prediction that separates them carri
 error -- which is why VELOCITY_SMOOTHING was worth 3.4 points (D56) when none of this was worth
 anything. A better motion model, or an association that defers the decision across frames
 instead of committing every frame, is where the next attempt belongs.
+
+**D66 — the ball has three separate faults, and the camera model is not one of them.**
+Measured across the eleven clips, ball error varies 4.6x while player error barely moves:
+
+    clip        player error   ball error   within 3 m   beyond 10 m
+    SNGS-060       0.55 m        0.88 m       92.7%         0.0%
+    SNGS-066       0.60 m        3.90 m       45.0%         2.9%
+    SNGS-110       0.77 m        4.09 m       40.6%        16.9%
+    SNGS-116       0.61 m        1.95 m       58.5%        20.7%
+    SNGS-121       1.03 m        1.76 m       74.8%         7.4%
+
+**Registration is not the constraint.** If it were, the two columns would move together and
+they do not -- SNGS-066 has the second-best homography and the second-worst ball. The mean
+PLAYER offset is (+0.01, -0.03) m on that clip over ten thousand matched samples, so the
+camera is not shifted; the mean BALL offset is (+1.45, -1.56). That is height. A ground
+homography assumes z = 0 and an airborne ball lands metres away, which is what `ball_path`
+and `tracks.ts` both say and what the tight, directional error confirms. No selector fixes
+it. Estimating the ball's height from its apparent size is the obvious answer -- a football
+is a known 0.22 m across -- and it was measured before being built. It does not work.
+
+The camera itself recovers cleanly: with the principal point assumed central, one
+homography gives the focal length from the orthonormality of its first two columns, and
+decomposing it puts SNGS-060's camera at (52.4, 88.3, 10.9) m -- on the halfway line,
+across the touchline, eleven metres up, which is where a broadcast camera stands. That part
+is reusable for anything needing 3D.
+
+What fails is the size. Against SoccerNet's own ball annotations on 378 well-conditioned
+frames, apparent width correlates with the width geometry predicts at only +0.37, and
+inverting size for depth is 20.9 m out on a true depth of 53 m -- 39%, which is metres of
+height error to remove a two-metre bias. The annotated boxes also run 55% wider than
+geometry predicts (14.0 px against 9.0), which is motion blur and a generous annotator: a
+ball at 25 m/s smears a metre a frame, and it does that most while airborne, which is the
+only case this was for.
+
+**Nor is detection.** There are 7,000 to 10,800 ball candidates over 750 frames -- nine to
+fourteen a frame -- and 327 to 641 are kept. The ball is in there; the choice is the problem.
+
+**The heavy tails are a different fault from the bias.** SNGS-110 and SNGS-116 put 17-21% of
+accepted sightings beyond ten metres, where SNGS-066's error is clustered tightly at four.
+A metre-space speed gate on acceptance -- the rule `splitImpossible` applies to a player,
+which the existing gate does not because it is in PIXELS and cannot see perspective -- was
+written and measured. It works on its own terms: the tail falls to 12.3% on SNGS-116 and
+12.8% on SNGS-110, p90 from 14.46 to 10.19 m, and accuracy improves on six clips of seven.
+
+**And it does not reach the board, which is why it is not here.** Carrier precision is
+unchanged, 75.7% to 75.9% on the same 1,700 frames: the sightings it removes are ones where
+the nearest player was already outside `CARRIER_RADIUS_M`, so they were being declined
+anyway. On SNGS-060 it is a REGRESSION -- 125 fewer asserted frames bought 1.1 points of
+accuracy that clip did not need, and the board loses a handover because a holder with no
+sighting to contradict him stands for longer. Few and right beats many and wrong, but only
+where the many were being believed.
+
+**D64 — an official is an odd kit that is not standing in a goal, and until 6 September one
+reached nearly every board.** Found by watching a board next to its clip rather than by any
+metric, which is the point: `ft truth` drops referees unless asked for them, so every accuracy
+figure in this document written before this was measured against a ground truth containing no
+officials at all. They were not counted as errors. They were invisible.
+
+    boards                    fielded   officials   wrong side   correct players
+    before                      223        11           30           182
+    after                       222         6           31           185
+
+`assign` never emitted `referee` although the schema has always had the label, so an official
+was clustered onto whichever kit he sat nearer. The rule that finds a keeper already had the
+shape: an outlier in colour, tested against position. A keeper is one that stands in a goal;
+an official is one that does not. Both need the position test, because colour alone also
+catches a player in strange light -- and `MAX_REFEREES` caps it at three, so an odd kit is
+only read as an official while a slot remains.
+
+Two things were measured and both changed the design. **Removing officials from the
+clustering costs more than it saves**: three fewer tracks moves the axis and the cut, and it
+took four correct players off the boards to take four officials off -- so they are named from
+the split rather than held out of it. And **the outlier test must run against the SETTLED
+split, not the rough one that finds the keepers**: measured against the final cluster centres
+it finds six of eleven rather than four, because an outlier test is only as good as the model
+it measures distance from.
+
+**The kick-off was a separate defect and it is fixed in Pitchboard, not here (D65).** The
+window and the restart detection were both right; the board handed the ball to a player who
+was not on the pitch yet. Two wrong diagnoses were written before the measurement that
+settled it, and both are worth knowing about. It is NOT that no scene falls at the handover
+-- seeding one there was built, measured and reverted, because it moved a single scene by ten
+frames and improved nothing. And it is NOT that the receiver is unfielded, which was inferred
+from "no fielded player is within four metres of the ball" -- a kick-off may be played
+anywhere in one's own half, so a ball far from everyone is what a pass in flight looks like
+and proves nothing at all.
 
 **D63 — a labelling that fields nineteen players on one side is wrong whatever the kit
 colours say, and a pitch knows it with no ground truth at all.** The boards that came out
@@ -1656,11 +1719,18 @@ check that matters: the constraint moves team labels and touches nothing else.
 rest of this. Team split measured on the five clips with ground truth, against a 69.2 /
 70.3 / 71.6 / 86.0 / 81.4 baseline:
 
-    change                                        team split      outcome
-    grass masked out of the torso crop            net -0.6        dropped
-    plus a saturation split for achromatic kits   net -2.0        dropped
-    classify each sighting and vote per track     worse or equal  dropped
-    kit averaged over the track, not an EMA       net +5.2        SHIPPED
+    change                                        team split      wrong side   outcome
+    grass masked out of the torso crop            net -0.6        34 of 210    dropped
+    plus a saturation split for achromatic kits   net -2.0        46 of 208    dropped
+    classify each sighting and vote per track     worse or equal  not run      dropped
+    kit averaged over the track, not an EMA       net +5.2        32 of 211    SHIPPED
+
+The wrong-side column was measured afterwards, rebuilt on the shipping code, because the
+team split column is the one that had already misled this section twice. It does not rescue
+either feature change: grass masking is a wash and costs three correct players, and the
+saturation split costs seventeen. Per-sighting voting was never judged on team split -- it
+lost to the track mean at the ceiling, 90.0 against 92.0 on SNGS-067 and 75.5 against 79.6
+on SNGS-110 -- so it needs no re-reading.
 
 The last one shipped, and only on the third measurement. Averaging over the whole track is
 the better estimator: the ceiling, as nearest-centroid against ground-truth centroids, goes
