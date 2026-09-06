@@ -1,3 +1,13 @@
+## v0.17.0 (2026-09-06)
+
+### Feat
+
+- **calib**: anchor a carried chain on the segmenter, a twentieth at a time
+
+### Fix
+
+- **schema**: declare source.intervalS, and check the source keys
+
 ## v0.16.0 (2026-09-06)
 
 ### Feat
