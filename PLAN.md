@@ -17,25 +17,50 @@ which is cheaper than drawing it from nothing. This is a proof, not a product.
 
 ## Where this stands — 6 September 2026
 
-**Every one of the eleven benchmark clips now produces a complete board.** `ft auto --mode
-seed` is what ships, and through Pitchboard's importer it gives:
+**Every one of the eleven benchmark clips produces a full board.** `ft auto --mode seed` is
+what ships, and through Pitchboard's importer it gives 18-21 players of 22, a handful of
+scenes marking possession changes and real movement, and windows of 3 to 29 seconds. 225
+fielded players across the eleven, 190 of them on the right side.
 
-    18-21 players of 22   12 scenes   23-115 curved runs   8.6-29.2 s windows
+**A coach has now looked at the boards, and the verdict is the useful thing here.** They read
+as football; the curved runs are right; wrong teams are annoying rather than fatal. What is
+wrong is that passes and players go MISSING -- a centre back and the pass to him absent from
+SNGS-151, a clearance drawn as a player carrying the ball. Everything shipped on 5-6 September
+came out of watching a board beside its clip: the officials, the keeper, the taker of a
+restart, a ball handed to a player who was not on the pitch. Two of those were invisible to
+every metric in this repo.
 
-Team assignment reached that in three steps on 5-6 September, all in D63: a split that fields
-more players than a pitch holds is refused, the cut is searched across three principal
-components rather than one, and it clusters on the whole track's kit rather than the tracker's
-rolling average. Boards went from 194 fielded players to 211, and from 21% of them on the
-wrong side to 15%.
+### The constraint is registration coverage, and it is not what five training runs measured
 
-**The next question is not a metric.** The stated bar for v0 is 70% -- good enough that a coach
-corrects the board instead of drawing it. Roster is at 86-95% and teams at 85%, and nobody has
-yet opened a generated board in Pitchboard to ask whether correcting it actually beats drawing
-it. That is an evening's work and it is the only thing that decides whether this is done.
+Traced through the whole funnel on the clip a coach called bad:
 
-**One line of attack is spent and should not be reopened without new evidence.** Five segmenter
-training runs have missed the 0.5 m bar set before any of them (the table below). Identity
-purity has now resisted seven attempts (D61). Neither is what limits the board today.
+    stage                                   SNGS-151   SNGS-060
+    detector finds a visible player           96.7%      97.3%
+    survives tracking                         90%        100%
+    lands within 5 m of a real player         77.4%       95.9%
+    dropped off the pitch                      997          25
+
+**The detector is finished.** It finds 94-98% of visible players on every clip, measured in
+image space where no camera model is involved. Training a bigger one buys two to four points.
+
+**The loss is the camera model, and the two registrations fail in opposite directions.**
+
+    SNGS-151   seed        750 frames solved   p50 1.24 m   p90 8.08 m   >5 m 22.6%
+               segmenter   227 frames solved   p50 1.21 m   p90 4.06 m   >5 m  6.2%
+    SNGS-116   seed        750 frames solved   p50 0.74 m   p90 7.86 m   >5 m 12.7%
+               segmenter   594 frames solved   p50 0.56 m   p90 2.03 m   >5 m  3.1%
+
+Seeding propagates a single human fit through every frame, so its coverage is total and it
+drifts. The segmenter fits each frame on its own, so it is three to four times cleaner and
+silent wherever the markings are too few. Neither has both, and a board needs both: the
+segmenter's SNGS-151 board is 18 correct players over a six-second window against seed mode's
+20 over eighteen seconds (D67).
+
+**That is why the five runs "failed".** They were scored on `observed_error` -- accuracy on the
+frames the model could already solve -- while the binding constraint is how many frames it
+solves at all. The 0.5 m bar measured the wrong axis, and D62 already established that the
+frames the segmenter refuses are ones where ground-truth LINES cannot fit either, so no amount
+of training recovers them by fitting alone.
 
 ### The four runs
 
@@ -95,27 +120,45 @@ The weights on disk, kept so the table above stays reproducible rather than reme
 - **Validation loss does not predict `observed_error`.** Run 3 had a worse loss than run 2 and
   a better median on 147. Judge on `calib-eval`, never on the loss.
 
-### What to do next
+### What to do next — registration that keeps segmenter accuracy at seed coverage
 
-**1. Look at a board.** Import a clip's `tracks.json` into Pitchboard and judge it as a coach
-would. `SNGS-060` is the fullest -- 21 players, 29 s, 115 curved runs. If correcting it beats
-drawing from nothing, v0 is done and the milestones below should say so; if it does not, what
-is wrong with it names the next piece of work, which is better than picking the next available
-metric. Everything measured since 4 September has been per-frame; this is not.
+This is the months-scale project and it is the only one with measured reason to expect a gain.
+Nothing else on this list is close.
 
-**2. Judge team assignment on FIELDED PLAYERS ON THE WRONG SIDE, never on `team split`.**
-`ft score`'s team accuracy counts samples across every track, and a board fields the twenty
-best-covered ones -- so it moves on fragments the product discards. `player-seconds` has the
-opposite blind spot and cannot see a wrong shirt at all. Two changes were rejected on those
-metrics and one of them was right after all; see D63.
+**The goal.** Every frame registered, and registered within about a metre. Today one approach
+gives the first and the other gives the second. The shape of the answer is to propagate through
+frames with no markings and RE-ANCHOR on segmenter fits wherever the pitch is visible, so drift
+is corrected as it appears rather than accumulating to eight metres by the end of a clip.
 
-**3. Ground truth exists for all eleven clips.** `ft truth <clip>` had simply never been run on
-six of them. Anything measured on the five that had it -- which is most of this document --
-was measured on a subset that twice pointed the opposite way to the full set.
+**Measure `registered within N metres, as a share of ALL frames`.** Not `observed_error`, which
+is conditioned on the frames a model already solves and therefore rewards refusing the hard
+ones. Every run so far reports the wrong number, which is how a segmenter three times cleaner
+than the shipping path was concluded to be worse than it.
 
-**Not this:** another segmenter run, or another attempt on the tracker's colour. Both are
-documented dead ends (D36, D61). The one number still worth wanting is D62's 12-21 points from
-truth-grade registration, and it is not reachable by training a better segmenter.
+**Re-anchoring has been tried once and made things worse, so it has to be gated.** `--snap`
+refits each carried homography onto the painted lines it can see and is a plain regression on
+tracks (D35). What is different now is `winnow` (D62), which judges a fit by whether the
+PREVIOUS fit walked forward by measured motion agrees with it, separates good from bad by
+twenty to one, and took SNGS-147's identity purity from 69.3% to 90.3%. An anchor that has to
+pass winnow is not the anchor D35 measured.
+
+**What training would then be for.** Raising the share of frames the segmenter can fit at all,
+which is a coverage problem and not an accuracy one. The evidence on how:
+
+- **Resolution works.** Run 5 at native 1080p took SNGS-116 from 2.87 m to 0.70 m, and it was
+  the one clip four earlier configurations could not move.
+- **More matches do not.** Run 3 multiplied them by seventy and made two clips of three worse.
+- **A bigger backbone is untried.** DeepLabv3 on MobileNetV3 was chosen to train on a laptop.
+
+**Not this:** another detector. Another segmenter run scored on `observed_error`. Another
+attempt on the tracker's colour -- identity purity has resisted seven (D61). Another pass at
+the ball -- its three faults are diagnosed and two are closed (D66).
+
+**Before any of it, one evening.** The stated bar for v0 is 70%: good enough that a coach
+corrects the board instead of drawing it. A coach has now seen four boards and the answer is
+"better, still not useful". Getting that judgement on a clip where registration is GOOD --
+SNGS-060 scores 95.9% of players within 5 m against SNGS-151's 77.4% -- would say whether this
+project is one fix away or several, and it costs nothing.
 
 ### The three clips this is scored on
 
@@ -433,7 +476,7 @@ of the pipeline is where the remaining error is.
 | # | done when | est. |
 |---|---|---|
 | M0 | scaffold, stage 0, and the ground-truth path: `ft truth`, `ft render`, `ft score` | **done** |
-| M1 | reprojected pitch lines sit on the real lines | **solver done**; detector at 0.70 m vs a 0.5 m bar after five runs (D36) |
+| M1 | reprojected pitch lines sit on the real lines | **the binding constraint** (D67); the bar it was scored against measured the wrong axis |
 | M2 | tracks survive 10s with few enough id switches to count | **partly**; stitching ships, purity 57-86% and stuck (D61) |
 | M3 | teams cluster cleanly | **done** (D63); 85% of fielded players on the right side |
 | M4 | **the top-down dot video looks like football** | `ft render` exists; never judged by eye |
@@ -1556,6 +1599,36 @@ candidates are under a metre apart, and the prediction that separates them carri
 error -- which is why VELOCITY_SMOOTHING was worth 3.4 points (D56) when none of this was worth
 anything. A better motion model, or an association that defers the decision across frames
 instead of committing every frame, is where the next attempt belongs.
+
+**D67 — the two registrations fail in opposite directions, and the board needs both halves.**
+Run on the clip a coach called bad and on one of the benchmark three, with everything after
+stage 1 held fixed:
+
+    clip        mode        frames solved   p50      p90      >5 m from any player
+    SNGS-151    seed          750 of 750    1.24 m   8.08 m         22.6%
+                segmenter     227 of 750    1.21 m   4.06 m          6.2%
+    SNGS-116    seed          750 of 750    0.74 m   7.86 m         12.7%
+                segmenter     594 of 750    0.56 m   2.03 m          3.1%
+
+Seeding propagates one human fit through every frame: coverage is total and it drifts, so a
+fifth of SNGS-151's players end up somewhere nobody is. The segmenter fits each frame on its
+own: three to four times cleaner, and silent wherever too few markings are in shot.
+
+**Cleaner registration makes a WORSE board, and the reason is coverage.** Through the importer,
+SNGS-151 comes out as 20 correct players over an 17.8 s window from the seed and 18 over 6.0 s
+from the segmenter, because refusing 519 frames collapses the passage there is anything to
+build from. SNGS-116 is 18 correct over 21.6 s against 17 over 13.6 s.
+
+**So `observed_error` was the wrong number all along.** It is conditioned on the frames a model
+already solves, which rewards refusing the hard ones -- and every judgement about the segmenter
+in this document rests on it, including the 0.5 m bar that five runs were killed against. The
+number that matters is the share of ALL frames registered within a metre or so, and no run has
+ever reported it.
+
+**And the detector is not involved.** In image space, where no camera model can interfere, it
+finds 96.7% of visible players on SNGS-151 and 97.3% on SNGS-060 -- the clip that produces the
+best board and the one that produces the worst. Whatever separates those two boards, it is not
+detection.
 
 **D66 — the ball has three separate faults, and the camera model is not one of them.**
 Measured across the eleven clips, ball error varies 4.6x while player error barely moves:
