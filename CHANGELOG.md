@@ -1,3 +1,9 @@
+## v0.16.0 (2026-09-06)
+
+### Feat
+
+- **teams**: name the officials rather than clustering them onto a side
+
 ## v0.15.0 (2026-09-05)
 
 ### Feat
