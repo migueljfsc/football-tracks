@@ -30,6 +30,18 @@ def _size(root: Path, labels: dict[str, Any] | None) -> tuple[int, int]:
     return (clip.width, clip.height)
 
 
+def _carry(mode: str, carry: int) -> int | None:
+    """`--carry` as the stages mean it: -1 is uncapped, 0 is none, N caps the chain.
+
+    The segmenter's default is none, because its claim is that every frame is fitted from
+    its own pixels and owes nothing to its neighbours. Carrying off a segmenter anchor is
+    a different mode with a different claim, and it is called `hybrid`.
+    """
+    if carry >= 0:
+        return carry
+    return 0 if mode == "segmenter" else None
+
+
 def _fps(root: Path, labels: dict[str, Any] | None) -> float:
     """SoccerNet states it; a recording carries it in clip.json (and the container lies)."""
     if labels is not None:
@@ -305,6 +317,81 @@ def calib_eval(
     )
 
 
+@app.command("reg-eval")
+def reg_eval(
+    clip: Annotated[str, typer.Argument(help="A clip with ground-truth pitch lines.")],
+    mode: Annotated[str, typer.Option(help="'truth', 'seed' or 'segmenter'.")] = "seed",
+    carry: Annotated[int, typer.Option(help="Frames a homography may be carried.")] = -1,
+    weights: Annotated[Path | None, typer.Option(help="Segmenter weights.")] = None,
+    within: Annotated[
+        str, typer.Option(help="Comma-separated metre thresholds to report shares at.")
+    ] = "1,2,5",
+    max_residual: Annotated[
+        float, typer.Option(help="Segmenter mode: refuse a fit above this residual.")
+    ] = 0.0,
+) -> None:
+    """How much of a clip a registration solves, and how well, over ALL of it.
+
+    `ft calib-eval` scores the frames the segmenter already solves, which rewards
+    refusing the hard ones: a model that answers a tenth of a clip perfectly scores
+    better than one that answers all of it within a metre, and the second makes the
+    better board (D67). Five training runs were killed against that number.
+
+    This one counts every frame the ground truth can judge. A frame with no homography
+    is not skipped, it is a miss -- which is the whole difference, and the reason the
+    shares below are shares of the CLIP rather than of the answers.
+    """
+    import numpy as np
+
+    if mode not in ("truth", "seed", "segmenter", "hybrid"):
+        raise typer.BadParameter("mode must be 'truth', 'seed', 'segmenter' or 'hybrid'")
+    picked: auto_mod.Mode = cast("auto_mod.Mode", mode)
+
+    c = soccernet.Clip(name=clip, root=CLIPS / clip)
+    if not c.labels_path.exists():
+        raise typer.BadParameter(f"{clip} has no ground-truth lines to score against")
+    labels = c.labels()
+    out = work_dir(Path(clip))
+    frames = sorted(int(p.stem) for p in c.frames_dir.glob("*.jpg"))
+    width, height = _size(CLIPS / clip, labels)
+
+    truth = stage1_register.fit_all(labels)
+    got = auto_mod.homographies(
+        labels,
+        c.frames_dir,
+        picked,
+        max_carry=_carry(mode, carry),
+        motions=stage1_propagate.motions(c.frames_dir, frames, cache=out / "motions.json"),
+        max_residual_m=max_residual or None,
+        weights=weights,
+        segmenter_cache=out / "segmenter.json",
+        size=(width, height),
+    )
+
+    judged = [f for f in frames if truth.get(f) is not None]
+    if not judged:
+        raise typer.BadParameter(f"{clip} has no frame the ground truth can judge")
+    errors: list[float] = []
+    for f in judged:
+        want, have = truth[f], got.get(f)
+        if want is not None and have is not None:
+            errors.append(calibration.observed_error(want, have, (height, width)))
+    solved = len(errors)
+    thresholds = [float(t) for t in within.split(",") if t.strip()]
+    shares = "  ".join(
+        f"within {t:g} m {sum(1 for e in errors if e <= t) / len(judged):.0%}" for t in thresholds
+    )
+    typer.echo(
+        f"{clip} {mode}: registered {solved}/{len(judged)} ({solved / len(judged):.0%})  {shares}"
+    )
+    if errors:
+        e = np.array(errors)
+        typer.echo(
+            f"  on the frames it solved: p50 {np.median(e):.2f} m"
+            f"  p90 {np.percentile(e, 90):.2f} m  worst {e.max():.2f} m"
+        )
+
+
 @app.command()
 def bench(
     clips: Annotated[
@@ -315,6 +402,9 @@ def bench(
         float, typer.Option("--interval-s", help="Held at 0 so recall counts samples, not slots.")
     ] = 0.0,
     snap: Annotated[bool, typer.Option(help="Re-anchor on the markings (D35).")] = False,
+    mode: Annotated[
+        str, typer.Option(help="Registration to run every clip through. 'seed' is what ships.")
+    ] = "seed",
 ) -> None:
     """Run every clip end to end and print one table.
 
@@ -347,7 +437,7 @@ def bench(
         out = work_dir(Path(name))
         pred_path = out / "tracks.json"
         try:
-            _pipeline(name, "seed", -1, interval_s, snap)
+            _pipeline(name, mode, -1, interval_s, snap)
         except Exception as exc:
             typer.echo(f"{name:<16} {'-':>6} {'-':>7} {'-':>7} {'-':>8} {'-':>7} {'-':>6}  {exc}")
             continue
@@ -608,8 +698,8 @@ def _pipeline(
     Extracted so the benchmark runs the SAME pipeline the user runs, rather than a
     second copy of it that can drift away from it silently.
     """
-    if mode not in ("truth", "seed", "segmenter"):
-        raise typer.BadParameter("mode must be 'truth', 'seed' or 'segmenter'")
+    if mode not in ("truth", "seed", "segmenter", "hybrid"):
+        raise typer.BadParameter("mode must be 'truth', 'seed', 'segmenter' or 'hybrid'")
     picked: auto_mod.Mode = cast("auto_mod.Mode", mode)
 
     c = soccernet.Clip(name=clip, root=CLIPS / clip)
@@ -630,10 +720,12 @@ def _pipeline(
             labels,
             c.frames_dir,
             picked,
-            max_carry=None if carry < 0 else carry,
+            max_carry=_carry(mode, carry),
             motions=motions,
             snap=refine_mod.refine if snap else None,
             max_residual_m=max_residual or None,
+            segmenter_cache=out / "segmenter.json",
+            size=_size(CLIPS / clip, labels),
         )
     elif seed_path.exists():
         # A real clip: one seeded frame is all the camera information there is.
@@ -642,14 +734,28 @@ def _pipeline(
             typer.echo(f"IGNORING {path.name}: maps {behind:.0%} of its frame behind the camera")
         if not usable:
             raise typer.BadParameter(f"{clip} has no usable seed")
-        homs = auto_mod.from_seeds(
-            usable,
-            frames,
-            c.frames_dir,
-            max_carry=None if carry < 0 else carry,
-            motions=motions,
-            snap=refine_mod.refine if snap else None,
-        )
+        if picked == "hybrid":
+            homs = auto_mod.anchored(
+                c.frames_dir,
+                auto_mod.segmenter_homographies(
+                    c.frames_dir,
+                    max_residual_m=max_residual or None,
+                    cache=out / "segmenter.json",
+                ),
+                {s.frame: seed_mod.homography(s) for s in usable},
+                motions=motions,
+                max_carry=_carry(mode, carry),
+                size=_size(CLIPS / clip, None),
+            )
+        else:
+            homs = auto_mod.from_seeds(
+                usable,
+                frames,
+                c.frames_dir,
+                max_carry=_carry(mode, carry),
+                motions=motions,
+                snap=refine_mod.refine if snap else None,
+            )
     else:
         raise typer.BadParameter(
             f"{clip} has neither SoccerNet labels nor {seed_path} - run `ft seed {clip}` first"
@@ -688,7 +794,8 @@ def auto(
         str,
         typer.Option(
             help="'truth' uses every frame's lines; 'seed' uses only frame one's;"
-            " 'segmenter' uses the learned ones and no annotations at all."
+            " 'segmenter' uses the learned ones and no annotations at all; 'hybrid'"
+            " anchors on the learned ones and carries the seed across the rest."
         ),
     ] = "seed",
     carry: Annotated[int, typer.Option(help="Frames a homography may be carried.")] = -1,
@@ -726,6 +833,9 @@ def auto(
     human clicking four corners once actually leaves you with.
     `--mode segmenter` uses no annotations at all: every frame is registered from the
     learned pitch lines, so there is nothing to seed and nothing to carry (D36).
+    `--mode hybrid` anchors on those same learned lines wherever they can be fitted and
+    carries between them, so the chain is reset before it drifts and the frames the
+    segmenter refuses are still covered (D67).
     """
     path, result = _pipeline(clip, mode, carry, interval_s, snap, max_residual, stitch)
     typer.echo(

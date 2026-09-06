@@ -198,3 +198,64 @@ def test_a_stale_reference_stops_judging() -> None:
     direct: dict[int, npt.NDArray[np.float64] | None] = {1: _scaled(), 500: _scaled(40.0)}
     motion = {f: np.eye(3, dtype=np.float64) for f in range(2, 501)}
     assert prop.winnow(direct, motion, max_age=50)[500] is not None
+
+
+def test_blending_a_model_with_itself_changes_nothing() -> None:
+    h = _scaled()
+    out = prop.blend(h, h, 0.5, width=W, height=HGT)
+    assert out is not None
+    assert out == pytest.approx(h, abs=1e-9)
+
+
+def test_a_blend_moves_the_stated_share_of_the_way_in_metres() -> None:
+    """Mixed where it means something. Averaging the matrices would not land here."""
+    a, b = _scaled(), _scaled(10.0)
+    out = prop.blend(a, b, 0.25, width=W, height=HGT)
+    assert out is not None
+    point = np.array([[[W * 0.5, HGT * 0.5]]], dtype=np.float64)
+    got = cv2.perspectiveTransform(point, out).reshape(2)
+    want = cv2.perspectiveTransform(point, _scaled(2.5)).reshape(2)
+    assert got == pytest.approx(want, abs=1e-6)
+
+
+def test_disagreement_is_the_metres_between_two_models() -> None:
+    assert prop.disagreement(_scaled(), _scaled(), width=W, height=HGT) == pytest.approx(0.0)
+    assert prop.disagreement(_scaled(), _scaled(3.0), width=W, height=HGT) == pytest.approx(3.0)
+
+
+def test_an_anchored_chain_closes_on_its_anchor_rather_than_jumping_to_it() -> None:
+    """The whole point of the filter: a standing player must not take a step because the
+    camera model was corrected."""
+    anchors: dict[int, npt.NDArray[np.float64] | None] = {1: _scaled()}
+    anchors.update(dict.fromkeys(range(2, 41), _scaled(4.0)))
+    motion = {f: np.eye(3, dtype=np.float64) for f in range(2, 41)}
+    out = prop.anchor_chain(anchors, motion=motion, rate=0.1, width=W, height=HGT).homographies
+
+    steps = [
+        prop.disagreement(out[f - 1], out[f], width=W, height=HGT)  # type: ignore[arg-type]
+        for f in range(3, 41)
+    ]
+    assert max(steps) < 0.5, "no single frame may move the pitch under a player"
+    assert prop.disagreement(out[40], _scaled(4.0), width=W, height=HGT) < 0.2  # type: ignore[arg-type]
+
+
+def test_a_seed_is_taken_whole_and_a_fit_is_not() -> None:
+    anchors: dict[int, npt.NDArray[np.float64] | None] = {1: _scaled(), 2: _scaled(4.0)}
+    motion = {2: np.eye(3, dtype=np.float64)}
+    mixed = prop.anchor_chain(anchors, motion=motion, rate=0.1, width=W, height=HGT).homographies
+    whole = prop.anchor_chain(
+        anchors, motion=motion, rate=0.1, hard={2}, width=W, height=HGT
+    ).homographies
+    assert prop.disagreement(mixed[2], _scaled(), width=W, height=HGT) == pytest.approx(  # type: ignore[arg-type]
+        0.4, abs=0.01
+    )
+    assert whole[2] is not None
+    assert prop.disagreement(whole[2], _scaled(4.0), width=W, height=HGT) == pytest.approx(0.0)
+
+
+def test_an_anchored_chain_covers_the_frames_before_its_first_anchor() -> None:
+    anchors: dict[int, npt.NDArray[np.float64] | None] = dict.fromkeys(range(1, 6))
+    anchors[5] = _scaled()
+    motion = {f: np.eye(3, dtype=np.float64) for f in range(2, 6)}
+    chain = prop.anchor_chain(anchors, motion=motion, width=W, height=HGT)
+    assert chain.gaps == 0

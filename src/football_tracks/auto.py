@@ -11,12 +11,17 @@ how much of the error belongs to which stage:
 * `segmenter` - a homography per frame from the LEARNED lines, with no seed, no carry
              and no ground truth. The same shape as `truth` but sourced from the picture,
              which is the whole claim of D36.
+* `hybrid` - the segmenter's fits as ANCHORS, carried across the frames it refuses, with
+             the seed put back so a clip is covered where it refuses everything. Seeding
+             has total coverage and drifts; the segmenter has neither drift nor coverage,
+             and a board needs both (D67).
 
-All three write the same tracks.json, scored by the same `ft score`.
+All four write the same tracks.json, scored by the same `ft score`.
 """
 
 from __future__ import annotations
 
+import json
 import math
 from dataclasses import dataclass
 from pathlib import Path
@@ -38,7 +43,7 @@ from .config import PITCH_LENGTH, PITCH_WIDTH
 from .stage3_teams import assign
 from .tracks import PLAYER_MARGIN, Sample, Track, on_pitch
 
-Mode = Literal["truth", "seed", "segmenter"]
+Mode = Literal["truth", "seed", "segmenter", "hybrid"]
 
 
 # How many frames either side the ball's position is taken a median over.
@@ -240,8 +245,52 @@ def from_seeds(
     ).homographies
 
 
+def _cached_fits(cache: Path, weights: Path, max_residual_m: float | None) -> dict[int, Any] | None:
+    """Segmenter fits from a previous run, or None if they were made by something else.
+
+    Keyed on the weights file and the residual gate, because both change the answer and
+    a stale cache here is indistinguishable from a bad model.
+    """
+    try:
+        stored = json.loads(cache.read_text())
+    except (OSError, ValueError):
+        return None
+    if stored.get("weights") != str(weights) or stored.get("mtime") != weights.stat().st_mtime:
+        return None
+    if stored.get("maxResidualM") != max_residual_m:
+        return None
+    return {
+        int(f): None if h is None else np.array(h, dtype=np.float64)
+        for f, h in stored["homographies"].items()
+    }
+
+
+def _store_fits(
+    cache: Path, weights: Path, max_residual_m: float | None, fits: dict[int, Any]
+) -> None:
+    cache.write_text(
+        json.dumps(
+            {
+                "version": 1,
+                "weights": str(weights),
+                "mtime": weights.stat().st_mtime,
+                "maxResidualM": max_residual_m,
+                "homographies": {
+                    str(f): None if h is None else np.asarray(h).tolist()
+                    for f, h in sorted(fits.items())
+                },
+            }
+        )
+        + "\n"
+    )
+
+
 def segmenter_homographies(
-    frames_dir: Path, weights: Path | None = None, max_residual_m: float | None = None
+    frames_dir: Path,
+    weights: Path | None = None,
+    max_residual_m: float | None = None,
+    *,
+    cache: Path | None = None,
 ) -> dict[int, Any]:
     """A homography per frame from the segmenter, fitted from the picture and nothing else.
 
@@ -257,7 +306,13 @@ def segmenter_homographies(
     """
     from . import calib
 
-    net = calib.model(weights or calib.WEIGHTS).to(calib.device()).eval()
+    chosen = weights or calib.WEIGHTS
+    if cache is not None and cache.exists():
+        stored = _cached_fits(cache, chosen, max_residual_m)
+        if stored is not None:
+            return stored
+
+    net = calib.model(chosen).to(calib.device()).eval()
     out: dict[int, Any] = {}
     for path in sorted(frames_dir.glob("*.jpg")):
         image = cv2.imread(str(path))
@@ -267,7 +322,116 @@ def segmenter_homographies(
         out[int(path.stem)] = calib.fit_from_mask(
             mask, image.shape[1], image.shape[0], max_residual_m
         )
+    if cache is not None:
+        _store_fits(cache, chosen, max_residual_m, out)
     return out
+
+
+# How far a per-frame fit may sit from the seed's own chain and still be anchored on, in
+# metres.
+#
+# The seed chain is globally right and locally drifting; a fit that disagrees with it by
+# more than a couple of pitch widths is not correcting that drift, it is a different
+# camera. Measured on SNGS-151, where anchoring on every fit that survives `winnow` puts
+# p90 at 27.9 m: the segmenter is self-CONSISTENTLY wrong there for runs of frames, so
+# agreeing with the frames before it says nothing, and only the human fit can tell.
+ANCHOR_GATE_M = 5.0
+
+# How far from a seed, in frames, before a per-frame fit is preferred to the seed carried
+# there.
+#
+# Near the seed the chain is a human fit moved a few frames and is better than anything
+# fitted from pixels; far from it the chain is drift and anything measured beats it. D18
+# put the turn at 150-200 frames on SNGS-147.
+ANCHOR_AFTER_FRAMES = 0
+
+
+def anchored(
+    frames_dir: Path,
+    fits: dict[int, Any],
+    seeds: dict[int, Any],
+    *,
+    motions: dict[int, Any] | None,
+    max_carry: int | None,
+    gate: float = ANCHOR_GATE_M,
+    anchor_after: int = ANCHOR_AFTER_FRAMES,
+    rate: float = stage1_propagate.ANCHOR_RATE,
+    size: tuple[int, int] = (1920, 1080),
+) -> dict[int, Any]:
+    """Per-frame fits as anchors, the seed put back, and the gaps between them carried.
+
+    The shape D67 asks for. A seed propagated through a whole clip drifts without bound
+    and never says so (D18); a per-frame fit does not drift at all and is silent wherever
+    the markings are too few. Anchoring is the composition of the two: the chain is reset
+    at every frame the segmenter could solve, so drift is corrected as it appears instead
+    of accumulating to eight metres by the end of a clip.
+
+    Four things in the order they happen, and the order is the whole method:
+
+    * WINNOW FIRST. A fit that contradicts the frames before it is dropped rather than
+      anchored on, because an anchor is believed absolutely by everything downstream of
+      it and a bad one is worse than a gap. The fit's own residual cannot find those --
+      it is in-sample -- and the previous fit walked forward by measured motion separates
+      them by twenty to one (D62).
+    * THEN AGAINST THE SEED'S OWN CHAIN. Winnowing only asks whether a fit agrees with
+      the fits around it, and a segmenter that is wrong the same way for a hundred frames
+      passes that (SNGS-151). The seed is the one fit a human looked at, so a fit further
+      than `gate` from where the seed says the camera is, is refused as a different camera
+      rather than a correction to this one.
+    * THE SEED OVERRIDES, and is never winnowed or gated.
+    * BLEED THE REST IN. `anchor_chain` moves the carried chain a twentieth of the way to
+      each surviving anchor instead of replacing it, because replacing moves every player
+      at once and that step is what the tracker and the board are made of.
+
+    This is not D35's `--snap`, which re-fitted each CARRIED homography onto the markings
+    and regressed the tracks. Nothing here corrects an anchor; it replaces one.
+
+    MEASURED AND NOT SHIPPED (D68). It registers more of SNGS-147 and SNGS-116 within two
+    metres than seeding does, and through the importer it makes no board better and one
+    much worse. `--mode seed` is still what ships.
+    """
+    width, height = size
+    # The seed's own chain, carried as far as it will go. It is what the anchors are
+    # judged against and what covers the clip where none of them survive -- so a hybrid
+    # is never worse-covered than the seed it started from.
+    base = stage1_propagate.fill(
+        frames_dir,
+        {f: seeds.get(f) for f in fits},
+        max_carry=None,
+        motion=motions,
+    ).homographies
+
+    direct: dict[int, Any] = dict.fromkeys(fits)
+    winnowed = (
+        stage1_propagate.winnow(fits, motions, width=width, height=height)
+        if motions is not None
+        else dict(fits)
+    )
+    for f, h in winnowed.items():
+        expected = base.get(f)
+        if h is None:
+            continue
+        if seeds and min(abs(f - s) for s in seeds) < anchor_after:
+            continue
+        if expected is not None and (
+            stage1_propagate.disagreement(h, expected, width=width, height=height) > gate
+        ):
+            continue
+        direct[f] = h
+    for f, h in seeds.items():
+        if h is not None:
+            direct[f] = h
+    if motions is None:
+        return stage1_propagate.fill(frames_dir, direct, max_carry=max_carry).homographies
+    return stage1_propagate.anchor_chain(
+        direct,
+        motion=motions,
+        rate=rate,
+        hard={f for f, h in seeds.items() if h is not None},
+        max_carry=max_carry,
+        width=width,
+        height=height,
+    ).homographies
 
 
 def _best_seed(labels: dict[str, Any], direct: dict[int, Any]) -> int | None:
@@ -303,23 +467,41 @@ def homographies(
     motions: dict[int, Any] | None = None,
     snap: Any = None,
     max_residual_m: float | None = None,
+    weights: Path | None = None,
+    segmenter_cache: Path | None = None,
+    size: tuple[int, int] = (1920, 1080),
 ) -> dict[int, Any]:
     """Per-frame homographies: from every frame's lines, from frame one's, or from the
     segmenter's."""
     if mode == "segmenter":
-        direct = segmenter_homographies(frames_dir, max_residual_m=max_residual_m)
+        direct = segmenter_homographies(
+            frames_dir, weights, max_residual_m=max_residual_m, cache=segmenter_cache
+        )
         if motions is not None:
-            direct = stage1_propagate.winnow(direct, motions)
-        # No carry by default, which is the mode's whole claim. A SHORT carry is offered
-        # because refusals turned out to be the binding constraint -- half of SNGS-121 is
-        # declined -- and bridging a two-frame gap is not the unbounded chain D19
-        # condemned. `--carry 0` keeps the gaps honest.
-        if max_carry is None or max_carry <= 0:
+            direct = stage1_propagate.winnow(direct, motions, width=size[0], height=size[1])
+        # `max_carry` means here what it means everywhere else: None is UNCAPPED and 0 is
+        # none. It did not -- None arrived meaning "carry nothing", which is the CLI's own
+        # default, so every segmenter run ever measured carried nothing whatever was asked
+        # for and the gaps D67 blamed for the board were never bridged. Carrying off a
+        # segmenter anchor is what `--mode hybrid` is.
+        if max_carry == 0:
             return direct
         return stage1_propagate.fill(
             frames_dir, direct, max_carry=max_carry, motion=motions
         ).homographies
     direct = stage1_register.fit_all(labels)
+    if mode == "hybrid":
+        best = _best_seed(labels, direct)
+        return anchored(
+            frames_dir,
+            segmenter_homographies(
+                frames_dir, weights, max_residual_m=max_residual_m, cache=segmenter_cache
+            ),
+            {best: direct[best]} if best is not None else {},
+            motions=motions,
+            max_carry=max_carry,
+            size=size,
+        )
     if mode == "truth":
         return stage1_propagate.fill(
             frames_dir, direct, max_carry=max_carry, motion=motions

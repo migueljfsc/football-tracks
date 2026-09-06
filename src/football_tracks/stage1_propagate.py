@@ -229,6 +229,21 @@ AGREEMENT_PROBES = ((0.25, 0.25), (0.75, 0.25), (0.25, 0.75), (0.75, 0.75), (0.5
 AGREEMENT_M = 2.0
 
 
+def disagreement(a: H, b: H, *, width: int = 1920, height: int = 1080) -> float:
+    """How far two camera models put the same picture apart, in metres.
+
+    The median over `AGREEMENT_PROBES` rather than the worst of them, because one probe
+    near the horizon disagrees by hundreds of metres for models that agree everywhere a
+    player stands.
+    """
+    gaps = [
+        math.dist(_project(a, fx * width, fy * height), _project(b, fx * width, fy * height))
+        for fx, fy in AGREEMENT_PROBES
+    ]
+    gaps.sort()
+    return gaps[len(gaps) // 2]
+
+
 def winnow(
     direct: dict[int, H | None],
     motion: dict[int, H],
@@ -245,7 +260,6 @@ def winnow(
     up on after `max_age` frames, because a carry drifts and a stale one starts refusing
     good fits for disagreeing with it.
     """
-    probes = [(fx * width, fy * height) for fx, fy in AGREEMENT_PROBES]
     out: dict[int, H | None] = {}
     ref: tuple[int, H] | None = None
     for f in sorted(direct):
@@ -260,15 +274,138 @@ def winnow(
                 carried = None if carried is None or d is None else carry(carried, d)
                 if carried is None:
                     break
-            if carried is not None:
-                gaps = [math.dist(_project(h, x, y), _project(carried, x, y)) for x, y in probes]
-                gaps.sort()
-                if gaps[len(gaps) // 2] > gate:
-                    out[f] = None  # contradicts the frames before it
-                    continue
+            if carried is not None and disagreement(h, carried, width=width, height=height) > gate:
+                out[f] = None  # contradicts the frames before it
+                continue
         out[f] = h
         ref = (f, h)
     return out
+
+
+# Where a homography is resampled when two of them are mixed, in image fractions. The
+# quarter-points and nothing near the edges: a corner of the frame is often above the
+# horizon, where a model maps to infinity and a mix of two of them means nothing.
+BLEND_CORNERS = ((0.25, 0.25), (0.75, 0.25), (0.75, 0.75), (0.25, 0.75))
+
+
+def blend(a: H, b: H, t: float, *, width: int = 1920, height: int = 1080) -> H | None:
+    """A camera model `t` of the way from `a` to `b`.
+
+    Mixed where it means something -- in METRES, at four points of the picture -- and
+    refitted. Averaging the matrices themselves mixes nine numbers that do not vary
+    independently and gives a camera that is neither.
+    """
+    src = np.array([[fx * width, fy * height] for fx, fy in BLEND_CORNERS], dtype=np.float32)
+    pa = cv2.perspectiveTransform(src.reshape(-1, 1, 2).astype(np.float64), a).reshape(-1, 2)
+    pb = cv2.perspectiveTransform(src.reshape(-1, 1, 2).astype(np.float64), b).reshape(-1, 2)
+    if not (np.all(np.isfinite(pa)) and np.all(np.isfinite(pb))):
+        return None
+    mixed = ((1.0 - t) * pa + t * pb).astype(np.float32)
+    out = cv2.getPerspectiveTransform(src, mixed)
+    if out is None or not np.all(np.isfinite(out)) or abs(out[2, 2]) < 1e-12:
+        return None
+    return np.asarray(out / out[2, 2], dtype=np.float64)
+
+
+# How much of the way to an anchor the chain moves in one frame.
+#
+# Anchoring a carried chain by REPLACEMENT is accurate per frame and worse per track: at
+# every anchor the whole picture moves at once, so a player standing still takes a step
+# of half a metre and the fidelity a board is built from goes with it. Measured on
+# SNGS-147, hard anchors improved registration inside two metres from 62% of frames to
+# 85% and took the tracks from 73.7% precision to 58.9% and the team split from 79% to
+# 60%. Bleeding the same correction in over a few frames keeps the accuracy and gives the
+# tracker back a camera that moves the way a camera moves.
+#
+# A twentieth, measured across five clips. What it buys is read on the step a STANDING
+# player takes between adjacent frames, which is what the tracker and the board see:
+#
+#     rate    jitter p90    registration within 2 m (SNGS-147 / 116 / 060)
+#     1.00     0.27-0.85 m       85%   69%   91%
+#     0.30     0.07-0.22 m       86%   67%   85%
+#     0.15     0.04-0.12 m       88%   64%   85%
+#     0.05     0.02-0.05 m       86%   59%   89%
+#
+# Slower is not free -- a correction that arrives over eighty frames has not arrived --
+# but every rate above a twentieth pays for its accuracy in jitter, and jitter is what
+# stage 2 and the reduction are made of.
+ANCHOR_RATE = 0.05
+
+
+def anchor_chain(
+    anchors: dict[int, H | None],
+    *,
+    motion: dict[int, H],
+    rate: float = ANCHOR_RATE,
+    hard: set[int] | None = None,
+    max_carry: int | None = None,
+    width: int = 1920,
+    height: int = 1080,
+) -> Chain:
+    """Carry a chain across the clip, correcting it towards each anchor it passes.
+
+    A complementary filter, and the two halves are chosen for what each is good at. The
+    carry is exact frame to frame and wrong in the long run -- it drifts (D18). An anchor
+    is unbiased in the long run and noisy frame to frame, because it is fitted from
+    however many pixels of marking happened to be in shot. So the carry supplies the
+    MOTION and the anchors supply the POSITION, at `rate` of the difference per frame.
+
+    `fill` remains the honest version of "solve it or say nothing": it never mixes two
+    models. This one is for the case D67 describes, where one source has the coverage and
+    the other has the accuracy and neither alone makes a board.
+    """
+    frames = sorted(anchors)
+    out: dict[int, H | None] = dict.fromkeys(frames)
+    first = next((f for f in frames if anchors[f] is not None), None)
+    if first is None:
+        return Chain(homographies=out, solved_directly=0, carried=0, gaps=len(frames))
+
+    corrected = 0
+    current: H | None = anchors[first]
+    since_anchor = 0
+    for f in frames:
+        if f < first:
+            continue
+        if f > first:
+            d = motion.get(f)
+            current = None if current is None or d is None else carry(current, d)
+            since_anchor += 1
+        here = anchors[f]
+        if here is not None:
+            # Nothing to correct towards yet: a chain that has broken restarts on the
+            # next anchor rather than staying dark to the end of the clip.
+            # A seed is taken whole rather than mixed into: it is the one fit somebody
+            # looked at, and there is nothing about the chain worth keeping against it.
+            share = 1.0 if hard is not None and f in hard else rate
+            mixed = (
+                here
+                if current is None or share >= 1.0
+                else blend(current, here, share, width=width, height=height)
+            )
+            if mixed is not None:
+                current = mixed
+                since_anchor = 0
+                corrected += 1
+        if max_carry is not None and since_anchor > max_carry:
+            current = None
+        out[f] = current
+
+    # Backwards, for the frames before the first anchor. There are no anchors there by
+    # construction, so this is a plain carry and drifts exactly as `fill`'s does.
+    current = out[first]
+    for behind, f in enumerate(reversed([f for f in frames if f < first]), start=1):
+        d = motion.get(f + 1)
+        current = None if current is None or d is None else carry_back(current, d)
+        if max_carry is not None and behind > max_carry:
+            current = None
+        out[f] = current
+
+    return Chain(
+        homographies=out,
+        solved_directly=sum(1 for f in frames if anchors[f] is not None),
+        carried=sum(1 for f in frames if out[f] is not None) - corrected,
+        gaps=sum(1 for v in out.values() if v is None),
+    )
 
 
 def fill(
