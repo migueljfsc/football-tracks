@@ -1,0 +1,796 @@
+# Decisions — registration
+
+Stage 1 — turning a frame into a camera model. The longest-running problem here.
+
+Every decision here was measured before it was made. They are kept because the code
+cites them by number, and because the failures are worth as much as the successes.
+
+**D7 — automatic registration first, human-seeded as the fallback.** Automatic is the only
+version that scales past a demo, and a published model already exists, so it is worth one
+honest attempt. But the fallback is genuinely good — a human clicking four landmarks is more
+accurate than any model — and reaching for it is not a failure. The decision to switch belongs
+at the end of M1, judged on the reprojection picture.
+
+**D16 — the homography is fitted from POINT-ON-LINE constraints, not from line
+intersections.** Every annotated point is known to lie on a named pitch line, which gives
+one linear equation `l · (H p) = 0`; stacking them is an ordinary DLT.
+
+Intersections were the first approach and they fail on exactly the footage that matters.
+Under an oblique camera two pitch lines meeting at a right angle project to nearly parallel
+image lines, so their crossing flies off and a pixel of error becomes tens of metres. On
+SNGS-147's most line-rich frame it produced four usable correspondences out of nine lines,
+three of them on the same touchline — a degenerate configuration that fitted its own points
+with **0.00 m residual** while placing players 100 m away. The residual could not see it;
+only the reprojection picture could. Median error across the clip was 13 m.
+
+Point-on-line uses every point of every visible marking, so a line seen edge-on contributes
+what it can instead of being thrown away or, worse, being crossed with its neighbour.
+
+**D17 — a frame must show MORE lines than the fit strictly needs.** Four lines is eight
+constraints for eight degrees of freedom: exactly determined, fits perfectly whatever the
+noise, and leaves nothing over to notice it is wrong with. Measured, four-line frames land
+21.7 m out at the median while every over-determined configuration is inside 3 m. Refusing
+them costs 7% of coverage and takes p90 from 19.1 m to 2.65 m.
+
+This is D13's argument again one level up: a homography that cannot be checked is not a
+cheaper homography, it is a wrong answer nobody can see.
+
+**D18 — a homography is carried across gaps by tracking the ground plane.** Stage 1's
+solver needs enough markings in shot, and real footage often has fewer. Features on the
+grass move between consecutive frames by exactly the transform the camera's motion
+induces, so tracking them gives a frame-to-frame matrix that composes with a known
+homography to give the next one. It takes coverage on SNGS-147 from 80.8% to 100%.
+
+Two properties, both measured rather than assumed. It **drifts**: every composition
+multiplies in the last one's error. Carrying from frame 1 of SNGS-147, the pitch corners
+stay inside 0.19 m after 10 frames, 1.39 m after 100 and 1.63 m after 120, then degrade
+sharply. And it **cannot start itself** — something must supply the first homography,
+which is the solver, or a keypoint model, or a human clicking four corners (D7).
+
+Hence `DEFAULT_MAX_CARRY = 50`, two seconds, well inside where the measurement says drift
+is still small. Uncapped happens to be fine on this clip because its gaps are short, but a
+badly drifted matrix produces confident wrong positions and that is worse than a gap —
+D13's argument once more. Features come only from the grass, so players and crowd, which
+do not move with the ground plane, are never fed in.
+
+**D19 — stage 1's accuracy is not what stage 2 needs.** Carried homographies score WELL on
+stage 1's own metric — 0.90 m median, better tails than the solver alone — and they wreck
+tracking: identity purity 62.9% with carrying on against 82.9% with it off, 145 switches
+against 25.
+
+The reason is that the two stages want different things from the same matrix. Stage 1 is
+scored on absolute accuracy per frame. Tracking does not care where the pitch is, it cares
+that it does not MOVE: a homography smoothly one metre off tracks perfectly, while one that
+jitters two metres between frames throws every player at once and every track breaks
+together. Frame-to-frame consistency is the property, and no number in `Registration`
+measures it.
+
+**Fixed, and the fix corrected the diagnosis.** Association moved to stabilised image space,
+using the frame-to-frame transform, which is measured per pair and never accumulated.
+Stage 2 now produces the *identical* 128 raw tracks whether carrying is on or off, so it is
+genuinely independent of stage 1.
+
+The score gap survived that (77.9% purity with carrying off against 66.2% on), which says
+the original reading was half wrong. Carried homographies no longer damage the TRACKS — they
+damage the POSITIONS, and a sample placed five metres out is matched to a different player
+and counted as an identity error. What remains is a registration problem wearing a tracking
+problem's clothes. `--carry 0` is still the better setting, for that reason and not the one
+first recorded here.
+
+**D23 — the seed is a file, not a UI.** `seed.json` holds clicked landmark
+correspondences and nothing else. The click tool writes it, but so could a keypoint
+model, and so could Pitchboard's own import view — which is where this ends up, so the
+format is the interface and the OpenCV window is disposable.
+
+**D24 — four clicked landmarks are not enough, and the obvious four are degenerate.**
+Both goalposts and both corners of a goal are the most natural things to click and ALL
+FOUR SIT ON x = 0. A homography fitted to collinear points fits perfectly and describes
+nothing, so `seed.homography` refuses it — D17's argument reaching the human.
+
+The misclick threshold is in pitch METRES, not pixels, because that is the destination
+space; the usual pixel default of 5 would be a five-metre tolerance. It is 0.5 rather
+than 1.0 because with six points a homography has barely more constraints than degrees
+of freedom, so at a loose threshold RANSAC prefers a warped fit that swallows a bad
+click over one that rejects it. Measured on a deliberate 8 m misclick: 0.5 rejects it,
+1.0 absorbs it and moves the centre spot sixteen metres.
+
+**D25 — a seed propagates in BOTH directions.** A clip is rarely best seeded at its first
+frame: the camera is often still finding the play, and on the Rio Ave clip frame 1 has the
+goal half out of shot with almost no markings visible while frame 100 has the whole box.
+Forward-only propagation would make the good frame useless. `fill` therefore runs a backward
+pass as well, composing `h @ d` rather than `h @ inv(d)`.
+
+**D26 — a human can TRACE a line as well as click a point.** A corner is one exact pixel
+and is often out of shot; a long marking is easy to follow and says nearly as much once
+several points are stacked. `calibration.fit` takes both in one DLT — a landmark
+contributes two equations, a traced point one.
+
+This came out of the first real clip. A tight goalmouth shot at night has faint, short box
+lines and its corners off screen, and clicking them produced a seed whose points were
+misidentified. The two long clear markings — the goal line and the penalty-box front — were
+easy to trace and were there all along.
+
+Two traps that come with it, both of which fit with ZERO residual and are therefore the most
+convincing way to be wrong. **Two traced lines are always degenerate**: they cross
+somewhere, and a homography sending the entire image to that crossing satisfies every
+point-on-line constraint exactly. And **lines all running the same way pin down nothing**
+about the direction across them. `_collapses` catches the first by checking that the fitted
+map still covers ground; `_spans_two_directions` catches the second.
+
+**D33 — a carry can only be scored against evidence it did not produce, and on a
+broadcast clip that evidence has to be clicked.** `ft calibrate --drift-from` was handed
+the homographies the pipeline runs on. On a SoccerNet clip those are per-frame fits and
+the measurement was roughly right; on a seeded clip every one of them IS the carry, so
+the measurement compared the chain with itself and reported
+
+    carried   corner error
+         1f         0.00 m
+        50f         0.00 m
+
+for a homography whose reprojection at frame 903 visibly misses the painted lines it sits
+on exactly at the seeded frame 853. Zero error is not a result a carry can produce, and it
+read as the best possible one.
+
+`direct` now holds only what was fitted from evidence — every frame on a labelled clip,
+the one clicked frame on a seeded one — and drift is scored against that. Where there is
+nothing to score against, the command refuses and says what would fix it rather than
+printing a number. `ft seed <clip> --frame N --check` writes `seed.<frame>.json` as that
+second piece of evidence without replacing the seed the pipeline runs from.
+
+Fixing that exposed the second half of the same mistake. The error was measured at the
+PITCH CORNERS, which are fixed points of the model and not of the picture. On the first
+broadcast clip measured this way three of the four fall outside the frame - one of them
+58,717 px out on a 2,774 px frame - so the number returned was the extrapolation error
+twenty pitch-lengths beyond anything the camera saw:
+
+    at the pitch corners                     25.44 m
+    at the ten players actually detected      0.95 m median, 1.49 m max
+    across the visible lower frame            1.76 m median
+
+25.44 m was as wrong as 0.00 m had been, in the other direction, and both would have been
+believed. `observed_error` probes a grid on the IMAGE and keeps the probes the true model
+puts on grass, which is the question the pipeline actually has. It cross-checks against the
+independent per-player measurement above at 1.74 m.
+
+The corner metric had been flattering nothing and inflating everything, SoccerNet included.
+The honest curves:
+
+    SNGS-116 (wide, fixed camera)   1f 0.00   25f 0.12   50f 0.22   200f 0.94 m
+    nottingham (broadcast, tight)                        50f 1.74 m
+
+So DEFAULT_MAX_CARRY = 50 was derived from a number that was wrong by an order of
+magnitude, and the cap it produced happens to be defensible for a different reason than
+the one recorded: a fixed SoccerNet camera tolerates 200 frames comfortably, while
+broadcast footage is already at 1.74 m by 50. There is no single right cap across footage
+types, and 50 is a reasonable middle rather than a measured optimum. Bounding the
+BACKWARD carry needs a second check seed early in the segment; the board built from this
+clip is carried up to 456 frames back from its seed, and that distance is unmeasured.
+
+**D34 — a seed is checked against the frame it claims to describe, not against its own
+clicks; and one seed does not cross a broadcast clip.** Carried 453 frames, the Nottingham
+seed lands 44 m from where the players actually are (129 m at worst). Nothing downstream
+can tell: the tracks and the board share the wrong coordinate frame, so Pitchboard's
+fidelity score stays excellent while the play happens in the wrong half. The single-seed
+run also dropped ZERO detections as off-pitch where a correct model drops 4,358 — the
+drifted homography was mapping the crowd and the dugout onto the grass, and "nothing to
+filter" read as a clean clip.
+
+So the pipeline now anchors on every clicked frame. `fill` already prefers a direct fit and
+carries only the gaps, so more seeds shorten every chain rather than adding a mechanism.
+
+That immediately made things worse, which is the real lesson here. A seed clicked across a
+BAND of the frame is unconstrained in depth: three points along the top of frame 400 fit
+their own clicks to 0.27 m median and put the horizon a third of the way DOWN the picture,
+so two thirds of the frame mapped behind the camera and players landed at x = -93 m. Every
+number the fit reported about itself was excellent. Anchoring on it is worse than having no
+anchor there, because it is not wrong in proportion to distance - it is wrong AT the anchor.
+
+    seed        points  traced  own residual   frame behind camera
+    853             11      38   0.18 m med          0%
+    903             10      31   0.21 m med          0%
+    400              3      22   0.27 m med         33%   <- refused
+
+`behind_camera` is the check the residuals cannot make. `h[2] . p` is the homogeneous
+scale, so where it changes sign the ground plane has passed through infinity. A fit whose
+frame straddles that line does not describe its own picture, whatever it says about the
+points it was given. The margin is 0% against 33%, so the 25% threshold is not a boundary
+anyone has to defend.
+
+**D35 — snapping the camera model onto the painted lines improves the camera model and
+makes the tracks worse. Off by default.** Propagation is open-loop, so `refine.py` closes
+the loop: project the model's markings into the frame, find the paint they should be lying
+on, and refit. Against SoccerNet's per-frame ground truth it does what it claims --
+
+    carry only      median 0.22 m   worst 1.10 m   at 200 frames 0.94 m
+    carry + refine  median 0.22 m   worst 0.65 m   at 200 frames 0.16 m
+
+-- and end to end, on the same clips with the interval held at 0 so recall is comparable,
+it is a plain regression:
+
+    clip        snap    recall   precision
+    SNGS-147    off      41.3%      40.4%
+    SNGS-147    on        8.4%      97.8%
+    SNGS-116    off      67.3%      74.9%
+    SNGS-116    on       61.1%      67.6%
+
+97.8% precision on a recall of 8.4% is the on-pitch filter throwing nearly everything away:
+the model is plausible enough to pass its own guard and wrong enough to put the players off
+the grass. Feeding each snap back as the basis for the next carry made it worse still --
+one bad fit poisons the rest of the chain rather than costing one frame -- and carrying
+from the unrefined chain instead recovered 147 from 8.4% to 26.7%, which is still below
+doing nothing.
+
+So the code stays, behind `--snap`, and the default is off. Three things went wrong on the
+way to it and all three are the same mistake in different clothes:
+
+- a DLT minimises an ALGEBRAIC residual, and applied to a homography that was already
+  exactly right it moved it half a metre, because lines carrying 48 snapped points outvote
+  lines carrying 6 and the weight per constraint varies with depth. Geometric least squares
+  in metres fixed it.
+- snapping to the NEAREST painted pixel always finds the near edge of a line several pixels
+  wide, so it under-corrected by half a line width every pass and converged to being wrong.
+  The centre of the stripe fixed it.
+- it was built as a pass over the finished chain, on the reasoning that it therefore could
+  not compound. It also cannot PREVENT compounding: snapping has a capture radius of about
+  two metres, so it refused 384 of the 695 frames on the clip whose chain had wandered 44.
+
+And one thing that is simply not worth retrying: adding the centre circle and penalty arcs
+as constraints, on the reasoning that a mid-pitch frame has almost no straight paint. Their
+correspondences carry a 0.26 m systematic bias where the lines carry none, and 45 of them
+were enough to take a fit from 0.16 m to 1.03 m.
+
+The lesson worth keeping is the shape of it: the camera model got measurably better by the
+measurement built to judge camera models, and the thing the pipeline actually produces got
+worse. A metric that improves while the output degrades is not a metric to optimise against.
+
+`ft bench` exists because of this. One command, fixed settings, every clip, one table --
+so the next change can be judged against something reproducible rather than against a
+number nobody can regenerate. The baseline it prints today:
+
+    clip             tracks  recall  precis    error  purity  teams
+    SNGS-116             85   67.3%   74.9%   0.54 m   64.4%    75%
+    SNGS-121             50   15.8%   15.2%   1.30 m   61.3%    55%
+    SNGS-147             88   41.3%   40.4%   1.33 m   73.6%    72%
+    geny_rioave          29       no truth: 208 frames, home=23 away=4 gkHome=2
+    nottingham           77       no truth: 695 frames, home=43 away=32 gkHome=2
+
+A caveat on the numbers above, because it matters for anyone comparing them with the
+cross-validation table earlier in this file: those two sets do not agree. `ft auto --mode
+seed` plus `ft score` gives SNGS-121 15.8% recall where the table records 43.4%, and
+`--mode truth` gives 53.1% recall at 51.2% precision where the table records 85.0%
+precision. The difference is NOT this work -- the last commit before any of it scores the
+same -- so the table was produced by a bespoke sweep rather than by these two commands, and
+it should not be read as a baseline these commands reproduce. The snap-on against snap-off
+comparison is internally consistent and is the one that decided the default.
+
+**D36 — the camera model is learned, because the missing thing was never the paint but
+the NAME of it.** `refine.line_pixels` finds markings to a median of 0.00 m under a correct
+homography. What it cannot do is say which marking a white pixel belongs to: it infers that
+from the homography it is trying to fix, which is the circularity that gave it a two-metre
+capture radius and lost it the benchmark (D35).
+
+A segmenter answers that one question. Every pixel arrives already named, so a
+correspondence is a fact rather than an inference, and a homography can be fitted per frame
+from nothing at all -- no seed, no carry, and therefore no drift. Manual seeding, drift and
+the cut-detection problem are one problem wearing three hats, and this is the hat.
+
+DeepLabv3 on a MobileNetV3 backbone, 27 classes. Trained on SN-GSR-2025 -- broadcast footage
+carrying per-frame line annotations in the format `lines_of` already reads -- at 640x360, then
+960x540, then 960x540 with SN-Calibration-2023 added, and finally at 1280x720 on GSR alone.
+Four runs, and the last is the best on every clip.
+Both are training data ONLY: at inference the model sees the user's own clips and SoccerNet is
+never involved. Weights are gitignored rather than committed, which is also the answer to what
+the data licence permits.
+
+Three things this is built around:
+
+- **The split is by MATCH, never by clip or frame.** SNGS-116 and SNGS-121 are both game 7,
+  so a clip-level split puts the same stadium, camera and kit on both sides and reports a
+  generalisation that was never tested. `split_by_game` is the whole guard and
+  `test_calib.py` pins it.
+- **Background is 95% of the pixels**, so plain cross-entropy scores 95% by predicting
+  nothing. The background class is weighted to 0.05.
+- **A predicted class the fitter cannot name is wasted supervision, not a bug.** Circles and
+  goalposts are labelled and learned because they teach the network what a pitch looks
+  like; only the 17 straight markings become correspondences. A test asserts those 17 are
+  exactly `PITCH_LINES`, because the fitter silently ignores anything else.
+
+The fit is DLT first -- it needs no starting guess, which is the entire point -- then the
+geometric least squares from `refine`, because a DLT is biased by how many pixels each
+marking happens to contribute (D35 again).
+
+Kill criterion, set before training: a per-frame fit must beat 0.5 m median `observed_error`
+on a held-out MATCH and solve 80% of frames. A good human seed is 0.15-0.3 m, so anything
+worse is not worth replacing seeding with.
+
+**That bar was FAILED, and the verdict stands.** Four runs, best 0.67 m. The segmenter does
+not replace the human seed and this document does not claim it does.
+
+**A second, different question is now open, and it needs its own bar.** The first bar asked
+*can this replace a human?* — measured against a human's 0.15-0.3 m, on frames the fit was
+attempted on. What it never asked is *is this better than what the pipeline actually does
+today?* The pipeline does not have a human's 0.15-0.3 m: it has ONE seeded frame carried
+through the clip by tracking the grass, and the carry drifts. D19 measured the cost of that
+drift at 62.9% identity purity against 82.9%. So the two questions have different answers,
+and end-to-end measurement says the second is the useful one.
+
+The second bar, stated before the numbers came in, in the terms `ft bench` already prints:
+
+> The segmenter path must beat the `--mode seed` baseline **on every clip**, on precision and
+> on position error, without costing recall on any of them.
+
+Three things about that. It is measured end to end on what reaches `tracks.json`, not on
+`observed_error`, because a camera model that is better by its own metric while the tracks
+get worse is precisely the D35 failure and this stage has now walked into it once. It is a
+comparison against the pipeline as it stands rather than against an absolute, because
+"better than what we ship" is the decision actually being made. And it is deliberately
+strict on recall: the segmenter's headline gains come partly from refusing frames, and a bar
+that ignored coverage would reward refusing more of them.
+
+Failing the FIRST bar is not evidence about the second, and passing the second does not
+retire the first. The honest summary of both is: this cannot replace seeding, and it may
+still be the better thing to ship.
+
+**First run: solves everything, and is not accurate enough.** Trained at 640x360 on games
+4, 6 and 9 (4,275 frames), evaluated on the held-out matches:
+
+    clip        solved   median   p90     with refine chained on
+    SNGS-147      100%    0.84 m  2.76 m         1.32 m
+    SNGS-116      100%    3.76 m  8.39 m         0.72 m
+    SNGS-121      100%    1.54 m  8.42 m         0.38 m
+
+The solve rate is the part worth noticing: 100% of the ANNOTATED frames, from the picture
+alone, with no seed and nothing carried. The accuracy fails the bar. (That 100% was read as
+"of every frame" for four runs and it is not — across whole clips run 4 solves 51-83%. See
+the end-to-end results below, which is where the difference finally showed up.)
+
+It is NOT a naming problem, which is what it was built to fix and what it did fix. Under
+the true homography only 3-9% of predicted pixels sit more than 2 m from the line they
+claim. What they are is imprecise: the median predicted pixel is 0.26 m from its line near
+the camera and 1.45 m from it far away, because at 640x360 a 3 px line upscales to a 9 px
+band and a band that wide is worth over a metre at the far touchline. So the limit is
+resolution, and the retrain is at 960x540.
+
+Two things not to repeat. Chaining `refine` after the segmenter helps enormously on two
+clips and wrecks the third (p90 2.76 m -> 17.65 m), so it cannot simply be switched on.
+And choosing between the two fits by which better explains the segmenter's own pixels does
+not work, for a reason worth remembering: the mask fit was fitted to minimise exactly that
+quantity, so the test is rigged for it and picked it 45 times out of 65. Selecting on the
+data you fitted on is not selection.
+
+**Second run: 960×540, the same five matches, and it settles what was actually missing.**
+Validation loss reached its best at epoch 2 and then rose for twelve consecutive epochs.
+Two and a half hours of compute for a checkpoint taken inside the first thirty minutes.
+
+    clip        solved   median   p90      640×360 median
+    SNGS-147      100%    1.13 m  2.27 m         0.84 m
+    SNGS-116      100%    3.20 m  6.94 m         3.76 m
+    SNGS-121      100%    0.69 m  1.35 m         1.54 m
+
+Better on two clips, worse on one, still nowhere near half a metre. Resolution was a real
+limit — 121 more than halved and 116's p90 came in by a fifth — but it was not the *binding*
+one. **Five matches is.** A network shown three stadiums learns those three stadiums, and at
+960×540 it learns them faster. The overfitting curve is the evidence: nothing after epoch 2
+was learning about pitches, it was learning about those pitches.
+
+*That conclusion was wrong, and the third run is what disproved it. It is left standing
+because it is why the third run was worth doing, and because the reasoning still looks sound
+from here — which is the point. Read on.*
+
+**Third run: 345 matches instead of five.** SN-Calibration-2023 is 19,675 annotated frames
+across six leagues and three seasons, natively 960×540 — exactly the training size, so
+nothing is resampled on the way in. It carries no video and no tracks, so the segmenter is
+the only thing in this repo that can read it.
+
+Three things made it usable rather than merely large:
+
+- **`match_info.json` names the fixture behind every image.** Without it these frames would
+  have arrived with no match tag, `split_by_game` would have had nothing to hold out, and the
+  leakage guard would have gone on passing while guarding nothing — the same failure as the
+  clip-level split, arriving by a different door. The dataset ships its own match-disjoint
+  train/valid split (290 matches against 55, none shared), so it is added on either side of
+  ours rather than re-split.
+- **The labels have a trailing space in them.** `"Goal left post left "` is written with one,
+  and an exact `INDEX` lookup returns `None` for it, so 1,101 instances would be dropped as an
+  unknown marking and that class would train on nothing at all. It fails as *silence*, not as
+  an error. The lookup strips, at the one site where names resolve.
+- **It is public.** calibration-2023 is not behind the NDA — the `.env` password is in fact
+  rejected for it (401 where the library's public default gets 200), which is how this was
+  found out. The licence question the run seemed to raise was moot.
+
+GSR clips stay in the mix, because the benchmark is GSR footage and the model should see some.
+
+**The caveat that cannot be closed.** GSR identifies a clip's match only as `game_id: 7`/`8`
+— no league, no fixture, no date — so it is impossible to prove *by name* that the three
+benchmark matches are absent from calibration-2023's 345. The season ranges do not overlap
+(2014–17 against a 2025 capture), so the risk is low, but low is not zero and this is
+unverifiable rather than verified. Say so beside any number this run produces.
+
+One thing to keep an eye on: validation is now dominated by calibration-valid (3,212 frames)
+over the held-out GSR games (225), and the checkpoint is chosen on the combined mean. That is
+a slight mismatch with a benchmark that is entirely GSR footage — the saved checkpoint is the
+best on *pitches in general*, not the best on this broadcast camera.
+
+**And it did not work.** Seven hours, 70x the matches, and two clips of three got worse:
+
+    clip        solved   median   p90      960×540/5-match median
+    SNGS-147      100%    0.90 m  2.29 m         1.13 m
+    SNGS-116      100%    5.19 m  8.47 m         3.20 m
+    SNGS-121      100%    1.13 m 15.61 m         0.69 m
+
+121's p90 is the alarming number — 1.35 m to 15.61 m, a tail of frames that are not merely
+worse but wrong, on the one clip that had been nearly good.
+
+The obvious mechanical explanation was checked and is NOT the cause: if calibration-2023
+named its markings differently from GSR, `INDEX.get(name.strip())` would drop them silently
+and 82% of the training frames would carry masks with lines missing — teaching the model to
+suppress exactly what it needs. The two datasets share a vocabulary almost exactly: 27,497
+label hits against 6 misses, all of them a stray `"Line unknown"`.
+
+So the conclusion after run 3 is the uncomfortable one. **Diversity was not the binding
+constraint, and the claim at the end of the second run was wrong.** More than that: the
+scatter *between* runs was as large as the differences *between* conditions, three runs in,
+which means none of the three had separated its hypothesis from noise. The first two runs
+each moved two variables, and the third moved two more.
+
+**Fourth run: 1280×720, and the first controlled experiment in the series.** One variable.
+Same 4,275 training frames, same 225-frame validation set, same holdout as run 2 — the log
+header is byte-identical — with only the resolution changed. GSR is 1920×1080 on disk, so
+960×540 had been discarding half the linear resolution of the only footage the benchmark is
+scored on.
+
+    clip        solved   median   p90      960×540 median   960×540 p90
+    SNGS-147      100%    0.67 m  1.70 m         1.13 m        2.27 m
+    SNGS-116      100%    2.87 m  5.37 m         3.20 m        6.94 m
+    SNGS-121      100%    0.67 m  1.20 m         0.69 m        1.35 m
+
+Best on every clip and every p90, and the only run to improve all three at once. Against a
+directly comparable validation loss it is better too — 0.1376 against run 2's 0.1534 — which
+is the one place in this series where the loss and the metres agreed.
+
+Two things it settles, and one it does not:
+
+- **Resolution is the lever.** It is now measured against a controlled baseline rather than
+  inferred from runs that moved several things.
+- **Overfitting onset is a property of the data, not the resolution.** Both 960×540 and
+  1280×720 peak at epoch 2 on five matches and climb for every epoch after. Resolution moved
+  the floor and left the onset alone. Practically: a run of this shape wants ~4 epochs, and
+  the other ten only confirm the checkpoint already on disk.
+- **It still misses the bar**, at 0.67 m against 0.5 m. 147 and 121 are close; 116 is not, and
+  it has never been — 2.87 to 5.19 m across four configurations while the other two swung by a
+  factor of two. That is a property of the clip and no resolution has touched it. It wants a
+  look at which frames fail, not another run.
+
+Above 1280×720 there is a constraint worth stating outright, because it is invisible and it
+would quietly poison the next run: **SN-Calibration-2023 is natively 960×540.** Training the
+combined set any higher upsamples 82% of it, which adds no detail and teaches the model to
+expect blur that inference will not supply. Above 960×540, train on GSR alone (`--no-extra`)
+or not at all. The constants in `calib.py` carry this note beside them.
+
+**End to end, it is better than the pipeline it would replace — on two clips of three.**
+`ft auto --mode segmenter` registers every frame from the learned lines, with no seed, no
+carry and no ground truth. Against `--mode seed` (what the pipeline does today: frame one's
+lines, carried) and `--mode truth` (every frame's real lines, the ceiling):
+
+    clip      mode        recall  precision  position error   solved
+    SNGS-147  seed         41.3%     40.4%     1.33 m         100%
+              segmenter    52.0%     80.9%     0.65 m          83%
+              truth        81.1%     81.8%     0.77 m         100%
+    SNGS-116  seed         67.3%     74.9%     0.54 m         100%
+              segmenter    48.8%     68.7%     0.59 m          81%
+              truth        66.4%     73.4%     0.48 m         100%
+    SNGS-121  seed         15.8%     15.2%     1.30 m         100%
+              segmenter    44.9%     87.8%     0.50 m          51%
+              truth        53.1%     51.2%     0.60 m         100%
+
+On 147 and 121 it is not close: precision doubles on one and goes 15% to 88% on the other,
+while the position error halves. On 116 it is a small regression, which is the same clip the
+segmenter has never been good on.
+
+**Read the medians with the solve rate beside them, or they lie.** The segmenter's 0.50 m on
+121 is measured over the 51% of frames it accepted, having refused the rest; `truth`'s 0.60 m
+is over all of them. It is not more accurate than ground truth, it is more SELECTIVE than
+ground truth. What the mode really buys is precision — the samples it writes are far more
+likely to be real — and it pays in recall.
+
+**Which makes refusals, not accuracy, the binding constraint now.** Half of SNGS-121 is
+declined. The obvious next move is a SHORT carry to bridge the gaps — `--carry 5` rather than
+the unbounded chain D19 condemned — which should recover most of the recall while keeping the
+drift bounded to a few frames. That is untested, and it is the cheapest experiment left.
+
+**What the refusals actually are: a midfield view, one line short.** The gaps are not
+scattered hard frames, they are contiguous passages — SNGS-121 refuses frames 0-367 in one
+block and then solves nearly everything after; SNGS-116 refuses 136 frames from 614; SNGS-147
+has blocks of 54 and 44. Every one of them is a MIDFIELD camera. Counting what the segmenter
+names in SNGS-121:
+
+    frame 100  (refused)   Big rect. right main 2260 px   Big rect. right top 2914 px
+                           Middle line 3139 px            Side line top 17629 px
+                           Circle central 11765 px  <- DISCARDED
+                           -> 4 usable straight lines, and MIN_LINES is 5
+
+    frame 500  (solved)    9 usable straight lines, box and six-yard box both in shot
+
+Half of that clip is refused for want of ONE line, while the second-largest marking in the
+frame — a confidently segmented centre circle — is thrown away by `fit_from_mask`, which
+speaks only `PITCH_LINES`. The model is doing its job; the FITTER is what refuses.
+
+This looks like the thing D35 says not to retry, and it is not quite. What was measured and
+rejected there was circle *pixels* as correspondences: a pixel on the circle says only that it
+lies somewhere on a 57 m curve, which is a point-to-curve constraint, and 45 of them carried
+enough systematic bias (0.26 m) to take a 0.16 m fit to 1.03 m. Two things differ here. The
+frames in question produce NO fit at all, so the comparison is against nothing rather than
+against 0.16 m. And there is a construction with no such ambiguity: the halfway line runs
+through the circle's centre, so it cuts the circle at exactly two points — (52.5, 24.85) and
+(52.5, 43.15) — and a penalty arc meets its box line at two more. Those are exact
+correspondences, not point-on-curve ones. Whether they are enough is unmeasured; what is
+measured is that the current gate refuses half a clip while looking at 11,765 pixels of
+usable geometry.
+
+Do not let this become the D35 mistake in reverse. The bar is `ft bench`, end to end, on all
+three clips — not the number of frames that stop being refused.
+
+**Built, measured, and it misses the second bar by one cell of nine.** `CURVE_CROSSINGS` in
+`calibration.py` names the three places a curve meets the line that cuts it; `calib._crossings`
+finds them in the mask and hands `calibration.fit` exact point correspondences. Per-frame
+accuracy on the annotated frames:
+
+    clip        before   after    p90 before -> after
+    SNGS-147    0.67 m   0.67 m      1.70 -> 1.70
+    SNGS-116    2.87 m   1.20 m      5.37 -> 3.39
+    SNGS-121    0.67 m   0.67 m      1.20 -> 1.20
+
+SNGS-116 more than halves. That is the clip that would not move for resolution, for 70x the
+matches, or for anything else tried across four training runs — and it was never a training
+problem. Its box views put a penalty arc across the box line, and those two exact spots were
+being thrown away.
+
+End to end against the `--mode seed` baseline the second bar names:
+
+    clip       recall           precision        position error
+    SNGS-147   41.3 -> 52.5     40.4 -> 75.9     1.33 -> 0.66 m
+    SNGS-116   67.3 -> 62.5     74.9 -> 86.6     0.54 -> 0.51 m
+    SNGS-121   15.8 -> 45.1     15.2 -> 81.7     1.30 -> 0.50 m
+
+Precision and position error clear on all three. **Recall on SNGS-116 does not** — 62.5%
+against 67.3% — so the bar as written is missed. Eight cells of nine is not the bar; the bar
+said every clip and no recall cost. It was written before these numbers and is not being
+adjusted after them.
+
+What the crossings cost is worth stating separately, because it is the same trade the whole
+mode makes. Against the segmenter WITHOUT them, 116 gains 13.7 points of recall and 17.9 of
+precision, while 147 and 121 each LOSE about 6 points of precision for a fraction of a point
+of recall. Newly-admitted frames are the ones that were being refused, and they are harder
+than average; admitting them raises coverage and lowers the average quality of what is
+admitted. On 116 that is overwhelmingly worth it. Elsewhere it is close to neutral.
+
+**The conic was the wrong tool and is gone.** `cv2.fitEllipse` on a clipped arc — 3,174 px of
+penalty arc cut off by the frame edge — returns a 46x153 sliver, an unconstrained
+five-parameter surface through a stub, and intersecting it puts crossings wherever the algebra
+lands. Angular coverage does not tell those fits from good ones either: the sliver scores 69%
+where a healthy circle scores 50%, so that guard was measured and rejected rather than shipped.
+
+`_touching` needs no fit at all. A penalty arc IS the part of a circle outside the box, so it
+ends ON the box line; the halfway line runs through the centre spot, so it cuts the centre
+circle radially, at 90 degrees. Take the curve's own pixels within a line width of the line,
+sort them along it and split at the widest gap: two clusters are two crossings, one cluster is
+a clipped arc and is refused. It cannot invent a crossing, because a pixel centroid is by
+definition where pixels are — which also made the `_near` guard dead code, so it went.
+
+One bias worth knowing before it is chased: labels compete for the pixels where two markings
+overlap, so a curve's own pixels stop about a line width SHORT of the true crossing. At 90
+degrees that costs nothing, which is the centre-circle case. A penalty arc meets the box line
+at 53 degrees, so both its endpoints are pushed the same way and the fit absorbs most of it.
+
+**Measured, and it is better construction rather than a better outcome.** `calib-eval` is
+identical to the conic's (0.67 / 1.20 / 0.67), and so is end to end on SNGS-147 and SNGS-116.
+The whole difference is SNGS-121:
+
+    SNGS-121         unsolved   recall   precision   error
+    no crossings        368      44.9%     87.8%     0.50 m
+    conic               339      45.1%     81.7%     0.50 m
+    touching            288      46.5%     74.5%     0.51 m
+
+It rescues 51 frames the conic could not, so the clipped-arc handling does work — and they are
+BAD frames: 1.4 points of recall for 7.2 of precision. Precision falls monotonically as
+coverage rises, which is the evidence that the frames still refused are refused correctly.
+
+The nuance that matters more than the change: **crossings are not a uniform win.** They improve
+SNGS-116 on every axis (0.59 to 0.51 m, precision 68.7 to 86.5%, recall 48.8 to 62.5%) and
+mildly hurt SNGS-121. They are the fix for BOX views with a penalty arc, which is what 116 is
+made of, and near-neutral elsewhere. The second bar is still missed, still on SNGS-116's
+recall.
+
+**The bar was set below the noise floor of the ruler.** The 0.5 m criterion was written
+before anything was trained, from the reasoning that a human seed is 0.15-0.3 m. Nobody
+checked what the GROUND TRUTH is worth, and it is worth less than the bar:
+
+    clip        held-out marking lands this far from where the rest of the frame puts it
+    SNGS-147    median 0.318 m   p90 1.441 m   (4,410 held-out fits)
+    SNGS-116    median 0.348 m   p90 1.067 m   (3,912)
+    SNGS-121    median 0.512 m   p90 1.630 m   (3,204)
+
+Leave one marking out, fit from the others, and project the held-out marking's own annotated
+points: they miss its pitch line by a third of a metre typically, and by half a metre on
+SNGS-121 — which is the bar exactly. Every `observed_error` in this document is measured
+against a reference carrying that much disagreement with itself, so a run at 0.67 m is nearer
+its ceiling than the raw number suggests, and part of what four training runs were chasing was
+annotation noise.
+
+Two honest limits on that. It measures self-CONSISTENCY, not accuracy: a systematic error the
+whole annotation shares is invisible to it. And a held-out marking residual is not the same
+quantity as `observed_error`, so the two do not subtract cleanly. What it does establish is
+that 0.5 m was never a safe target on this data, and that a fifth training run chasing 0.17 m
+would have been chasing something the measurement cannot resolve.
+
+The first thing to do with this is NOT to move the bar. It is to notice that the ceiling was
+never measured before the bar was set, and that measuring it cost under an hour and no GPU.
+
+**Measured through PITCHBOARD, the whole thing is a regression. Read this before doing more
+of it.** Every number above is a proxy. The artefact this repo exists to produce is a board,
+and `src/import/` in the sibling repo is the only thing that makes one. Running every variant
+of SNGS-147 through `boardFromTracks`:
+
+    variant                players     scenes  window   x range    max travel  curves
+    seed (shipping)        19 (8H/11A)   6      2.9 s   36-79 m     15.0 m      10
+    truth (ground truth)   14 (11H/3A)   4      8.2 s    6-68 m     12.1 m      18
+    touch / cross / r0     10 (8H/2A)    4      6.9 s    3-35 m      4.9 m      15
+    r0.54 (residual gate)  10 (1H/9A)    4      6.2 s    4-37 m      6.6 m      13
+    r0.48                   8            2      2.8 s    4-38 m      3.3 m       8
+
+**The shipping seed-and-carry pipeline makes the best board by a distance** -- 19 players
+against 10, and 15 m of travel against 4.9 m. Every segmenter variant confines the board to a
+third of the pitch with players that barely move. `observed_error` fell from 1.33 m to 0.57 m
+and precision rose from 40.4% to 91.4% across the same series.
+
+The residual gate is the sharpest version of the error. "Refuse the frames you fit worst" and
+"refuse the frames looking at the far end of the pitch" are the SAME instruction on a panning
+camera, so the gate bought its precision by discarding the wide views -- and `chooseWindow`
+then had no well-covered window except one where the camera sat still. Hence 1 home player,
+9 away, and a clump.
+
+The lesson is D35's, at a larger scale and after D35 was written: a metric that improves while
+the output degrades is not a metric to optimise against. Four training runs, a fitter change,
+a carry sweep and a quality gate were all judged on per-frame quantities, and the one
+measurement that mattered took twenty minutes and was never run until the end.
+
+**What this does NOT say** is that the segmenter is worthless. Its per-frame accuracy is real
+and so is SNGS-116's 2.87 -> 1.20 m. What it says is that per-frame accuracy was never the
+binding constraint on a BOARD, and the binding constraint is now visible in the same table:
+every variant, ground truth included, shatters 22 players into 43-88 fragments lasting 2-4% of
+the clip, and only five or six survive `MIN_COVERAGE`. That is stage 2, not stage 1. A perfect
+camera model would still produce a ten-player board.
+
+**D55 — seed mode was seeding from the FIRST solvable frame, and the first frame is the
+worst one.** SNGS-121 scored 15.8% recall where SNGS-116 scored 67.3%, and the gap had been
+sitting in every table unexplained. It is not the clip.
+
+The chain: its first 369 frames are midfield views carrying at most four usable markings, so
+nothing could register them; `--mode seed` therefore seeded at frame 370 and carried the fit
+BACKWARDS across a camera pan to cover half the clip, at 10.73 m median camera error with 94%
+of frames worse than 2 m. Against a 2 m match radius nothing matched.
+
+Making those frames solvable made it WORSE, which is the instructive part. `curve_crossings`
+rescues them at a 0.385 m residual against 0.123 m at frame 370 — they are by construction the
+fits the fitter was least sure of — so seeding on the earliest put the weakest fit in the clip
+into every frame of it, and recall fell to 9.4%.
+
+The fix is to seed from the best-EVIDENCED frame, counting visible markings:
+
+    clip        seeded            recall          precision       position error
+    SNGS-147    frame 1 -> 288    41.3 -> 72.6%   40.4 -> 72.4%   1.33 -> 0.69 m
+    SNGS-116    frame 1 -> 162    67.3 -> 66.0%   74.9 -> 74.5%   0.54 -> 0.59 m
+    SNGS-121    frame 1 -> 405    15.8 -> 71.6%   15.2 -> 69.1%   1.30 -> 1.00 m
+
+Two clips transform and one is a shade worse. SNGS-121's board gains most: a 20.2 s passage
+against 13.2 s, 26.9 m of travel against 14.7 m, and 57 curved runs against 37, at the cost of
+three players.
+
+Counting MARKINGS rather than scoring each fit's own residual, deliberately: a fit is chosen
+to minimise that residual, so a barely-solvable frame scores well on it for exactly the reason
+it is fragile. That is D35's rigged-selection trap, and the crossing-rescued frames demonstrate
+it -- 0.343 m residual and useless as seeds.
+
+It also models the intended human better. Seed mode stands for "a coach clicks four corners
+once"; a person doing that picks a view where they can see the pitch, and taking whatever comes
+first models a worse human than the one being modelled.
+
+**Two measurement bugs found underneath this, both worse than the thing they were hiding.**
+`ft truth` wrote the yardstick through `tracks.write`'s 0.1 s default, so the file every score
+is measured against held two fifths of the samples of the 25 fps runs being judged -- SNGS-116's
+precision read 37.5% instead of 74.9% with no pipeline code changed. It now defaults to 0, the
+way `ft bench` already argued for its own interval. And the `truth.json` files in `work/` were
+of unknown provenance, generated by some earlier version and never regenerated; every baseline
+in this document had been measured against them.
+
+**D62 — the camera model is the biggest lever in the pipeline, and the segmenter's problem is
+neither coverage nor accuracy but a tail of confidently wrong fits.** Measuring where
+ground-truth players are lost, rather than following the last visible defect:
+
+    clip        detected in the image   projected within 2 m   the homography loses
+    SNGS-116          92.0%                   71.3%                  22.6%
+    SNGS-110          83.2%                   44.3%                  46.8%
+    SNGS-147          91.1%                   69.3%                  23.9%
+
+Detection is not the constraint. Swapping in ground-truth registration and changing nothing
+else is worth 12 to 21 points:
+
+    clip        seed recall/precision   truth recall/precision
+    SNGS-110       42.5 / 53.3             60.8 / 74.9
+    SNGS-147       72.8 / 72.5             85.3 / 85.8
+    SNGS-116       66.0 / 74.6             70.0 / 77.4
+
+**Two obvious explanations are both wrong, and measuring them first would have saved a day.**
+The segmenter is NOT short of coverage: it solves 615 frames on SNGS-116 where the ground-truth
+LINES solve 613, 428 against 419 on SNGS-110, 645 against 652 on SNGS-147. The frames neither
+can solve are views with too few markings to fit anything, so training could recover one to
+nine frames a clip. And it is not inaccurate: on the frames both solve it matches or beats the
+annotations, 92.7% of players within 2 m against 89.0% on SNGS-116.
+
+What it has is a TAIL. On SNGS-147, 84 of 645 fitted frames put players more than 3 m out, with
+a p90 of 10.81 m against the annotations' 2.41 m. Those frames wreck recall, and bridging them
+by carrying makes it worse rather than better -- carry 5 adds 36 frames to SNGS-147 and costs
+eight points of precision, because a carry from a bad anchor is bad immediately.
+
+**The fit's own residual cannot find them, and its docstring says why.** It is in-sample: the
+fit was chosen to minimise roughly that quantity, so a frame with few constraints is
+confidently wrong and scores well. Measured, good frames sit at 0.470 and bad at 0.756, and a
+gate at 1.0 m keeps 100% of the good and 87% of the bad. Nor is the homography self-evidently
+wrong: good frames also project image corners to absurd distances, because the horizon maps to
+infinity.
+
+**The previous fit, walked forward by measured motion, is independent of this frame's fit and
+separates them by twenty times.**
+
+    clip        neighbour disagreement, good   bad      gate 2.0 m keeps
+    SNGS-147          0.17 m median            4.44 m   96% of good, 35% of bad
+    SNGS-116          0.34 m                   4.80 m   99% of good, 50% of bad
+    SNGS-110          0.31 m                   3.22 m   96% of good, 25% of bad
+
+`stage1_propagate.winnow` applies it, chained so a rejected fit never becomes the standard its
+neighbours are judged against, and with the reference expiring after `DEFAULT_MAX_CARRY` because
+a stale carry drifts and starts refusing good fits. On segmenter mode it is a large per-frame
+win:
+
+    SNGS-147   recall 52.5 -> 48.7%   precision 75.6 -> 94.1%   purity 69.3 -> 90.3%
+
+90.3% identity purity is the best figure in this repo, and it came from stage 1. Five direct
+attempts on the tracker could not move purity at all (D61); removing the frames where the
+camera model throws every player at once did. That is the lesson worth keeping.
+
+**And the board does not care.** Within segmenter mode the gate improves two of three boards and
+loses the third, for a net of -0.7 observed player-seconds. Segmenter mode still loses to seed
+mode overall, because 48.7% recall fields thin rosters -- SNGS-147 comes out with one home
+player. So the gate is kept as a strict improvement to a mode that is not the default, and it
+does NOT change which mode to use. The 12-to-21-point prize from truth-grade registration is
+still unclaimed, and neither carry, retraining, nor this gate claims it.
+
+**D67 — the two registrations fail in opposite directions, and the board needs both halves.**
+Run on the clip a coach called bad and on one of the benchmark three, with everything after
+stage 1 held fixed:
+
+    clip        mode        frames solved   p50      p90      >5 m from any player
+    SNGS-151    seed          750 of 750    1.24 m   8.08 m         22.6%
+                segmenter     227 of 750    1.21 m   4.06 m          6.2%
+    SNGS-116    seed          750 of 750    0.74 m   7.86 m         12.7%
+                segmenter     594 of 750    0.56 m   2.03 m          3.1%
+
+Seeding propagates one human fit through every frame: coverage is total and it drifts, so a
+fifth of SNGS-151's players end up somewhere nobody is. The segmenter fits each frame on its
+own: three to four times cleaner, and silent wherever too few markings are in shot.
+
+**Cleaner registration makes a WORSE board, and the reason is coverage.** Through the importer,
+SNGS-151 comes out as 20 correct players over an 17.8 s window from the seed and 18 over 6.0 s
+from the segmenter, because refusing 519 frames collapses the passage there is anything to
+build from. SNGS-116 is 18 correct over 21.6 s against 17 over 13.6 s.
+
+**So `observed_error` was the wrong number all along.** It is conditioned on the frames a model
+already solves, which rewards refusing the hard ones -- and every judgement about the segmenter
+in this document rests on it, including the 0.5 m bar that five runs were killed against. The
+number that matters is the share of ALL frames registered within a metre or so, and no run has
+ever reported it.
+
+**And the detector is not involved.** In image space, where no camera model can interfere, it
+finds 96.7% of visible players on SNGS-151 and 97.3% on SNGS-060 -- the clip that produces the
+best board and the one that produces the worst. Whatever separates those two boards, it is not
+detection.

@@ -1,0 +1,188 @@
+# Decisions — tracking
+
+Stage 2 — finding people and following them.
+
+Every decision here was measured before it was made. They are kept because the code
+cites them by number, and because the failures are worth as much as the successes.
+
+**D8 — track samples are sparse.** A player occluded for twenty frames has no position for
+those frames, and inventing one is a lie the reduction would fit a bezier to. Every sample
+carries its own frame index; gaps are expected and the consumer interpolates or declines to.
+
+**D13 — an off-pitch position is dropped, never clamped.** A position 200 m out is not a
+player near the touchline, it is a homography that failed. Clamping launders that failure
+into a plausible coordinate the reduction then fits a curve through, and the resulting run
+looks like a real one. Rejecting loses a sample; clamping invents one. The guard is
+`tracks.on_pitch`, so the CV path and the ground-truth path cannot disagree about what
+counts as credible.
+
+**D20 — the tracker is ours.** supervision's ByteTrack is deprecated and disappears in 0.31,
+and this regime has a signal a general tracker does not use: a team wears one colour, which
+is exactly what tells two crossing players apart. Association is greedy over a gate, in
+metres, so the gate is a physical claim about how far a footballer runs rather than a claim
+about how fast the camera pans.
+
+**D22 — stage 2 does not depend on stage 1.** The gate is a speed — a footballer covers at
+most MAX_SPEED metres in a second — and it reaches pixels through the only local scale that
+needs no camera model: a detection box is about 1.8 m tall, so it says how many pixels a
+metre is right there. Camera motion is removed with the frame-to-frame transform rather than
+by projecting to the pitch. Both halves matter: raw pixels lose a panning camera, and pitch
+metres inherit every wobble in the homography.
+
+**D27 — anyone standing off the pitch is dropped BEFORE tracking, not after.** Two fifths
+of what the detector finds on SoccerNet is crowd, dugout staff and ballboys behind the
+hoardings. They were always discarded at the end, but until then they were competing for
+associations and spawning tracks of their own. Filtering first takes 123 tracks to 69,
+lifts identity purity from 77.8% to 79.3% and drops switches from 44 to 38, at no cost to
+recall.
+
+This is the one place stage 2 consults stage 1, and it is a deliberate exception to D22:
+only as a FILTER. The association still never sees a homography, so a drifting camera can
+change which detections are considered and cannot change the identities.
+
+**Four things that did NOT work, recorded so they are not retried.** Associating in pitch
+metres rather than stabilised pixels; optimal assignment instead of greedy (worth keeping
+on its own merits once the junk was gone — 69 tracks against 72 — but it fixed nothing);
+raising the weight on kit colour, which is genuinely discriminative (same-team pairs sit at
+0.32, opposing at 0.67) and still moved nothing; and stitching fragments back together
+afterwards, which reunited one player for every two players it wrongly welded into one. The
+last was deleted rather than tuned: a fragment loses a run, but a bad join invents one, and
+nothing downstream can tell.
+
+**D28 — the detector is RT-DETR, and the first one was deliberately a floor.**
+torchvision's Faster R-CNN was chosen because it was BSD, already a dependency, and
+certain to be beatable — so every number taken with it was a lower bound rather than a
+best case. Once the pipeline was measurable enough to compare fairly, it was replaced:
+
+    Faster R-CNN  conf 0.50   83.6% recall   1.6 spurious per frame   0.26 s/frame
+    RT-DETR       conf 0.50   86.2% recall   0.5 spurious per frame   0.14 s/frame
+
+Better on all three, and Apache-2.0, so the licence story stays clean (D9).
+
+**The false-positive column matters as much as recall**, which is why the confidence
+floor stays at 0.5 rather than dropping to 0.4 for four more points of recall. Everything
+the detector invents competes for associations and spawns tracks. On the Rio Ave clip the
+swap took 50 tracks to 35 and, more to the point, fragments covering under a tenth of the
+clip from 17 to 5 — the twelve longest now run 205, 196, 185 and 183 frames out of 208.
+
+Two things that did NOT lift recall and are not worth retrying: a larger input image (800
+against 1333 changed nothing, because the misses are occlusions rather than small
+players), and a lower confidence floor, which buys recall at about three spurious boxes
+per real one.
+
+**D30 — a track that has lost its player gives up quickly.** 88 of 98 identity changes
+on SNGS-147 happened AFTER A GAP, at a median of ten frames — not during a visible
+crossing, which is where I had assumed they were. A track that has lost its player coasts
+on a stale prediction, its gate grows with the wait, and when detections resume it takes
+whoever is nearest. Over half the time that was an opponent.
+
+Cutting `MAX_AGE_S` from 0.8 to 0.24 takes purity from 76.9% to 80.5% and switches from
+37 to 26, with the track count and recall unchanged: the player is picked up again either
+way, and what is saved is a run stitched onto somebody else.
+
+It also settles why weighting kit colour more heavily never helped, which had been an
+open puzzle. At 0.8s the wrong candidate is reachable and colour is asked to talk the
+tracker out of it; shorten the wait and it was never reachable, and the two weightings
+score identically.
+
+**Which measurement chose the number matters here.** Run fidelity compares a board with
+the TRACKS it was built from, so it cannot see a steal — the board faithfully draws
+whatever the tracker believed. Only ground truth can, and a shorter age looked WORSE by
+fidelity while being better by truth. Do not tune this against a clip with no answers.
+
+**D53 — stage 2 fragments every player, and joining the pieces afterwards is safe where
+lengthening the tracker's memory was not.** The measurement that redirected the work: against
+ground truth on SNGS-147, a player is in shot about 239 frames of 750 and comes out as a
+median of 4 predicted fragments — roughly 48 frames each, which is 6% of the clip against the
+importer's `MIN_COVERAGE` of 30%. That, not the camera model, is why a 22-player clip becomes
+a ten-player board.
+
+`MAX_AGE_S` is 0.24 s deliberately (see its comment): a longer wait lets a track coast on a
+stale prediction and take an opponent when detections resume. The fragments are the price that
+was knowingly paid for the steals. So the fix is not to raise it.
+
+`stage2_stitch.py` joins fragments afterwards instead, and the asymmetry is the whole point:
+the tracker must decide AT the gap with nothing after it to go on, while this runs when both
+sides are known and can require two fragments to be each other's best continuation. 39% of
+identity changes have a gap of one frame or less — the player never disappears, the tracker
+merely renumbers them — and 70% are inside 12 frames.
+
+Three rules, each answering a way this could put one player's run on another's shirt:
+
+- **Mutual best, not greedy.** A fragment ending in a crowd has several plausible successors
+  and taking the cheapest is exactly how a track teleports. Requiring the choice to be
+  returned makes an ambiguous join fail into two honest halves, which the importer survives.
+- **A speed gate in METRES**, which is why this is a separate pass and not a change to stage
+  2's gate. Stage 2 works in image pixels on purpose, so it cannot inherit the camera model's
+  errors (D19); whether two fragments are one person is a question about m/s and needs the
+  pitch.
+- **Colour breaks ties and never repeals the speed limit.** Same role and value as the
+  tracker's own `COLOR_WEIGHT`.
+
+Measured on all three clips, `--mode seed`, against no stitching:
+
+    clip        tracks      identity purity    switches
+    SNGS-147    88 -> 67    73.6 -> 77.2%      59 -> 48
+    SNGS-116    85 -> 63    64.4 -> 67.9%      271 -> 261
+    SNGS-121    50 -> 42    61.3 -> 61.3%      50 -> 50
+
+Purity RISING is the evidence the joins are right: joining two fragments of one player raises
+it, and joining two different players would lower it. Recall, precision and position error are
+unchanged to the digit, as they must be — stitching regroups samples without altering one.
+
+And through `boardFromTracks`, which is the measurement that counts:
+
+    clip        players   scenes    window        max travel     curves
+    SNGS-147    19 = 19    6 -> 5   2.9 -> 2.8s   15.0 -> 19.7m  10 -> 14
+    SNGS-116    22 = 22    7 -> 12  5.8 -> 13.5s  26.7 -> 40.0m  26 -> 49
+    SNGS-121    21 = 21    9 =  9  17.4 -> 13.2s  18.3 -> 14.7m  37 -> 37
+
+SNGS-116 roughly doubles: a 13.5 s passage rather than 5.8 s, and 49 curved runs rather than
+26. SNGS-147 gains travel and curves. **SNGS-121 is a mild regression** — longer tracks change
+the coverage landscape and `chooseWindow` settles somewhere shorter. Two clear wins and one
+small loss; it is on by default, and `--no-stitch` turns it off.
+
+What it does NOT do is add players. The roster is set by how long each player is in shot, and
+joining fragments cannot put a player on camera. That ceiling is the next thing in the way.
+
+**D56 — the tracker smoothed the kit colour and not the velocity, and velocity was doing the
+harder job.** SNGS-116 carried 266 identity switches against SNGS-147's 56. Splitting them by
+kind is what made it tractable:
+
+    clip        switches   steal (id also serves another player)   fragment   at a gap <=1 frame
+    SNGS-147        56                  52%                          48%            38%
+    SNGS-116       266                  93%                           7%            68%
+    SNGS-121       119                  83%                          17%            70%
+
+`MAX_AGE_S`'s comment records that 88 of 98 switches on SNGS-147 happen AFTER a gap, and that
+is still true of 147. SNGS-116 is the opposite failure: 93% are steals with NO gap, both
+players continuously visible, the tracker simply swapping them. Shortening the coasting window
+fixed 147 and can do nothing here, because nothing is coasting.
+
+They are crossings. At a steal the nearest other player is 0.73 m away on SNGS-116 against
+3.12 m for a typical sample -- and that clip is a corner, so 41% of all its samples have
+somebody inside two metres. Kit colour is silent between team-mates and both observations sit
+inside both gates, so the position prior is the only thing left.
+
+And the position prior was noise. Velocity came from a SINGLE frame's displacement: a player at
+5 m/s covers 13.6 px between frames at this scale, and the detector's box centre wanders a few,
+so a quarter of it was jitter. The kit colour three lines below already had a rolling average,
+on the stated reasoning that one frame of shadow should not redefine a kit -- the noisier
+quantity, doing the harder job, was the raw one. Swept on SNGS-116:
+
+    smoothing   identity purity   switches
+    1.0 (none)      67.3%           266
+    0.5             70.5%           256
+    0.3             70.7%           246
+
+Recall and precision do not move at any setting: this changes which track a sample lands on,
+never whether it is found. Tightening `MIN_GATE_BOXES` was swept alongside and is the wrong
+lever -- 0.20 reaches 71.8% purity with 292 switches, because a tighter gate tears tracks
+rather than keeping them straight, which is what that constant says it exists to prevent.
+
+**And it exposed a metric that had been read backwards all day.** SNGS-147's board appeared to
+LOSE movement, 18.5 m of travel down to 7.6 m. The track responsible moved 22.4 m across the
+window while covering THREE different ground-truth players at 76% purity; after smoothing it
+covers one, at 100%, and moves 14.8 m. A track that hops between players covers more ground
+than any real player can, so "max travel" rewards precisely the failure being removed. Judge a
+board by median travel and by whether its longest run belongs to ONE player.
