@@ -66,6 +66,16 @@ def test_track_and_sample_keys_match_the_schema(tmp_path: Path) -> None:
             assert set(sschema["required"]) <= set(s)
 
 
+def test_source_keys_match_the_schema(tmp_path: Path) -> None:
+    # `source` is `additionalProperties: false` like every other object here, so a key the
+    # writer adds and the schema does not declare makes every emitted file invalid against
+    # its own contract. That is how `intervalS` shipped undeclared for eleven releases.
+    sschema = SCHEMA["properties"]["source"]
+    d = emit(tmp_path, interval_s=0.2)["source"]
+    assert set(d) <= set(sschema["properties"]), set(d) - set(sschema["properties"])
+    assert set(sschema["required"]) <= set(d)
+
+
 def test_team_labels_are_all_declared_by_the_schema(tmp_path: Path) -> None:
     allowed = set(SCHEMA["properties"]["tracks"]["items"]["properties"]["team"]["enum"])
     assert {t["team"] for t in emit(tmp_path)["tracks"]} <= allowed

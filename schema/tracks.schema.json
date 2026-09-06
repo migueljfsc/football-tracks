@@ -47,6 +47,11 @@
         },
         "height": {
           "type": "integer"
+        },
+        "intervalS": {
+          "type": "number",
+          "exclusiveMinimum": 0,
+          "description": "Seconds between stored positions, when samples were reduced to a time grid. Absent means every frame was kept. A consumer needs it to tell a gap in the tracking from the spacing of the grid."
         }
       }
     },
