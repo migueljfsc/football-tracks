@@ -559,12 +559,8 @@ def calibrate(
     elif seed_path.exists():
         # A clip nobody annotated: every clicked frame, carried both ways between them.
         clicked, refused = auto_mod.usable_seeds(out, c.frames_dir)
-        for path, behind in refused:
-            typer.echo(
-                f"IGNORING {path.name}: it maps {behind:.0%} of its frame behind the"
-                " camera, so it is wrong AT the anchor and not merely far from it."
-                " Click evidence lower in the frame - a fit needs depth, not just points."
-            )
+        for path, why in refused:
+            typer.echo(f"IGNORING {path.name}: {why}")
         if not clicked:
             raise typer.BadParameter(f"{clip} has no usable seed")
         homs = auto_mod.from_seeds(
@@ -746,8 +742,8 @@ def _pipeline(
     elif seed_path.exists():
         # A real clip: one seeded frame is all the camera information there is.
         usable, refused = auto_mod.usable_seeds(out, c.frames_dir)
-        for path, behind in refused:
-            typer.echo(f"IGNORING {path.name}: maps {behind:.0%} of its frame behind the camera")
+        for path, why in refused:
+            typer.echo(f"IGNORING {path.name}: {why}")
         if not usable:
             raise typer.BadParameter(f"{clip} has no usable seed")
         if picked == "hybrid":
@@ -926,6 +922,13 @@ def seed(
         typer.echo(
             "WARNING: cannot tell which side the camera is on from these points."
             " If the board comes out mirrored, far and near are swapped."
+        )
+
+    clash = seed_mod.contradictions(got)
+    for a, b in clash:
+        typer.echo(
+            f"WARNING: {a} and {b} are labelled with the wrong side of the pitch -"
+            " nearer the camera is LOWER in the frame, and these two run the other way."
         )
 
     directions = {abs(a) > abs(b) for _, (a, b, _c) in got.lines}

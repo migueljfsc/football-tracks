@@ -201,26 +201,51 @@ def seed_paths(work: Path) -> list[Path]:
 
 def usable_seeds(
     work: Path, frames_dir: Path
-) -> tuple[list[seed_mod.Seed], list[tuple[Path, float]]]:
-    """The seeds that describe their own frame, and the ones that do not.
+) -> tuple[list[seed_mod.Seed], list[tuple[Path, str]]]:
+    """The seeds that describe their own frame, and the ones that do not, with the reason.
 
     A seed is refused here rather than trusted because it fits its own clicks: evidence
     confined to a band of the frame is unconstrained in depth, and the fit folds over
     just below it (D34). Anchoring the pipeline on one of those is worse than having no
     anchor there at all - it does not degrade with distance, it is wrong at the anchor.
+
+    The reason is a sentence rather than a number because the two failures are different
+    jobs for whoever clicked: a fit that FOLDS wants evidence lower in the frame, and a
+    fit that could not be made at all is usually two markings labelled with the wrong
+    side, which `seed.contradictions` can name.
     """
     good: list[seed_mod.Seed] = []
-    bad: list[tuple[Path, float]] = []
+    bad: list[tuple[Path, str]] = []
     for path in seed_paths(work):
         seeded = seed_mod.read(path)
-        h = seed_mod.homography(seeded)
         img = cv2.imread(str(frames_dir / f"{seeded.frame:06d}.jpg"))
-        if h is None or img is None:
-            bad.append((path, 1.0))
+        if img is None:
+            bad.append((path, f"frame {seeded.frame} is not in the clip"))
+            continue
+        h = seed_mod.homography(seeded)
+        if h is None:
+            clash = seed_mod.contradictions(seeded)
+            bad.append(
+                (
+                    path,
+                    f"no camera fits these clicks: {clash[0][0]} and {clash[0][1]} are labelled"
+                    " with the wrong side of the pitch - nearer the camera is lower in the frame"
+                    if clash
+                    else "no camera fits these clicks - trace a marking that CROSSES the others,"
+                    " and check the far/near names against the diagram",
+                )
+            )
             continue
         behind = seed_mod.behind_camera(h, img.shape[1], img.shape[0])
         if behind > seed_mod.MAX_BEHIND_CAMERA:
-            bad.append((path, behind))
+            bad.append(
+                (
+                    path,
+                    f"it maps {behind:.0%} of its frame behind the camera, so it is wrong AT the"
+                    " anchor and not merely far from it - trace evidence lower in the frame,"
+                    " because a fit needs depth and not just points",
+                )
+            )
         else:
             good.append(seeded)
     return good, bad

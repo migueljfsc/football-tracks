@@ -190,6 +190,40 @@ def test_the_halfway_line_is_the_same_line_from_either_end() -> None:
     assert (ma, mb, mc) == pytest.approx((-a, b, -c))
 
 
+def test_the_circle_crossings_are_the_same_from_either_end() -> None:
+    # They sit ON the halfway line, so which goal is far cannot move them -- and they are
+    # the only exact points a midfield view offers.
+    for name in ("circle far", "circle near"):
+        assert seed.mirrored(name) == seed.LANDMARKS[name]
+
+
+def test_a_marking_labelled_with_the_wrong_side_is_named() -> None:
+    """The failure a real clip hit: the top of the picture traced as the NEAR touchline,
+    which is where the far one is. The fit that comes back is a compromise between two
+    contradictory claims, and "no usable seed" says nothing about which."""
+    top = [((x, 300.0), seed.TRACEABLE["near touchline"]) for x in (200.0, 900.0, 1600.0)]
+    lower = [((x, 700.0), seed.TRACEABLE["penalty box near side"]) for x in (300.0, 1000.0)]
+    got = seed.contradictions(seed.Seed(frame=1, points=[], lines=top + lower))
+    assert got == [("near touchline", "penalty box near side")] or got == [
+        ("penalty box near side", "near touchline")
+    ]
+
+
+def test_markings_the_right_way_round_are_not_complained_about() -> None:
+    # Nearer the camera is lower in the frame: the near touchline BELOW the box's near side.
+    near = [((x, 900.0), seed.TRACEABLE["near touchline"]) for x in (200.0, 900.0)]
+    box = [((x, 500.0), seed.TRACEABLE["penalty box near side"]) for x in (300.0, 1000.0)]
+    assert seed.contradictions(seed.Seed(frame=1, points=[], lines=near + box)) == []
+
+
+def test_the_orientation_check_reads_traced_lines_too() -> None:
+    """It asked for three clicked landmarks, so a seed made of traced lines and a click
+    or two -- the ones most likely to hold a swap -- never got an opinion at all."""
+    swapped = [((x, 300.0), seed.TRACEABLE["near touchline"]) for x in (200.0, 900.0)]
+    swapped += [((x, 800.0), seed.TRACEABLE["far touchline"]) for x in (300.0, 1000.0)]
+    assert seed.orientation(seed.Seed(frame=1, points=[], lines=swapped)) < 0
+
+
 def test_tracing_only_parallel_markings_is_refused() -> None:
     # Three lines all parallel to the goal line leave the camera free to slide along
     # the pitch. The fit would come back looking like any other matrix.

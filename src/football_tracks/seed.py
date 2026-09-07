@@ -30,6 +30,9 @@ MID = PITCH_WIDTH / 2
 # FAR means away from the camera and NEAR means toward it - never left and right,
 # which depend on where the camera is standing and are ambiguous on a screen. The
 # broadcast camera sits on one touchline, so "near" is always the bottom of the frame.
+# The centre circle's radius, for the two points where the halfway line crosses it.
+CENTRE_R = 9.15
+
 LANDMARKS: dict[str, tuple[float, float]] = {
     "goal post far": (0.0, MID - 3.66),
     "goal post near": (0.0, MID + 3.66),
@@ -46,6 +49,14 @@ LANDMARKS: dict[str, tuple[float, float]] = {
     "corner near": (0.0, PITCH_WIDTH),
     "halfway far": (PITCH_LENGTH / 2, 0.0),
     "halfway near": (PITCH_LENGTH / 2, PITCH_WIDTH),
+    # Where the halfway line crosses the centre circle. The two exact points a MIDFIELD
+    # view offers and nothing else does: the circle itself is not traceable (a curve is
+    # not a line) and its crossings are, which is the same trick the learned fitter uses
+    # on predicted markings. Without them a camera parked on the halfway line has evidence
+    # only where the paint is -- along one line and around the edges -- and nothing fixes
+    # the scale through the middle of the picture, where the players are.
+    "circle far": (PITCH_LENGTH / 2, MID - CENTRE_R),
+    "circle near": (PITCH_LENGTH / 2, MID + CENTRE_R),
 }
 
 
@@ -233,10 +244,19 @@ def orientation(seed: Seed) -> float:
     line, so a y-mirrored model draws onto the real markings perfectly and the picture
     looks right while every position is flipped.
     """
-    if len(seed.points) < 3:
+    # Traced points count, and leaving them out was a hole: a seed made of traced lines
+    # with a click or two never reached the three landmarks this asked for, so the check
+    # that exists to catch a swap silently returned "no opinion" on exactly the seeds most
+    # likely to hold one. A point traced along a constant-y marking knows its pitch y as
+    # well as a landmark does -- that is what makes the marking traceable.
+    samples = [(p[0][1], p[1][1]) for p in seed.points]
+    samples += [
+        (img[1], -c / b) for img, (a, b, c) in seed.lines if abs(b) > abs(a) and abs(b) > 1e-9
+    ]
+    if len(samples) < 3:
         return 0.0
-    image_y = np.array([p[0][1] for p in seed.points], dtype=np.float64)
-    pitch_y = np.array([p[1][1] for p in seed.points], dtype=np.float64)
+    image_y = np.array([s[0] for s in samples], dtype=np.float64)
+    pitch_y = np.array([s[1] for s in samples], dtype=np.float64)
     if image_y.std() < 1e-9 or pitch_y.std() < 1e-9:
         return 0.0
     return float(np.corrcoef(image_y, pitch_y)[0, 1])
@@ -250,6 +270,45 @@ def flip_y(seed: Seed) -> Seed:
         # A line a*x + b*y + c = 0 reflected in y = W/2 becomes a*x - b*y + (c + b*W).
         lines=[(img, (a, -b, c + b * PITCH_WIDTH)) for img, (a, b, c) in seed.lines],
     )
+
+
+def traced_name(line: tuple[float, float, float]) -> str:
+    """What a traced line is called, so a complaint about it can name it."""
+    for name in TRACEABLE:
+        if line == TRACEABLE[name]:
+            return name
+        if line == mirrored_line(name):
+            return f"{name} (far end)"
+    return f"the line {line}"
+
+
+def contradictions(seed: Seed) -> list[tuple[str, str]]:
+    """Traced markings whose order in the PICTURE contradicts their order on the pitch.
+
+    Nearer the camera is larger pitch y and lower in the frame, so two constant-y markings
+    must run the same way in both. When they do not, one of them is labelled with the wrong
+    side -- and that is a mistake the fit cannot absorb and the reprojection cannot show,
+    because the fit that comes back is a compromise between two contradictory claims.
+
+    Named rather than measured: "the near touchline is above the far touchline" is a
+    sentence somebody can act on, where "no usable seed" is not.
+    """
+    rows: dict[tuple[float, float, float], list[float]] = {}
+    for img, line in seed.lines:
+        a, b, _c = line
+        if abs(b) <= abs(a) or abs(b) < 1e-9:
+            continue
+        rows.setdefault(line, []).append(img[1])
+
+    marks = [
+        (float(np.median(ys)), -c / b, traced_name((a, b, c))) for (a, b, c), ys in rows.items()
+    ]
+    out: list[tuple[str, str]] = []
+    for i, (image_y, pitch_y, name) in enumerate(marks):
+        for other_image_y, other_pitch_y, other in marks[i + 1 :]:
+            if (pitch_y - other_pitch_y) * (image_y - other_image_y) < 0:
+                out.append((name, other))
+    return out
 
 
 def degenerate(pitch: npt.NDArray[np.float64]) -> bool:
