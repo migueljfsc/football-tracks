@@ -907,6 +907,23 @@ SNGS-121 and SNGS-151 there is none to measure. The lever is real on two clips o
 unmeasurable on two others, which is a smaller and better-understood target than "the camera
 model is the constraint".
 
+**And it answers the question this project has circled since D36.** The learned segmenter,
+judged at the players over every annotated box, does not beat one human seed carried through
+the clip -- on any clip:
+
+    players within 2 m     seed   segmenter   a perfect fit
+    SNGS-147                73%      47%          90%
+    SNGS-116                78%      74%          83%
+    SNGS-060                94%      66%          99%
+    SNGS-121                75%      39%          48%
+    SNGS-151                57%      28%          50%
+
+**Its accuracy is not the problem and never was.** On the frames it solves it puts players at a
+0.53-1.20 m median, which is the seed's range. What it does not do is answer: the boxes it
+misses are on the frames it refuses. Six training runs have now been scored on accuracy, and
+the axis that decides is how much of a clip it will commit to. Anything trained from here is
+judged on `players within 2 m` over ALL boxes, or it is measuring the same wrong thing again.
+
 **It also settles the hybrid.** At the players it loses on four clips of five -- the exception
 being SNGS-116, where it takes the median from 0.76 m to 0.64 m and the boxes thrown off the
 pitch from 196 to 124. `--mode seed` stays what ships, now for a reason measured on the

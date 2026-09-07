@@ -133,8 +133,12 @@ a player to be WATCHED for a second and a half, whatever share that is, and 147 
 11.6 seconds and eleven real players with ten of the eleven other boards unchanged to the byte.
 That was the last cheap board win; the rest is fragmentation.
 
-**What training would then be for.** Raising the share of frames the segmenter can fit at all,
-which is a coverage problem and not an accuracy one. The evidence on how:
+**What training would then be for, and the bar it is judged against.** Raising the share of
+frames the segmenter can fit at all. Measured at the players over every annotated box, it
+places 28-74% of them within two metres against seeding's 57-94% -- and on the frames it does
+solve it is as accurate as the seed, 0.53-1.20 m at the median. The gap is entirely what it
+refuses to answer (D70). **The bar is `players within 2 m` over ALL boxes**; six runs have been
+scored on accuracy and none of them measured this. The evidence on how:
 
 - **Resolution works.** Run 5 at native 1080p took SNGS-116 from 2.87 m to 0.70 m, and it was
   the one clip four earlier configurations could not move.
