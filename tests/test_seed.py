@@ -386,3 +386,29 @@ def test_refine_pulls_a_nudged_model_back_onto_the_paint(tmp_path: Path) -> None
     got = refine_mod.refine(nudged, img)
     assert got is not None
     assert calibration.observed_error(truth, got, img.shape) < before
+
+
+def test_the_diagram_can_be_moved_out_of_the_way_and_hidden() -> None:
+    """A landmark can be anywhere, including under whichever corner the diagram is in --
+    and a click on the diagram is not a click on the pitch, so the rectangle it occupies
+    is what the click filter uses."""
+    from football_tracks import seedui
+
+    frame = np.zeros((900, 1600, 3), dtype=np.uint8)
+    panel = np.zeros((200, 300, 3), dtype=np.uint8)
+
+    corners = {c: seedui._inset_rect(frame, panel, c) for c in seedui.CORNERS if c}
+    assert corners["bottom left"] == (16, 684, 316, 884)
+    assert corners["bottom right"] == (1284, 684, 1584, 884)
+    assert corners["top right"] == (1284, 16, 1584, 216)
+    # Every corner is reachable, and the last stop is no diagram at all.
+    assert None in seedui.CORNERS
+    assert seedui._inset_rect(frame, panel, None) is None
+
+
+def test_a_diagram_too_big_for_the_frame_is_not_drawn() -> None:
+    from football_tracks import seedui
+
+    tiny = np.zeros((100, 100, 3), dtype=np.uint8)
+    panel = np.zeros((200, 300, 3), dtype=np.uint8)
+    assert seedui._inset_rect(tiny, panel, "bottom left") is None

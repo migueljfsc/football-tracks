@@ -83,15 +83,34 @@ def _diagram(name: str, far_goal: bool, width: int, trace: bool = False) -> Any:
     return img
 
 
-def _inset(base: Any, panel: Any) -> None:
-    """Drop the diagram into the bottom-left corner, over the frame."""
+# Where the diagram may sit, and the order `d` cycles them in. The top left is not on the
+# list: the controls live there, and a diagram under them is unreadable. `None` is the
+# fifth stop -- a landmark can be anywhere, including under the corner the diagram is in,
+# and on a tight shot every corner is somewhere a coach needs to click.
+CORNERS: tuple[str | None, ...] = ("bottom left", "bottom right", "top right", None)
+
+
+def _inset_rect(base: Any, panel: Any, corner: str | None) -> tuple[int, int, int, int] | None:
+    """Where the diagram goes, or None when it is hidden or would not fit."""
+    if corner is None:
+        return None
     ph, pw = panel.shape[:2]
-    h = base.shape[0]
-    y0, x0 = h - ph - 16, 16
-    if y0 < 0 or x0 + pw > base.shape[1]:
+    h, w = base.shape[:2]
+    if ph + 32 > h or pw + 32 > w:
+        return None
+    x0 = 16 if "left" in corner else w - pw - 16
+    y0 = 16 if "top" in corner else h - ph - 16
+    return (x0, y0, x0 + pw, y0 + ph)
+
+
+def _inset(base: Any, panel: Any, corner: str | None) -> None:
+    """Drop the diagram into a corner, over the frame."""
+    rect = _inset_rect(base, panel, corner)
+    if rect is None:
         return
-    cv2.rectangle(base, (x0 - 4, y0 - 4), (x0 + pw + 4, y0 + ph + 4), (0, 0, 0), -1)
-    base[y0 : y0 + ph, x0 : x0 + pw] = panel
+    x0, y0, x1, y1 = rect
+    cv2.rectangle(base, (x0 - 4, y0 - 4), (x1 + 4, y1 + 4), (0, 0, 0), -1)
+    base[y0:y1, x0:x1] = panel
 
 
 def _draw(
@@ -101,6 +120,7 @@ def _draw(
     cursor: str,
     far_goal: bool,
     trace: bool,
+    corner: str | None = "bottom left",
 ) -> Any:
     img = base.copy()
     for (ix, iy), (px, py) in seed_points:
@@ -121,12 +141,14 @@ def _draw(
     end = "FAR goal" if far_goal else "NEAR goal"
     enough = len(seed_points) * 2 + len(traced) >= 8
     mode = "TRACE ALONG" if trace else "CLICK"
+    where = f"marked on the diagram, {corner}" if corner else "diagram hidden - press d"
     lines = [
-        f"{mode}: {cursor}      (marked on the diagram, bottom left)",
+        f"{mode}: {cursor}      ({where})",
         f"{len(seed_points)} points + {len(traced)} traced   |   {end} end"
         " - press 'e' if the goal in shot is the other one",
         "t = switch point/trace mode    n = next    p = back    u = undo",
-        f"s = save{'' if enough else '  (needs more evidence)'}     q = quit",
+        f"d = move the diagram / hide it     s = save"
+        f"{'' if enough else ' (needs more evidence)'}     q = quit",
     ]
     scale = max(0.9, base.shape[1] / 2200)
     step = int(46 * scale)
@@ -157,7 +179,7 @@ def _draw(
             2,
             cv2.LINE_AA,
         )
-    _inset(img, _diagram(cursor, far_goal, base.shape[1], trace))
+    _inset(img, _diagram(cursor, far_goal, base.shape[1], trace), corner)
     return img
 
 
@@ -171,12 +193,18 @@ def collect(frame: Any, frame_index: int) -> Seed | None:
     """
     names = list(LANDMARKS)
     line_names = list(TRACEABLE)
-    state = {"i": 0, "far": False, "trace": False}
+    state: dict[str, Any] = {"i": 0, "far": False, "trace": False, "corner": 0, "rect": None}
     points: list[Any] = []
     traced: list[Any] = []
 
     def on_mouse(event: int, x: int, y: int, _flags: int, _param: Any) -> None:
         if event != cv2.EVENT_LBUTTONDOWN:
+            return
+        # A click on the diagram is not a click on the pitch. Recording it puts a landmark
+        # wherever the diagram happens to be, which is a mistake nothing downstream can
+        # see -- and the fix a coach reaches for is `d`, not undo.
+        rect = state["rect"]
+        if rect is not None and rect[0] <= x <= rect[2] and rect[1] <= y <= rect[3]:
             return
         if state["trace"]:
             name = line_names[state["i"]]
@@ -195,10 +223,20 @@ def collect(frame: Any, frame_index: int) -> Seed | None:
     while True:
         active = line_names if state["trace"] else names
         state["i"] = min(int(state["i"]), len(active) - 1)
+        corner = CORNERS[int(state["corner"]) % len(CORNERS)]
+        state["rect"] = _inset_rect(
+            frame, _diagram(active[state["i"]], bool(state["far"]), frame.shape[1]), corner
+        )
         cv2.imshow(
             WINDOW,
             _draw(
-                frame, points, traced, active[state["i"]], bool(state["far"]), bool(state["trace"])
+                frame,
+                points,
+                traced,
+                active[state["i"]],
+                bool(state["far"]),
+                bool(state["trace"]),
+                corner,
             ),
         )
         key = cv2.waitKey(20) & 0xFF
@@ -214,6 +252,8 @@ def collect(frame: Any, frame_index: int) -> Seed | None:
             state["i"] = (int(state["i"]) - 1) % len(active)
         if key == ord("e"):
             state["far"] = not state["far"]
+        if key == ord("d"):
+            state["corner"] = (int(state["corner"]) + 1) % len(CORNERS)
         if key == ord("t"):
             state["trace"] = not state["trace"]
             state["i"] = 0
