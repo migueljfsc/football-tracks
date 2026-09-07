@@ -200,6 +200,27 @@ corrects the board instead of drawing it. A coach has now seen four boards and t
 SNGS-060 scores 95.9% of players within 5 m against SNGS-151's 77.4% -- would say whether this
 project is one fix away or several, and it costs nothing.
 
+### A coach watched the boards, and both complaints were true
+
+*"I don't want to invent plays"* and *"you mixed up who's team makes the pass"*. Both were
+measurable and neither had ever been measured.
+
+**Half of every board was a player standing where he was last seen** -- 43-63% of the drawn
+positions had a sighting behind them, and one scene of SNGS-067 was 18%. The importer chose
+passages by how long a track's SPAN reached across them, which a track with a two-second hole
+does completely. It now measures the samples, refuses a passage under 70% witnessed, refuses a
+scene under 65%, and trims the ends to where the players actually are. The boards are 58-82%
+real and much shorter: SNGS-067 goes from 25.2 seconds to 6.6.
+
+**One shirt in five was the wrong colour**, which is what "the wrong team made that pass" is.
+`assign` now declines a side the kit split is not sure of (D72): 30% fewer wrong-coloured
+samples across six clips, for 6% fewer correct ones and a smaller roster.
+
+**What is left is the honest shape of the thing.** An honest board is 3 to 14 seconds because
+that is how long the tracker holds a roster, and it fields 12 to 21 fragments of a 22-player
+game. Board length is now an upstream problem: it is the fragmentation number in the table
+above, and nothing in the importer can buy it back.
+
 ## Milestones
 
 | # | done when | est. |

@@ -43,6 +43,9 @@ class Score:
     median_error_m: float
     p90_error_m: float
     team_accuracy: float
+    team_right: int
+    team_wrong: int
+    team_declined: int
     identity_purity: float
     id_switches: int
     jersey_gt_total: int
@@ -135,6 +138,7 @@ def score(truth: dict[str, Any], pred: dict[str, Any], *, radius: float = MATCH_
     errors: list[float] = []
     team_hits = 0
     team_hits_swapped = 0
+    team_declined = 0
     matched = 0
     # gt track -> which predicted tracks it matched, and in what order
     assigned: dict[int, list[int]] = defaultdict(list)
@@ -150,6 +154,11 @@ def score(truth: dict[str, Any], pred: dict[str, Any], *, radius: float = MATCH_
                 team_hits += 1
             if want == _SWAP.get(got_team, got_team):
                 team_hits_swapped += 1
+            # A side nobody could tell is not a wrong side. Counted the way a shirt number
+            # is (D5): asserting the wrong team puts a player in the wrong colour and draws
+            # a pass that never happened, and declining costs a player on the board.
+            if got_team == "unknown":
+                team_declined += 1
 
     # Purity: the share of a ground-truth track's matched samples that went to its
     # single most common predicted partner. A tracker that swaps a player halfway
@@ -198,6 +207,9 @@ def score(truth: dict[str, Any], pred: dict[str, Any], *, radius: float = MATCH_
         # Scoring the raw labelling would measure that coin flip rather than whether
         # the two sides were told apart at all, which is the actual question.
         team_accuracy=max(team_hits, team_hits_swapped) / matched if matched else 0.0,
+        team_right=max(team_hits, team_hits_swapped),
+        team_wrong=matched - team_declined - max(team_hits, team_hits_swapped),
+        team_declined=team_declined,
         identity_purity=sum(purities) / len(purities) if purities else 0.0,
         id_switches=switches,
         jersey_gt_total=gt_numbered,
@@ -224,6 +236,13 @@ def report(s: Score) -> str:
         f"precision         {s.precision:6.1%}",
         f"position error    {s.median_error_m:.2f} m median, {s.p90_error_m:.2f} m p90",
         f"team split        {s.team_accuracy:6.1%}  (best of the two labellings)",
+        f"teams asserted    {s.team_right} right, {s.team_wrong} WRONG,"
+        f" {s.team_declined} declined"
+        + (
+            f" -- {s.team_right / (s.team_right + s.team_wrong):.1%} of what it asserts"
+            if s.team_right + s.team_wrong
+            else ""
+        ),
         f"identity purity   {s.identity_purity:6.1%}  ({s.id_switches} switches)",
         f"shirt numbers     {s.jersey_correct} right, {s.jersey_wrong} WRONG,"
         f" {s.jersey_missing} unread, of {s.jersey_gt_total}",

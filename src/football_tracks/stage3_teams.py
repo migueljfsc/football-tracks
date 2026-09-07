@@ -188,6 +188,16 @@ def _crowding(
     return crowd
 
 
+# How much closer to its own side's kit than to the other's a track has to be.
+#
+# A kit sitting between the two is a coin flip, and a coin flip reaches the board as a
+# player in the wrong colour -- which a coach reads as the wrong team making the pass,
+# because that is exactly what it draws. The same rule as a shirt number nobody could
+# read (D5): the answer is that there is no answer, and the importer already drops a
+# track whose side could not be told.
+KIT_MARGIN = 0.8
+
+
 def assign(
     tracks: list[Track],
     mean_x: dict[int, float],
@@ -265,9 +275,28 @@ def assign(
         sides[k] = float(np.mean(xs)) if xs else 0.0
     left = 0 if sides[0] <= sides[1] else 1
 
+    # Which tracks the split is actually sure of. Distance to its own side's kit against
+    # distance to the other's, in the same colour space the cut was made in.
+    kits = np.array([t.kit_mean for t in outfield], dtype=np.float64)
+    sure = np.ones(len(outfield), dtype=bool)
+    for k in (0, 1):
+        mine, theirs = labels == k, labels != k
+        if not bool(mine.any()) or not bool(theirs.any()):
+            continue
+        # Leave-one-out: a track judged against a centre it helped compute drags that
+        # centre towards itself, and the closer to the cut it sits the more it flatters
+        # itself. Measured on SNGS-147, that bias alone was the difference between
+        # declining nothing and declining a quarter of the clip.
+        total, n = kits[mine].sum(axis=0), int(mine.sum())
+        without = (total - kits[mine]) / (n - 1) if n > 1 else kits[mine]
+        own = np.linalg.norm(kits[mine] - without, axis=1)
+        other = np.linalg.norm(kits[mine] - kits[theirs].mean(axis=0), axis=1)
+        sure[mine] = own <= KIT_MARGIN * other
+
     out: dict[int, TeamLabel] = {t.id: "unknown" for t in tracks}
-    for t, lab in zip(outfield, labels, strict=True):
-        out[t.id] = "home" if lab == left else "away"
+    for i, (t, lab) in enumerate(zip(outfield, labels, strict=True)):
+        if sure[i]:
+            out[t.id] = "home" if lab == left else "away"
     for t in outfield:
         if t.id in referee:
             out[t.id] = "referee"

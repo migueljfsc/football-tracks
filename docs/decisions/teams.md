@@ -344,3 +344,36 @@ frames and improved nothing. And it is NOT that the receiver is unfielded, which
 from "no fielded player is within four metres of the ball" -- a kick-off may be played
 anywhere in one's own half, so a ball far from everyone is what a pass in flight looks like
 and proves nothing at all.
+
+**D72 — a side the kit split is not sure of is declined, because a wrong colour is a pass that
+never happened.** A coach watching SNGS-067 said the board mixed up which team made the pass.
+It did: the team split is 79.7% there, so one shirt in five is the wrong colour, and the
+importer draws the pass between whatever shirts the carrier lands on. A wrong side is not a
+cosmetic error, it is an invented turnover.
+
+The same rule as an unread shirt number (D5). A track whose kit sits nearly as close to the
+other side's colours as to its own is labelled `unknown` and the importer drops it, so the
+board fields fewer players and the ones it fields are right. Measured against ground truth, per
+sample:
+
+    clip        before          after                        declined
+    SNGS-067    79.7% right     90.8% of what it asserts      1298
+    SNGS-151    84.0%           90.6%                         1203
+    SNGS-060    79.2%           85.7%                         1202
+    SNGS-116    80.5%           81.8%                          383
+    SNGS-121    85.3%           85.3%                            0
+    SNGS-147    78.2%           76.0%                          377
+
+Across the six: 30% fewer wrong-coloured samples for 6% fewer correct ones. SNGS-121 has no kit
+ambiguity to find and SNGS-147's errors are CONFIDENT -- its mislabelled tracks sit squarely in
+the wrong cluster, which is an identity problem upstream rather than a colour one, and no
+margin on this measurement can see it.
+
+**Judged leave-one-out, which is the whole difference.** A track compared with a centre it
+helped compute drags that centre towards itself, and the closer to the cut it sits the more it
+flatters itself: with the naive centres SNGS-147 declined nothing at all.
+
+**And `ft score` now reports teams the way it reports shirt numbers** -- right, WRONG, declined
+-- because a single accuracy figure counts a declined side as an error and would have scored
+this change as a regression. That is the same trap as `observed_error` (D67) in a third place:
+a metric that cannot see a refusal will always reward guessing.

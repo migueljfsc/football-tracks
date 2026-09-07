@@ -133,6 +133,13 @@ Each of these cost a day. Where one names a decision, the full account is in
   tight cluster and one holding everybody else. The axis of greatest variance and an Otsu cut.
 - **A goalkeeper is not a third team**, and leaving him in the clustering costs both sides.
   Neither is an official (D64).
+- **A side the kit does not settle is `unknown`, not a coin flip** (D72). A wrong colour reaches
+  the board as a pass between the wrong shirts, which a coach reads as an invented turnover --
+  the same reason a shirt number is never guessed (D5). Judge the margin LEAVE-ONE-OUT: a track
+  compared with a centre it helped compute flatters itself, and that bias alone was the
+  difference between declining a quarter of a clip and declining nothing.
+- **`ft score`'s team accuracy counts a declined side as an error**, so read the `teams asserted`
+  line instead when anything refuses: right, WRONG, declined.
 - **The ball's POSITION is not usable and its HOLDER is** (D29).
 - **Picking the ball candidate nearest a player is worse than picking the most confident one**
   — there are a dozen candidates a frame and "nearest a player" selects whichever false
