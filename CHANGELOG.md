@@ -1,3 +1,9 @@
+## v0.21.0 (2026-09-07)
+
+### Feat
+
+- **seed**: move the diagram out of the way, or hide it
+
 ## v0.20.3 (2026-09-07)
 
 ### Fix
