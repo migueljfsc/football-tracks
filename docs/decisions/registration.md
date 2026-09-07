@@ -928,3 +928,60 @@ judged on `players within 2 m` over ALL boxes, or it is measuring the same wrong
 being SNGS-116, where it takes the median from 0.76 m to 0.64 m and the boxes thrown off the
 pitch from 196 to 124. `--mode seed` stays what ships, now for a reason measured on the
 quantity that matters.
+
+**D71 — the segmenter's coverage cannot be trained, because the frames it refuses carry no
+paint to read.** D70 set the bar (players within two metres, over every box) and named coverage
+as the axis. This is what happened when that was taken seriously enough to look at the refusals
+one by one, and it closes the segmenter as a line of work.
+
+**Every refusal is a frame with one direction of paint, and the annotation has no more of it
+than the model does:**
+
+    clip       solved   one direction only   too few markings   model saw   annotation carries
+    SNGS-147     86%           12%                  2%          2 (p90 4)      2 (p90 4)
+    SNGS-116     82%           17%                  1%          2 (p90 2)      2 (p90 2)
+    SNGS-121     62%           27%                 12%          3 (p90 4)      3 (p90 4)
+    SNGS-151     48%           50%                  2%          2 (p90 3)      2 (p90 2)
+
+A frame showing two touchlines and nothing crossing them is underdetermined however well it is
+read. **No training run on this data can register those frames**, and six of them have now been
+spent on the assumption that one could.
+
+**And the frames it refuses are the crowded ones**, which is worse than the frame count reads.
+On SNGS-147 the refused frames carry 9.6 MORE players each than the solved ones -- players
+occlude the paint, so the moments a board is made of are exactly the moments the model goes
+quiet. 86% of frames solved is 70% of the boxes.
+
+**Coverage can be had by carrying, and it buys nothing.** Filling every gap from the frames the
+segmenter does solve reaches 100% of frames and moves players-within-two-metres from 51% to 51%
+on SNGS-147, 75% to 75% on SNGS-116, 47% to 55% on SNGS-121. It is not short of answers; the
+answers it has are not good enough:
+
+    players within 2 m      seed (ships)   segmenter   + carry to 100%   a perfect fit
+    SNGS-147                    73%           51%            51%             90%
+    SNGS-116                    78%           75%            75%             83%
+    SNGS-060                    94%           68%            71%             99%
+    SNGS-121                    75%           47%            55%             48%
+    SNGS-151                    57%           32%            37%             50%
+
+**The failure is a TAIL, not a median.** On the frames it solves the segmenter puts players at a
+0.53-1.20 m median, which is the seed's own range -- and with full coverage a third of all boxes
+still land more than five metres out (64% within 5 m on SNGS-147 against seeding's 89%). A
+confidently wrong fit from two markings and a mislabelled third is worth less than no fit.
+
+**What the whole line of work could have been worth, at best.** A segmenter as good as the
+annotation it is trained on would reach the "perfect fit" column: +17 points on SNGS-147, +5 on
+SNGS-116, +5 on SNGS-060, and less than nothing on the two clips where the annotation disagrees
+with itself (D70). Six runs have not moved SNGS-147 past 51%.
+
+**Winnow is a net cost at the players and should not be read as a safety net** (D62 justified it
+on identity purity, which is a different measurement). Across the five clips it drops 3-16 points
+of frame coverage to gain nothing: SNGS-147 51% -> 47% within two metres, SNGS-121 47% -> 39%,
+SNGS-151 32% -> 28%. It refuses frames and improves the median of what survives, which is the
+same conditioning trap as `observed_error`.
+
+**So: `--mode seed` ships, and the learned detector is finished as a line of work.** What would
+register a two-marking frame is not a better segmenter but a model that does not need paint --
+regressing a camera directly from the picture, grass texture and horizon included. That is a
+different architecture and a real project, and D70's table says it is worth 17 points on one
+benchmark clip. It is not the next thing to do.

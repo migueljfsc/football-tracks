@@ -133,12 +133,20 @@ a player to be WATCHED for a second and a half, whatever share that is, and 147 
 11.6 seconds and eleven real players with ten of the eleven other boards unchanged to the byte.
 That was the last cheap board win; the rest is fragmentation.
 
-**What training would then be for, and the bar it is judged against.** Raising the share of
-frames the segmenter can fit at all. Measured at the players over every annotated box, it
-places 28-74% of them within two metres against seeding's 57-94% -- and on the frames it does
-solve it is as accurate as the seed, 0.53-1.20 m at the median. The gap is entirely what it
-refuses to answer (D70). **The bar is `players within 2 m` over ALL boxes**; six runs have been
-scored on accuracy and none of them measured this. The evidence on how:
+**Training for coverage was the plan, and the refusals killed it before a run started (D71).**
+Every frame the segmenter refuses shows one direction of paint and two or three markings -- and
+the ANNOTATION carries two or three as well. Those frames are underdetermined however well they
+are read, so no run on this data registers them. Coverage is available anyway by carrying, and
+it moves players-within-two-metres from 51% to 51% on SNGS-147: the model is not short of
+answers, the answers it has are not good enough. With full coverage a third of all boxes still
+land more than five metres out.
+
+**The segmenter is therefore finished as a line of work**, six runs in, and the ceiling on the
+whole idea was +17 points on one benchmark clip. What would register a two-marking frame is a
+model that needs no paint -- a camera regressed from the picture itself. Different architecture,
+real project, and not the next thing to do.
+
+**The evidence the runs did establish**, if it is ever picked up again:
 
 - **Resolution works.** Run 5 at native 1080p took SNGS-116 from 2.87 m to 0.70 m, and it was
   the one clip four earlier configurations could not move.
@@ -180,7 +188,8 @@ quantity: SNGS-147's hybrid gains 24 points at the probes and loses four at the 
 So the camera lever is real, smaller than the recall table suggested, and concentrated where
 it can still be measured.
 
-**Not this:** another detector. Another segmenter run scored on `observed_error`. Another
+**Not this:** another detector. Another segmenter run at all (D71) -- and certainly not one
+scored on `observed_error`. Another
 attempt on the tracker's colour -- identity purity has resisted seven (D61). Another pass at
 the ball -- its three faults are diagnosed and two are closed (D66). Another way of joining the
 seed to the segmenter -- that is D68, and the join is not what was missing.
