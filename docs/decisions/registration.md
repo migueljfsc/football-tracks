@@ -985,3 +985,41 @@ register a two-marking frame is not a better segmenter but a model that does not
 regressing a camera directly from the picture, grass texture and horizon included. That is a
 different architecture and a real project, and D70's table says it is worth 17 points on one
 benchmark clip. It is not the next thing to do.
+
+**D74 — more seeds do not fix the camera; only stronger ones help, and only a little.** With the
+segmenter closed (D71) and the camera model sized at the players (D70), the obvious remaining
+lever was the human: if one clicked frame drifts, click five. Measured as the share of annotated
+boxes placed within two metres:
+
+    SNGS-147                <1 m   <2 m   <5 m   thrown off
+    one seed (ships)         51%    73%    89%       40
+    three, spread            50%    73%    91%       76
+    nine, spread             44%    79%    94%       15
+    only strong frames (6)   44%    79%    93%       25
+
+    SNGS-151                <1 m   <2 m   <5 m   thrown off
+    one seed (ships)         41%    57%    71%      593
+    three, spread            44%    58%    71%      592
+    five, spread             28%    37%    68%      421
+    only strong frames (4)   47%    58%    71%      592
+
+**Spreading seeds naively makes it WORSE** -- SNGS-151 falls from 57% to 37% of boxes within two
+metres with five of them. This is D55 again at a different scale: the extra anchors are the
+frames the fitter was least sure of, because a slice of the clip with little paint still
+contributes its best frame, and one bad anchor is believed absolutely by every frame it reaches.
+
+**Seeded only where the evidence is strong** -- refusing any frame carrying under 80% of the
+markings the best frame has -- it is a modest gain: six points of boxes inside two metres on
+SNGS-147 and the boxes thrown off the pitch cut from 40 to 25, one point on SNGS-151. The
+one-metre band gets WORSE on SNGS-147 (51% to 44%), so this buys the tail and sells the middle.
+
+**What that settles.** The gap between what ships and a perfect fit -- 73% against 90% on
+SNGS-147 -- is not reachable by asking the human for more clicks, any more than by the segmenter.
+It is the carry itself: a chain that is right at its anchor and wrong a hundred frames later,
+which is D18, and neither more anchors nor better anchors have moved it. What has never been
+tried is correcting the chain against something that is not a fit at all -- the players' own
+motion, or the grass, measured over the whole clip rather than frame to frame.
+
+**And the multi-seed path already exists** for real clips (`seed.*.json`, D34), so this is
+guidance rather than code: click frames where a lot of paint is visible, and do not click one
+just because a stretch of the clip has none.
