@@ -1,3 +1,9 @@
+## v0.21.3 (2026-09-07)
+
+### Fix
+
+- **stitch**: read a velocity over seconds of track, not a count of samples
+
 ## v0.21.2 (2026-09-07)
 
 ### Fix
