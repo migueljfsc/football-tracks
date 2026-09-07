@@ -1,3 +1,9 @@
+## v0.20.0 (2026-09-07)
+
+### Feat
+
+- **teams**: decline a side the kit does not settle, rather than flip a coin
+
 ## v0.19.0 (2026-09-07)
 
 ### Feat
