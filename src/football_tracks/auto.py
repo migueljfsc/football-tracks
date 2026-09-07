@@ -124,8 +124,16 @@ BALL_MARGIN_M = 1.5
 # The ball can be frequent or right, and not both: the detector finds it at all in only
 # 41% of frames, so no selection rule can do better than that. Given the choice, a board
 # is better with no ball than with a wrong one -- Pitchboard represents "no ball" natively
-# (its D44) and draws a phantom pass for a wrong one. 0.65 buys 84% correctness.
-BALL_ASSERT_CONF = 0.65
+# (its D44) and draws a phantom pass for a wrong one.
+#
+# 0.75, raised from 0.65 and measured where it lands rather than where it is set (D73). Per
+# frame it changes almost nothing -- the path's own smoothing and continuity gates already
+# throw out most bad picks, so "within 3 m of the real ball" moves by -3 to +5 points
+# depending on the clip. Through the importer it removes two of the four phantom PASSES left
+# on six boards and costs no real one: 73% of drawn passes were real, now 85%, with recall
+# unchanged at 47%. A pass drawn between the wrong players is the most expensive thing this
+# pipeline produces, because a coach reads it as football.
+BALL_ASSERT_CONF = 0.75
 
 # Where a restart puts the ball: the four corner arcs and the centre spot.
 #

@@ -365,3 +365,27 @@ anyway. On SNGS-060 it is a REGRESSION -- 125 fewer asserted frames bought 1.1 p
 accuracy that clip did not need, and the board loses a handover because a holder with no
 sighting to contradict him stands for longer. Few and right beats many and wrong, but only
 where the many were being believed.
+
+**D73 — the ball is asserted at 0.75, and the reason is the PASSES rather than the ball.** D66
+set the floor at 0.65 on a per-frame measurement: at that confidence the chosen ball is the
+real one 84% of the time, against 94% at 0.75, and 0.65 was taken because it answers on more
+frames.
+
+Raised to 0.75 and measured on both axes. **Per frame it barely moves** -- the path's own
+smoothing, continuity gate and static-mark filter already throw out most bad picks, so what
+survives is not much better:
+
+    clip        asserted      within 3 m of the real ball
+    SNGS-116    327 -> 262      58.5% -> 63.4%
+    SNGS-147    429 -> 336      61.1% -> 65.2%
+    SNGS-060    641 -> 615      92.7% -> 89.8%
+    SNGS-121    515 -> 492      74.8% -> 75.0%
+
+**Through the importer it is a free win.** Of the passes drawn on six boards, 73% were real at
+0.65 and 85% at 0.75, with recall unchanged at 47% -- two phantom passes removed and no real
+one lost. SNGS-116 stops drawing its one invented pass entirely.
+
+The two measurements disagree because they ask different questions. A ball that is 4 m out for
+three frames barely moves a median; put through `carrierAt` it is a player receiving a ball
+nobody passed him, and the board draws that as football (D71 in Pitchboard). **Where the ball
+is judged decides what the threshold should be**, and the board is the only place that counts.
