@@ -256,3 +256,30 @@ SNGS-147 from 70.1% to 82.8% at two metres -- and takes SNGS-121 from 71.7% DOWN
 because its seed chain is already better than a per-frame fit from the four markings that clip
 shows. Which is D68's finding from the other side: the camera model is worth 13 points of
 recall where it is bad, and the segmenter is not reliably better than what ships.
+
+**D76 — two tracks alive at once are two players, not one player twice.** With gap-bridging
+settled (D69) the remaining fragmentation is in pairs the stitcher cannot reach by construction:
+fragments that OVERLAP in time, where the tracker appears to have started a second track while
+the first was still running. Merging those would be free coverage, so it was worth checking
+whether they are what they look like.
+
+They are not. Across four clips, of every pair of tracks sharing at least five frames:
+
+    clip        overlapping pairs   really the same player   agree within 2 m
+    SNGS-060           748                    3                      0
+    SNGS-116           561                    3                      7  (1 of them the same)
+    SNGS-121           394                    0                      0
+    SNGS-147           374                    1                      0
+
+Overlapping tracks are two different players standing near each other, which is what a football
+match consists of. The handful that are one player do not agree in position either -- one of the
+two is mis-projected, which is why it became a second track. **There is no duplicate-merging win
+here**, and a rule that merged on proximity would join teammates.
+
+**What is left of fragmentation is 6 to 18 points**, measured as the difference between what a
+real player's best track holds and what all their tracks hold together: 9 on SNGS-147, 11 on
+SNGS-060, 18 on SNGS-121, 6 on SNGS-151. That is the ceiling for joining, and the two mechanisms
+that could reach it are both spent -- the prediction gate takes what geometry can take (D69),
+and colour has resisted seven attempts (D61). Closing it needs an appearance model robust to
+occlusion, which the benchmark has called a project of its own since SNGS-116 first showed 18%
+of boxes overlapping another by more than a third.
