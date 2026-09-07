@@ -1,3 +1,9 @@
+## v0.21.1 (2026-09-07)
+
+### Fix
+
+- **seed**: pressing d then t no longer crashes the click tool
+
 ## v0.21.0 (2026-09-07)
 
 ### Feat
