@@ -14,12 +14,18 @@ in shot about 239 frames of 750 and comes out as a median of 4 fragments, so rou
 frames each. Pitchboard's importer wants 30% of its window covered before a track becomes
 a player, and 48 frames is 6%. That is why a 22-player clip becomes a ten-player board.
 
+**And what joining them is worth, which is less than it looks.** Join every fragment of a
+player perfectly -- the ceiling, from ground truth -- and the median player's best track
+holds 47% of their life on SNGS-151, 52% on SNGS-116, 60% on SNGS-147, 67% on SNGS-121 and
+91% on SNGS-060. The rest is not in another fragment: it was never tracked, or the camera
+model put it more than the match radius away. This stage cannot reach it (D69).
+
 **Why joining them afterwards is safe where lengthening the wait was not.** The tracker
 must decide at the moment of the gap, with nothing after it to go on. This runs when both
 sides are known, so it can ask whether the two fragments are mutually each other's best
-partner and refuse when they are not. 39% of the breaks have a gap of one frame or less --
-the player never disappears, the tracker simply renumbers them -- and 70% are inside 12
-frames.
+partner, and where each was GOING rather than merely how far apart they are. 39% of the
+breaks have a gap of one frame or less -- the player never disappears, the tracker simply
+renumbers them -- and 70% are inside 12 frames.
 
 The failure this must not cause is a track that teleports between two players, which is
 worse than two honest halves: it puts one player's run on another's shirt. Hence the speed
@@ -36,15 +42,55 @@ import numpy as np
 from .stage2_track import MAX_SPEED
 from .tracks import Sample
 
-# How long a gap may be and still be bridged. 0.5 s reaches 70% of the identity changes
-# measured on SNGS-147; past that the position prior is too weak to tell two players in
-# the same shirt apart, and the speed gate alone would admit most of the pitch.
-MAX_GAP_S = 0.5
+# How long a gap may be and still be bridged.
+#
+# It was 0.5 s, chosen because it reaches 70% of the identity CHANGES on SNGS-147 -- but
+# the breaks that cost the roster are a different population, and they are much longer.
+# Grouping fragments by the real player they track and asking why each consecutive pair
+# was refused, the gap limit is 55-64% of every refusal and the gaps it refuses run to a
+# median of 2.2-2.8 s. Half a second was rejecting most of what there is to join.
+#
+# What makes three seconds safe is the gate below rather than the length itself: reaching
+# further on a plain speed limit admits most of the pitch, which is exactly why the
+# original constant was short.
+MAX_GAP_S = 3.0
 
-# Slack on the speed gate, in metres, for the camera model's own error. Position error is
-# 0.5-1.3 m per sample depending on the registration, so two samples of one stationary
+# Slack on the position gate, in metres, for the camera model's own error. Position error
+# is 0.5-1.3 m per sample depending on the registration, so two samples of one stationary
 # player can sit two metres apart with nobody having moved.
 POSITION_SLACK_M = 2.5
+
+# How far a player may deviate from where they were going, in metres per second of gap.
+#
+# The gate is a PREDICTION rather than a reach: where the first fragment was heading, met
+# by where the second came from. A reach gate grows at 12 m/s, so at three seconds it
+# admits 38 metres and any two players in one kit; this grows at two, which is what a
+# player can do by changing their mind rather than by running.
+#
+# Measured on the fragments five clips actually produce, joining pairs whose real identity
+# the ground truth can confirm:
+#
+#     gate                     joins    wrong of those judged
+#     0.5 s reach (was)         5-15          41%
+#     3.0 s reach              16-20          38%
+#     3.0 s predict 2.0 m/s    10-19          27%
+#     3.0 s predict 1.5 m/s     7-17          26%
+#
+# The prediction gate is the only one that makes MORE joins and gets FEWER of them wrong,
+# which is the trade a reach gate could not offer at any length. Refusing a join whose
+# runner-up is nearly as good buys nothing on top -- the wrong ones are confident, not
+# ambiguous -- so there is no margin rule here.
+#
+# 1.5 rather than 2.0 because of what a wrong join does downstream. Teams are clustered on
+# a whole track's kit, so a track holding two players holds a blend of two kits: at 2.0 the
+# team split on SNGS-147 falls from 79.4% to 62.3%, and at 1.5 it holds at 78.2% for most
+# of the same gain (2531 observed player-seconds across eleven boards against 2640, from a
+# baseline of 1934).
+PREDICT_DRIFT_MS = 1.5
+
+# How many samples at a fragment's end its velocity is read over. Two is a difference of
+# two noisy positions; a fifth of a second is a direction.
+VELOCITY_SAMPLES = 5
 
 # What disagreeing kit costs, as a fraction of the distance budget. Same role and the same
 # value as the tracker's own: enough to break a tie between two candidates, not enough to
@@ -74,16 +120,46 @@ def _color_distance(a: np.ndarray | None, b: np.ndarray | None) -> float:
     return float(np.linalg.norm(a - b))
 
 
+def _velocity(samples: list[Sample], fps: float, *, at_end: bool) -> tuple[float, float]:
+    """Metres per second at one end of a fragment, capped at what a footballer can run."""
+    ss = samples[-VELOCITY_SAMPLES:] if at_end else samples[:VELOCITY_SAMPLES][::-1]
+    if len(ss) < 2:
+        return (0.0, 0.0)
+    dt = abs(ss[-1].f - ss[0].f) / fps
+    if dt <= 0:
+        return (0.0, 0.0)
+    vx, vy = (ss[-1].x - ss[0].x) / dt, (ss[-1].y - ss[0].y) / dt
+    speed = float(np.hypot(vx, vy))
+    if speed > MAX_SPEED:
+        vx, vy = vx * MAX_SPEED / speed, vy * MAX_SPEED / speed
+    return (vx, vy)
+
+
 def _cost(a: Fragment, b: Fragment, fps: float) -> float | None:
-    """What it costs to call `b` the continuation of `a`, or None if it cannot be."""
+    """What it costs to call `b` the continuation of `a`, or None if it cannot be.
+
+    Both ends have to agree. `a` is walked forward from where it was going and `b` back
+    from where it came from, and the join is refused on whichever disagrees more -- so a
+    fragment that merely happens to be within reach is not a continuation, and one that
+    lands where the run was heading is, even seconds later.
+    """
     gap = b.first.f - a.last.f
     if gap <= 0 or gap > MAX_GAP_S * fps:
         return None
-    reach = MAX_SPEED * (gap / fps) + POSITION_SLACK_M
-    moved = float(np.hypot(b.first.x - a.last.x, b.first.y - a.last.y))
-    if moved > reach:
-        return None  # nobody runs that fast; these are two different people
-    return moved / reach + COLOR_WEIGHT * _color_distance(a.color, b.color)
+    gap_s = gap / fps
+    ax, ay = _velocity(a.samples, fps, at_end=True)
+    bx, by = _velocity(b.samples, fps, at_end=False)
+    tolerance = POSITION_SLACK_M + PREDICT_DRIFT_MS * gap_s
+    ahead = float(
+        np.hypot(b.first.x - (a.last.x + ax * gap_s), b.first.y - (a.last.y + ay * gap_s))
+    )
+    behind = float(
+        np.hypot(a.last.x - (b.first.x + bx * gap_s), a.last.y - (b.first.y + by * gap_s))
+    )
+    worst = max(ahead, behind)
+    if worst > tolerance:
+        return None  # not where either of them was going; these are two different people
+    return worst / tolerance + COLOR_WEIGHT * _color_distance(a.color, b.color)
 
 
 def stitch(

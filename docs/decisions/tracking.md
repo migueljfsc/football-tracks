@@ -186,3 +186,73 @@ window while covering THREE different ground-truth players at 76% purity; after 
 covers one, at 100%, and moves 14.8 m. A track that hops between players covers more ground
 than any real player can, so "max travel" rewards precisely the failure being removed. Judge a
 board by median travel and by whether its longest run belongs to ONE player.
+
+**D69 — the stitcher was refusing most of what there is to join, and reach was the wrong
+gate.** Nothing had ever asked WHY a join was refused. Grouping the fragments five clips
+produce by the real player each one tracks, and putting every consecutive pair through the
+stitcher's own gates:
+
+    refusal                     SNGS-147   SNGS-060
+    gap longer than MAX_GAP_S     55%        64%
+    fragments overlap in time     17%        15%
+    not mutual best               14%         3%
+    too fast                      10%         3%
+    joined                         3%        15%
+
+**The gap limit is most of it, and it was set against the wrong population.** 0.5 s was chosen
+because 70% of identity CHANGES happen inside twelve frames -- but the breaks that cost the
+roster are what is left after the tracker has already given up, and those run to a median of
+2.2-2.8 s. Half a second was refusing most of what there is to join.
+
+**Reaching further on a speed limit does not work, and that is why the constant was short.**
+`MAX_SPEED` is 12 m/s, so a reach gate at three seconds admits 38 metres -- most of the pitch,
+and any two players in one kit. The gate is now a PREDICTION: where the first fragment was
+going, walked forward, against where the second came from, walked back, with a tolerance of
+2.5 m plus 1.5 m per second of gap. Judged on the joins whose identity ground truth can
+confirm, over five clips:
+
+    gate                     joins    wrong
+    0.5 s reach (was)         5-15     41%
+    3.0 s reach              16-20     38%
+    3.0 s predict 1.5 m/s     7-17     26%
+
+More joins and fewer of them wrong, which no length of reach gate could offer. A margin rule
+on top -- refuse where the runner-up is nearly as good -- buys nothing: the wrong joins are
+confident rather than ambiguous.
+
+**Through the boards, in observed player-seconds:** 1934 across the eleven SoccerNet clips
+becomes 2531. SNGS-067 goes 117 -> 259, SNGS-121 196 -> 321 and the Nottingham clip 58 -> 147,
+mostly by holding a window twice as long. Identity purity rises on SNGS-060 (79.6 -> 81.6%) and
+SNGS-121 (71.9 -> 74.4%) and the team split holds within two points everywhere. Recall,
+precision and position error do not move at all, by construction: this changes which track a
+sample belongs to, never whether it exists.
+
+**What it costs is two real players in seventy-seven.** Measured at a FIXED window, so the
+comparison is not flattered by the longer passages this buys: a board fields 77 distinct real
+players before and 75 after, because a wrong join merges two people into one shirt. The rate
+was 1.5 m/s rather than 2.0 for the same reason -- teams are clustered on a whole track's kit,
+so a track holding two players holds a blend of two kits, and at 2.0 the team split on
+SNGS-147 falls from 79.4% to 62.3%.
+
+**And the ceiling on this stage is now measured, which matters more than the change.** Join
+every fragment of a player perfectly -- an oracle, from ground truth -- and the median player's
+best track holds 47% of their life on SNGS-151, 52% on SNGS-116, 60% on SNGS-147, 67% on
+SNGS-121 and 91% on SNGS-060. Today's stitcher already reaches 47%, 43%, 53%, 50% and 79%. On
+three of the five clips there is almost nothing left to join: the missing half of a player is
+not in another fragment at all.
+
+Where it went, by match radius, is the funnel to read next:
+
+    clip       recall @1 m   @2 m    @5 m    @10 m
+    SNGS-060      73.7%     89.7%   93.1%   93.3%
+    SNGS-147      48.5%     70.1%   82.1%   89.7%
+    SNGS-121      35.0%     71.7%   92.3%   95.8%
+    SNGS-116      51.9%     65.4%   75.0%   79.2%
+    SNGS-151      39.2%     53.3%   68.2%   79.8%
+
+On SNGS-121 and SNGS-147 the samples exist and land 2-10 m from the player: that is the camera
+model, not the tracker. Pushing the same detections through the ground-truth camera takes
+SNGS-147 from 70.1% to 82.8% at two metres -- and takes SNGS-121 from 71.7% DOWN to 51.7%,
+because its seed chain is already better than a per-frame fit from the four markings that clip
+shows. Which is D68's finding from the other side: the camera model is worth 13 points of
+recall where it is bad, and the segmenter is not reliably better than what ships.

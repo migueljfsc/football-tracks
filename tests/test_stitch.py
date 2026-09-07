@@ -78,3 +78,28 @@ def test_no_samples_are_ever_lost() -> None:
     pos = {i: _frag(i * 5, 6, 40.0 + i, 30.0) for i in range(6)}
     out = stage2_stitch.stitch(pos, {}, fps=25.0)
     assert sum(len(v) for v in out.values()) == 36
+
+
+def test_a_run_is_picked_up_seconds_later_where_it_was_heading() -> None:
+    """The join the old gate could not make. 55-64% of a player's own breaks are longer
+    than the half second it allowed, at a median of 2.2-2.8 s."""
+    # 0.1 m a frame at 25 fps is 2.5 m/s, so three seconds of gap is 7.5 m of running.
+    pos = {1: _frag(0, 10, 50.0, 30.0), 2: _frag(84, 10, 58.4, 30.0)}
+    out = stage2_stitch.stitch(pos, {}, fps=25.0)
+    assert len(out) == 1
+    assert len(next(iter(out.values()))) == 20
+
+
+def test_a_long_gap_does_not_admit_whoever_is_within_reach() -> None:
+    """What makes the longer gap safe. A reach gate at 12 m/s allows 38 m across three
+    seconds, which is most of the pitch and any two players in one kit."""
+    pos = {1: _frag(0, 10, 50.0, 30.0), 2: _frag(84, 10, 30.0, 30.0)}
+    assert len(stage2_stitch.stitch(pos, {}, fps=25.0)) == 2
+
+
+def test_a_player_who_was_standing_still_is_expected_to_still_be_there() -> None:
+    pos = {
+        1: _frag(0, 10, 50.0, 30.0, step=0.0),
+        2: _frag(60, 10, 50.4, 30.0, step=0.0),
+    }
+    assert len(stage2_stitch.stitch(pos, {}, fps=25.0)) == 1

@@ -141,10 +141,19 @@ which is a coverage problem and not an accuracy one. The evidence on how:
 - **More matches do not.** Run 3 multiplied them by seventy and made two clips of three worse.
 - **A bigger backbone is untried.** DeepLabv3 on MobileNetV3 was chosen to train on a laptop.
 
-**And the next lever is stage 2's continuation**, measured by best-track coverage above and
-judged on the board like everything else. Not the tracker's colour, which has resisted seven
-attempts (D61): the fragments to join are separated by TIME, and what says two of them are one
-player is where the second starts against where the first was going.
+**Stage 2's continuation was the next lever and it has been pulled (D69).** The stitcher was
+refusing 55-64% of a player's own breaks on a half-second gap limit set against the wrong
+population, and reaching further on a speed limit admits 38 metres. A prediction gate -- where
+one fragment was going against where the next came from -- makes more joins and gets fewer of
+them wrong, and the eleven boards go from 1934 observed player-seconds to 2531, at a cost of
+two real players in seventy-seven.
+
+**What is left in this stage is small and now measured.** Join every fragment of a player
+perfectly and the median player's best track still holds only 47-67% of their life on four of
+five clips. The other half was never tracked, or landed more than two metres from where the
+player was -- and by match radius that second term dominates: SNGS-121 recalls 71.7% of samples
+at two metres and 92.3% at five, SNGS-147 70.1% and 82.1%. **The camera model is where the rest
+of the board is**, which D68 approached from the other side and could not convert.
 
 **Not this:** another detector. Another segmenter run scored on `observed_error`. Another
 attempt on the tracker's colour -- identity purity has resisted seven (D61). Another pass at
