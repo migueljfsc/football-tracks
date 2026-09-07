@@ -18,11 +18,15 @@ dependencies = [
 # torch install that fails should not block the stage that does not use torch.
 [project.optional-dependencies]
 # RT-DETR through transformers: Apache-2.0, and measurably better than torchvision's
-# Faster R-CNN, which it replaced (see detect.py). torchvision went with it and nothing
-# imports it now. Ultralytics is deliberately absent - AGPL-3.0 against this repo's MIT
-# (D9). supervision is absent too: MIT, but its ByteTrack is deprecated and goes away in
-# 0.31, so the tracker is our own.
-vision = ["torch>=2.5", "transformers>=5.0"]
+# Faster R-CNN, which it replaced (see detect.py). Ultralytics is deliberately absent -
+# AGPL-3.0 against this repo's MIT (D9). supervision is absent too: MIT, but its ByteTrack
+# is deprecated and goes away in 0.31, so the tracker is our own.
+#
+# pillow and torchvision are RT-DETR's, not ours: `RTDetrImageProcessor` imports both and
+# raises on use if either is missing. Nothing in this repo imports them, which is how they
+# came to be left out -- the extra was read off our own imports, and the failure only
+# appears on a machine that has never cached a `detections.json` (D77).
+vision = ["torch>=2.5", "transformers>=5.0", "torchvision>=0.20", "pillow>=10"]
 # The pitch-line segmenter (D36). torchvision is back, for its pretrained segmentation
 # backbones rather than its detectors -- the detector it used to supply lost to RT-DETR
 # and is still gone.

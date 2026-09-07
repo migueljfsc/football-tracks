@@ -325,7 +325,9 @@ data = [
     { name = "soccernet" },
 ]
 vision = [
+    { name = "pillow" },
     { name = "torch" },
+    { name = "torchvision" },
     { name = "transformers" },
 ]
 
@@ -340,12 +342,14 @@ dev = [
 requires-dist = [
     { name = "numpy", specifier = ">=2.1" },
     { name = "opencv-python", specifier = ">=4.10" },
+    { name = "pillow", marker = "extra == 'vision'", specifier = ">=10" },
     { name = "scenedetect", specifier = ">=0.6.4" },
     { name = "scipy", specifier = ">=1.14" },
     { name = "soccernet", marker = "extra == 'data'", specifier = ">=0.1.60" },
     { name = "torch", marker = "extra == 'calib'", specifier = ">=2.5" },
     { name = "torch", marker = "extra == 'vision'", specifier = ">=2.5" },
     { name = "torchvision", marker = "extra == 'calib'", specifier = ">=0.20" },
+    { name = "torchvision", marker = "extra == 'vision'", specifier = ">=0.20" },
     { name = "transformers", marker = "extra == 'vision'", specifier = ">=5.0" },
     { name = "typer", specifier = ">=0.15" },
 ]
