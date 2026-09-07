@@ -1,3 +1,9 @@
+## v0.20.2 (2026-09-07)
+
+### Fix
+
+- **seed**: let a midfield view be traced, and refuse the fit it cannot support
+
 ## v0.20.1 (2026-09-07)
 
 ### Fix
