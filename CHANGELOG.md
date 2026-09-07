@@ -1,3 +1,9 @@
+## v0.18.0 (2026-09-07)
+
+### Feat
+
+- **stitch**: join a fragment to where the run was going, not to whatever is in reach
+
 ## v0.17.0 (2026-09-06)
 
 ### Feat
