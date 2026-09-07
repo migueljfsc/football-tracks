@@ -153,6 +153,43 @@ def test_tracing_two_crossing_markings_recovers_the_camera() -> None:
     assert got[0] == pytest.approx([52.5, 34.0], abs=0.05)
 
 
+def test_a_midfield_view_can_be_traced_from_what_it_shows() -> None:
+    """What a camera parked near the centre circle offers: the halfway line, a box line
+    at the far end of the shot, and the touchlines. A real clip was refused because the
+    halfway line could not be traced at all, leaving everything in one band."""
+    s = seed.Seed(
+        frame=1,
+        points=[],
+        lines=traced("halfway line")
+        + traced("penalty box front")
+        + traced("far touchline")
+        + traced("near touchline"),
+    )
+    h = seed.homography(s)
+    assert h is not None
+    got = calibration.apply(h, calibration.apply(PITCH_TO_IMAGE, np.array([[52.5, 34.0]])))
+    assert got[0] == pytest.approx([52.5, 34.0], abs=0.05)
+
+
+def test_one_line_across_and_two_along_is_refused_rather_than_guessed() -> None:
+    """The halfway line and both touchlines look like plenty and are not: two parallel
+    markings fix the scale between them, and the single crossing line fixes an origin and
+    no scale at all. Fitted anyway it puts the centre spot 19 m from where it belongs."""
+    s = seed.Seed(
+        frame=1,
+        points=[],
+        lines=traced("halfway line") + traced("far touchline") + traced("near touchline"),
+    )
+    assert seed.homography(s) is None
+
+
+def test_the_halfway_line_is_the_same_line_from_either_end() -> None:
+    a, b, c = seed.TRACEABLE["halfway line"]
+    ma, mb, mc = seed.mirrored_line("halfway line")
+    # Mirroring negates it, which is the same line: -x + 52.5 = 0 is x = 52.5.
+    assert (ma, mb, mc) == pytest.approx((-a, b, -c))
+
+
 def test_tracing_only_parallel_markings_is_refused() -> None:
     # Three lines all parallel to the goal line leave the camera free to slide along
     # the pitch. The fit would come back looking like any other matrix.

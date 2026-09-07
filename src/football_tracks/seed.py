@@ -92,6 +92,12 @@ TRACEABLE: dict[str, tuple[float, float, float]] = {
     "penalty box near side": (0.0, 1.0, -(MID + 20.16)),
     "far touchline": (0.0, 1.0, 0.0),
     "near touchline": (0.0, 1.0, -PITCH_WIDTH),
+    # The one marking a MIDFIELD view always has, and the only line here that mirroring
+    # leaves alone. Without it such a frame can only offer box lines and a touchline --
+    # every one of them in the same band across the picture, which is unconstrained in
+    # depth and folds the fit over just below it (D34). A real clip was refused for
+    # exactly that: `usable_seeds` saw 34% of the frame mapped behind the camera.
+    "halfway line": (1.0, 0.0, -PITCH_LENGTH / 2),
 }
 
 
@@ -109,6 +115,7 @@ EXTENTS: dict[str, tuple[tuple[float, float], tuple[float, float]]] = {
     "penalty box near side": ((0.0, MID + 20.16), (16.5, MID + 20.16)),
     "far touchline": ((0.0, 0.0), (PITCH_LENGTH, 0.0)),
     "near touchline": ((0.0, PITCH_WIDTH), (PITCH_LENGTH, PITCH_WIDTH)),
+    "halfway line": ((PITCH_LENGTH / 2, 0.0), (PITCH_LENGTH / 2, PITCH_WIDTH)),
 }
 
 
@@ -307,6 +314,8 @@ def homography(seed: Seed) -> npt.NDArray[np.float64] | None:
         return None
     if not _spans_two_directions(seed):
         return None
+    if not seed.points and not _two_lines_each_way(seed):
+        return None
 
     fitted = calibration.fit(seed.points, seed.lines, 0, 0)
     if fitted is None:
@@ -411,6 +420,25 @@ def _line_residuals(h: npt.NDArray[np.float64], seed: Seed) -> list[float]:
     for (x, y), (a, b, c) in zip(got, [ln[1] for ln in seed.lines], strict=True):
         out.append(abs(a * x + b * y + c) / max(1e-9, math.hypot(a, b)))
     return out
+
+
+def _two_lines_each_way(seed: Seed) -> bool:
+    """Whether traced lines alone can fix the SCALE in both directions.
+
+    Spanning two directions is not enough when the evidence is lines only. Two parallel
+    markings give the vanishing point and the scale between them; a single crossing line
+    gives an origin along the other axis and nothing about its scale, so the camera is
+    free to stretch along it and the fit that comes back is confidently wrong rather than
+    refused. The halfway line and the two touchlines -- what a midfield camera shows --
+    do exactly that: the fit lands the centre spot at 15 m across a 68 m pitch.
+
+    The same rule the learned fitter uses on predicted markings, for the same reason
+    (`calibration.MIN_LINES_PER_AXIS`). A landmark escapes it, because an exact point
+    fixes both scales where a line fixes one.
+    """
+    seen = {ln for _, ln in seed.lines}
+    across = sum(1 for a, b, _c in seen if abs(a) > abs(b))
+    return min(across, len(seen) - across) >= 2
 
 
 def _spans_two_directions(seed: Seed) -> bool:
