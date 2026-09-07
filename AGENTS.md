@@ -153,6 +153,14 @@ Each of these cost a day. Where one names a decision, the full account is in
   at `--interval-s 0`, which is what `ft bench` does.
 - **`observed_error` is conditioned on the frames a model already solves**, so it rewards
   refusing the hard ones (D67). For registration, measure the share of ALL frames.
+- **Judge a camera model WHERE THE PLAYERS ARE, not at the probe points** (D70). The two
+  disagree: SNGS-147's hybrid registers 24 more points of the frame within two metres and puts
+  4% MORE players outside it. `ft reg-eval` prints both lines; the second is the one the board
+  is made of.
+- **SoccerNet's lines and its own player positions disagree by metres on some clips.** A camera
+  fitted from the ground-truth lines of SNGS-121 puts the players 2.33 m from the positions the
+  same file records, against the shipping seed's 1.44 m. On that clip and SNGS-151 no fitter can
+  be ranked, and a recall difference there may be the yardstick rather than the pipeline (D70).
 - **One variable per run.** Runs 1-3 each moved two and none can be read.
 - **Sweeping a constant on a clip where its failure does not occur measures nothing.**
 - **Validation loss does not predict `observed_error`.** Judge on the eval, never the loss.

@@ -862,3 +862,52 @@ carried nothing whatever was asked for, and asking for a carry was impossible. A
 `schema/tracks.schema.json` never declared `source.intervalS`, which the writer has emitted and
 Pitchboard has read for eleven releases: every shipped file was invalid against its own
 contract, because `test_contract.py` checked the top level and the tracks and never `source`.
+
+**D70 — a camera model is judged where the PLAYERS are, and on two clips the ground truth
+cannot judge it at all.** D68 left a contradiction: the hybrid registered far more of SNGS-147
+within two metres and made the tracks worse, while pushing the same detections through the
+ground-truth camera made them much better. Both cannot be true of one quantity, and they are
+not: `observed_error` probes the visible pitch, and players stand in a band across the middle
+of the frame. `ft reg-eval` now reports both, the second by pushing every annotated box's
+bottom edge through the fitted camera and comparing with the position SoccerNet recorded for
+that same box:
+
+    clip       model     probes <2 m   players <2 m   p50 at players   thrown off pitch
+    SNGS-147   seed          62%           73%           0.98 m               40
+               hybrid        86%           69%           1.11 m               23
+               truth        100%           90%           0.58 m                0
+    SNGS-116   seed          51%           78%           0.76 m              196
+               hybrid        59%           76%           0.64 m              124
+               truth        100%           83%           0.53 m                0
+    SNGS-060   seed         100%           94%           0.57 m                0
+               hybrid        89%           97%           0.82 m                0
+               truth        100%           99%           0.31 m                0
+    SNGS-121   seed          85%           75%           1.44 m                0
+               hybrid        84%           53%           1.74 m                0
+               truth        100%           48%           2.33 m                0
+    SNGS-151   seed          85%           57%           1.30 m              593
+               hybrid        73%           53%           1.68 m              567
+               truth        100%           50%           1.80 m              204
+
+**The two metrics disagree, and the probe one is the one that misleads.** SNGS-147's hybrid
+gains 24 points at the probes and loses four at the players. Every registration judgement in
+this repo before today was made on the probe metric, including the five training runs and the
+0.5 m bar.
+
+**And on SNGS-121 and SNGS-151 the annotation disagrees with itself.** A camera fitted from the
+ground-truth LINES puts the players further from the ground-truth POSITIONS than the shipping
+seed does -- 2.33 m against 1.44 m, and 1.80 m against 1.30 m. Those clips cannot rank two
+fitters: the yardstick's own floor sits above the error being measured. It also explains the
+recall table, where `--mode truth` scores 51.7% on SNGS-121 against seed mode's 71.7% and
+nothing about the pipeline changed.
+
+**What that leaves for the camera model, clip by clip.** Headroom to a perfect fit is 17 points
+of players-within-two-metres on SNGS-147 and 5 on SNGS-116; it is 5 on SNGS-060, and on
+SNGS-121 and SNGS-151 there is none to measure. The lever is real on two clips of five and
+unmeasurable on two others, which is a smaller and better-understood target than "the camera
+model is the constraint".
+
+**It also settles the hybrid.** At the players it loses on four clips of five -- the exception
+being SNGS-116, where it takes the median from 0.76 m to 0.64 m and the boxes thrown off the
+pitch from 196 to 124. `--mode seed` stays what ships, now for a reason measured on the
+quantity that matters.

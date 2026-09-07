@@ -60,8 +60,18 @@ class Registration:
         return self.solved / self.frames if self.frames else 0.0
 
 
-def evaluate(labels: dict[str, Any], homs: Homographies) -> Registration:
-    """Push ground-truth boxes through the fitted homographies and measure the drift."""
+def player_errors(labels: dict[str, Any], homs: Homographies) -> tuple[list[float], int, int]:
+    """Where the camera model puts the PLAYERS, against where SoccerNet says they were.
+
+    The errors, how many boxes there were, and how many the model threw off the pitch.
+    Split out from `evaluate` because the three numbers only mean something together: a
+    model that refuses half a clip and projects a quarter of the rest into the crowd has
+    an excellent median, and `evaluate` reports exactly that median.
+
+    This is a different question from `calibration.observed_error`, which asks how far two
+    camera models disagree over the visible pitch. A model can improve there and lose here:
+    players stand in a band across the middle of the frame, not at the probe points.
+    """
     frame_of = {img["image_id"]: _frame_index(img["file_name"]) for img in labels["images"]}
 
     errors: list[float] = []
@@ -90,6 +100,12 @@ def evaluate(labels: dict[str, Any], homs: Homographies) -> Registration:
             continue
         errors.append(float(np.hypot(got[0] - want[0], got[1] - want[1])))
 
+    return errors, boxes, off
+
+
+def evaluate(labels: dict[str, Any], homs: Homographies) -> Registration:
+    """Push ground-truth boxes through the fitted homographies and measure the drift."""
+    errors, boxes, off = player_errors(labels, homs)
     arr = np.array(errors) if errors else np.array([np.nan])
     return Registration(
         frames=len(homs),

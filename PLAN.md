@@ -152,8 +152,29 @@ two real players in seventy-seven.
 perfectly and the median player's best track still holds only 47-67% of their life on four of
 five clips. The other half was never tracked, or landed more than two metres from where the
 player was -- and by match radius that second term dominates: SNGS-121 recalls 71.7% of samples
-at two metres and 92.3% at five, SNGS-147 70.1% and 82.1%. **The camera model is where the rest
-of the board is**, which D68 approached from the other side and could not convert.
+at two metres and 92.3% at five, SNGS-147 70.1% and 82.1%.
+
+### The camera model is worth 17 points on one clip, 5 on two, and nothing measurable on two
+
+Measured where the players are rather than at probe points, which is the distinction D70 exists
+for -- the share of annotated boxes a camera model places within two metres of where SoccerNet
+says that player was:
+
+    clip       seed (ships)   a perfect fit   headroom
+    SNGS-147       73%             90%          17 points
+    SNGS-116       78%             83%           5
+    SNGS-060       94%             99%           5
+    SNGS-121       75%             48%          none: the annotation disagrees with itself
+    SNGS-151       57%             50%          none
+
+**A camera fitted from the ground-truth LINES puts the players further from the ground-truth
+POSITIONS than the shipping seed does on two clips of five.** Those clips cannot rank two
+fitters at all, and a recall difference measured on them may be the yardstick rather than the
+pipeline. It is also why every judgement made on `observed_error` was made on the wrong
+quantity: SNGS-147's hybrid gains 24 points at the probes and loses four at the players.
+
+So the camera lever is real, smaller than the recall table suggested, and concentrated where
+it can still be measured.
 
 **Not this:** another detector. Another segmenter run scored on `observed_error`. Another
 attempt on the tracker's colour -- identity purity has resisted seven (D61). Another pass at

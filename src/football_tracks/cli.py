@@ -391,6 +391,22 @@ def reg_eval(
             f"  p90 {np.percentile(e, 90):.2f} m  worst {e.max():.2f} m"
         )
 
+    # And the same question asked where the PLAYERS are, which is not where the probes
+    # are. A camera model is only ever used to place people, and they stand in a band
+    # across the middle of the frame: a fit can agree better with the annotated lines and
+    # put the players further from where they were (D68).
+    at_players, boxes, thrown = stage1_register.player_errors(labels, got)
+    if boxes:
+        shares = "  ".join(
+            f"within {t:g} m {sum(1 for x in at_players if x <= t) / boxes:.0%}" for t in thresholds
+        )
+        p = np.array(at_players) if at_players else np.array([float("nan")])
+        typer.echo(
+            f"  at the players: {boxes} boxes  {shares}"
+            f"   p50 {np.median(p):.2f} m  p90 {np.percentile(p, 90):.2f} m"
+            f"  thrown off the pitch {thrown}"
+        )
+
 
 @app.command()
 def bench(
