@@ -176,6 +176,13 @@ Each of these cost a day. Where one names a decision, the full account is in
 
 ### Environment and video
 
+- **`ft frames` clears the frames it is about to write, and drops what was cached from
+  them.** Frames are numbered from one, so a shorter recording extracted over a longer one
+  used to leave the tail of the old one behind and every stage read the two as one clip. The
+  same trap applies to `motions.json` and `detections.json`, which are keyed by frame number
+  and were silently reused against different footage. `seed.json` is named rather than
+  deleted: it is the only human work here.
+
 - **CI has base dependencies and no ffmpeg.** Verify against that, not against a laptop.
 - **Never train the combined set above 960×540.** SN-Calibration-2023 is natively 960×540, so
   anything higher upsamples 82% of it (D36).

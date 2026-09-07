@@ -155,6 +155,15 @@ def extract(path: Path, dest: Path, *, crop: tuple[int, int, int, int] | None = 
     frames_dir = dest / "img1"
     frames_dir.mkdir(parents=True, exist_ok=True)
 
+    # Empty it first. Frames are numbered from one, so extracting a SHORTER recording over
+    # a longer one leaves the tail of the old one behind and every stage downstream reads
+    # the two as one clip: a real 345-frame clip inherited 30 frames of the previous match,
+    # and the tracker followed players across the join, the kit split came out 21 v 11, and
+    # the board showed a passage that never happened. Nothing here is authored, so clearing
+    # is safe -- this directory is entirely this function's output.
+    for previous in sorted(frames_dir.glob("*.jpg")):
+        previous.unlink()
+
     cap = cv2.VideoCapture(str(path))
     n = 0
     while True:

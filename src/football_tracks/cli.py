@@ -872,7 +872,35 @@ def frames(
     rather than the one the container claims - a screen recording routinely lies.
     """
     dest = CLIPS / (name or source.stem)
+    before = len(list((dest / "img1").glob("*.jpg")))
     clip = video_mod.extract(source, dest)
+    if before > clip.frames:
+        typer.echo(
+            f"replaced {before} frames already under this name - a shorter recording used to"
+            " leave the tail of the longer one behind, and everything downstream read the two"
+            " as one clip"
+        )
+
+    # The frames are this command's own output. So is everything CACHED from them, and a
+    # cache keyed by frame number is silently reused against different footage -- a real
+    # clip was re-extracted over another and carried the previous one's optical flow, which
+    # nothing downstream could notice. Those go.
+    #
+    # The seed does not: it is the only human work in the pipeline, and a coach who
+    # reframed the same match may well want it. It is named instead, because a seed from
+    # another camera fits nothing and says nothing about it.
+    work = work_dir(Path(name or source.stem))
+    if before:
+        for cached in ("motions.json", "detections.json"):
+            path = work / cached
+            if path.exists():
+                path.unlink()
+                typer.echo(f"dropped {cached}: it was measured from the frames just replaced")
+        if (work / "seed.json").exists():
+            typer.echo(
+                f"NOTE: {work / 'seed.json'} was clicked on the clip that was here before."
+                " Re-seed unless this is the same camera on the same frame."
+            )
     typer.echo(
         f"{clip.frames} frames at {clip.fps:.2f} fps, {clip.width}x{clip.height}"
         f" (cropped from {clip.crop})"
