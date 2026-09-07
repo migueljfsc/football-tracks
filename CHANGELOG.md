@@ -1,3 +1,9 @@
+## v0.20.1 (2026-09-07)
+
+### Fix
+
+- **ball**: assert the ball at 0.75, measured on the passes it draws
+
 ## v0.20.0 (2026-09-07)
 
 ### Feat
