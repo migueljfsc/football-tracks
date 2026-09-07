@@ -1,3 +1,9 @@
+## v0.21.4 (2026-09-07)
+
+### Fix
+
+- **video**: a new clip must not inherit the old one's frames or caches
+
 ## v0.21.3 (2026-09-07)
 
 ### Fix
