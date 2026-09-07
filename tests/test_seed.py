@@ -412,3 +412,18 @@ def test_a_diagram_too_big_for_the_frame_is_not_drawn() -> None:
     tiny = np.zeros((100, 100, 3), dtype=np.uint8)
     panel = np.zeros((200, 300, 3), dtype=np.uint8)
     assert seedui._inset_rect(tiny, panel, "bottom left") is None
+
+
+def test_every_diagram_is_the_same_size_whatever_it_draws() -> None:
+    """What lets the click filter measure the inset once. It used to measure it per frame
+    by drawing the CURRENT selection in point mode, which raises the moment you switch to
+    tracing: a line name is not in the landmark table."""
+    from football_tracks import pitch as pitch_mod
+    from football_tracks import seedui
+
+    width = 1600
+    sizer = pitch_mod.draw(max(seedui.DIAGRAM_MIN_SCALE, width / 420), 2.0)
+    for name in seed.LANDMARKS:
+        assert seedui._diagram(name, False, width).shape == sizer.shape
+    for name in seed.TRACEABLE:
+        assert seedui._diagram(name, True, width, trace=True).shape == sizer.shape

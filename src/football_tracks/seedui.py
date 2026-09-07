@@ -216,6 +216,11 @@ def collect(frame: Any, frame_index: int) -> Seed | None:
         points.append(((float(x), float(y)), pitch))
         state["i"] = min(state["i"] + 1, len(names) - 1)
 
+    # One panel, measured once: every diagram is the same size whatever it draws, so the
+    # rectangle the click filter needs does not depend on the mode -- and asking for it in
+    # the wrong mode looks a line name up in the landmark table and raises.
+    sizer = pitch_mod.draw(max(DIAGRAM_MIN_SCALE, frame.shape[1] / 420), 2.0)
+
     cv2.namedWindow(WINDOW, cv2.WINDOW_NORMAL)
     cv2.resizeWindow(WINDOW, 1600, 900)
     cv2.setMouseCallback(WINDOW, on_mouse)
@@ -224,9 +229,7 @@ def collect(frame: Any, frame_index: int) -> Seed | None:
         active = line_names if state["trace"] else names
         state["i"] = min(int(state["i"]), len(active) - 1)
         corner = CORNERS[int(state["corner"]) % len(CORNERS)]
-        state["rect"] = _inset_rect(
-            frame, _diagram(active[state["i"]], bool(state["far"]), frame.shape[1]), corner
-        )
+        state["rect"] = _inset_rect(frame, sizer, corner)
         cv2.imshow(
             WINDOW,
             _draw(
