@@ -283,3 +283,30 @@ that could reach it are both spent -- the prediction gate takes what geometry ca
 and colour has resisted seven attempts (D61). Closing it needs an appearance model robust to
 occlusion, which the benchmark has called a project of its own since SNGS-116 first showed 18%
 of boxes overlapping another by more than a third.
+
+**D77 — a velocity read over a fixed number of SAMPLES measures the frame rate.** The
+prediction gate (D69) is only as good as the heading behind it, and that heading was read over
+the last five samples of a fragment. Five samples is half a second on a 25 fps clip stored at a
+tenth of a second, and an eighth of a second on a 33 fps clip stored at full rate -- and an
+eighth of a second turns 0.7 m of position noise into 5.7 m/s of sprinting sideways.
+
+Found on a coach's own clip, and visible on the board without any metric: *"red player number 8
+just chilling in the penalty area then magically gets the ball -- the player that makes the run
+is the same player that shoots"*. He was right. The runner's track ended at frame 114 and a new
+one began at 125, their ends 2.1 m apart, and the noise-built prediction missed by 3.3 m against
+a 3.0 m tolerance. Two shirts, and the ball handed to the one standing still.
+
+Read over `VELOCITY_S` of track instead -- 0.4 s, whatever that is in frames -- and the same
+pair joins at a cost of 0.53. Below `MIN_VELOCITY_S` of track there is no heading to read, so
+the prediction falls back to "stays where it was", which the tolerance absorbs and a wrong
+heading does not.
+
+    SNGS-121/060/116/147     before        after
+    recall, precision        unchanged     unchanged
+    identity purity          72.2-83.9%    74.4-83.9%   (SNGS-116 +2.5, SNGS-147 +0.3)
+    id switches              58-254        56-252
+
+A wash on 25 fps footage, because half a second and a fifth of a second are both long enough
+there. The whole cost fell on the clip nobody had run: this repo's benchmark is eleven clips at
+one frame rate, and a constant counted in samples is invisible until somebody brings their own
+video. Pitchboard's D52 is the same fault on the other side of the seam, found the same way.

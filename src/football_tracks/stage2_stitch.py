@@ -76,6 +76,9 @@ POSITION_SLACK_M = 2.5
 #     3.0 s predict 2.0 m/s    10-19          27%
 #     3.0 s predict 1.5 m/s     7-17          26%
 #
+# The prediction is only as good as the velocity behind it, and that was read over a fixed
+# number of SAMPLES until a 33 fps clip showed what it costs -- see VELOCITY_S.
+#
 # The prediction gate is the only one that makes MORE joins and gets FEWER of them wrong,
 # which is the trade a reach gate could not offer at any length. Refusing a join whose
 # runner-up is nearly as good buys nothing on top -- the wrong ones are confident, not
@@ -88,9 +91,23 @@ POSITION_SLACK_M = 2.5
 # baseline of 1934).
 PREDICT_DRIFT_MS = 1.5
 
-# How many samples at a fragment's end its velocity is read over. Two is a difference of
-# two noisy positions; a fifth of a second is a direction.
-VELOCITY_SAMPLES = 5
+# How much TRACK a fragment's velocity is read over, in seconds.
+#
+# Seconds and not samples. It was five samples, which is half a second on a 25 fps clip
+# stored at a tenth of a second and an eighth of a second on a 33 fps one stored at full
+# rate -- and an eighth of a second turns 0.7 m of position noise into 5.7 m/s of sprinting
+# sideways. Measured on a real clip: the player who made the run and the player who shot
+# were one man, his two fragments ended 2.1 m apart, and the prediction built from that
+# noise missed by 3.3 m against a 3.0 m tolerance. The board drew the shot as a pass to
+# somebody standing in the box.
+#
+# The same fault Pitchboard's D52 records on its side of the seam: a speed measured across
+# a short window is a position error divided by a small number.
+VELOCITY_S = 0.4
+
+# Below this much track there is no direction to read, only noise, so the prediction falls
+# back to "stays where it was" -- which the tolerance can absorb and a wrong heading cannot.
+MIN_VELOCITY_S = 0.15
 
 # What disagreeing kit costs, as a fraction of the distance budget. Same role and the same
 # value as the tracker's own: enough to break a tie between two candidates, not enough to
@@ -121,12 +138,18 @@ def _color_distance(a: np.ndarray | None, b: np.ndarray | None) -> float:
 
 
 def _velocity(samples: list[Sample], fps: float, *, at_end: bool) -> tuple[float, float]:
-    """Metres per second at one end of a fragment, capped at what a footballer can run."""
-    ss = samples[-VELOCITY_SAMPLES:] if at_end else samples[:VELOCITY_SAMPLES][::-1]
-    if len(ss) < 2:
+    """Metres per second at one end of a fragment, capped at what a footballer can run.
+
+    Read over `VELOCITY_S` of track, so the answer means the same thing whatever the frame
+    rate and whatever interval the file was written at.
+    """
+    edge = samples[-1] if at_end else samples[0]
+    window = [s for s in samples if abs(s.f - edge.f) <= VELOCITY_S * fps]
+    if len(window) < 2:
         return (0.0, 0.0)
+    ss = window if at_end else window[::-1]
     dt = abs(ss[-1].f - ss[0].f) / fps
-    if dt <= 0:
+    if dt < MIN_VELOCITY_S:
         return (0.0, 0.0)
     vx, vy = (ss[-1].x - ss[0].x) / dt, (ss[-1].y - ss[0].y) / dt
     speed = float(np.hypot(vx, vy))

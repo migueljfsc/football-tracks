@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import numpy as np
+import pytest
 
 from football_tracks import stage2_stitch
 from football_tracks.tracks import Sample
@@ -103,3 +104,39 @@ def test_a_player_who_was_standing_still_is_expected_to_still_be_there() -> None
         2: _frag(60, 10, 50.4, 30.0, step=0.0),
     }
     assert len(stage2_stitch.stitch(pos, {}, fps=25.0)) == 1
+
+
+def _jittery(start: int, n: int, x: float, y: float, step: float, fps: float) -> list[Sample]:
+    """A player running in a straight line, seen through a camera model that wobbles."""
+    wobble = [0.0, 0.35, -0.3, 0.25, -0.35, 0.3, -0.25, 0.2]
+    return [
+        Sample(f=start + i, x=x + i * step, y=y + wobble[i % len(wobble)], conf=0.9)
+        for i in range(n)
+    ]
+
+
+def test_velocity_reads_the_same_run_at_any_frame_rate() -> None:
+    """It was read over five SAMPLES, which is half a second at 25 fps and an eighth of one
+    at 33 -- and an eighth of a second turns position noise into a sprint sideways."""
+    slow = _jittery(0, 30, 50.0, 30.0, 5.0 / 25, 25.0)
+    fast = _jittery(0, 60, 50.0, 30.0, 5.0 / 50, 50.0)
+    vx_slow, vy_slow = stage2_stitch._velocity(slow, 25.0, at_end=True)
+    vx_fast, vy_fast = stage2_stitch._velocity(fast, 50.0, at_end=True)
+    assert vx_slow == pytest.approx(vx_fast, abs=0.6)
+    assert vy_slow == pytest.approx(vy_fast, abs=0.6)
+    assert vx_slow == pytest.approx(5.0, abs=1.0), "the player is running at 5 m/s"
+
+
+def test_a_run_and_a_shot_are_one_player_at_a_high_frame_rate() -> None:
+    """The real failure: a 33 fps clip, a break of a third of a second, two fragment ends
+    two metres apart -- and the board drew the shot as a pass to somebody standing there."""
+    fps = 33.4
+    step = -6.0 / fps  # a 6 m/s run towards the goal
+    runner = _jittery(44, 70, 20.0, 23.0, step, fps)
+    # Where that run has reached by the time the tracker picks him up again, eleven frames
+    # after it lost him -- two metres on, which is what the real pair looked like.
+    resumes = runner[-1].x + step * 11
+    shooter = _jittery(125, 69, resumes, 22.8, step, fps)
+    out = stage2_stitch.stitch({17: runner, 21: shooter}, {}, fps=fps)
+    assert len(out) == 1, "one player who ran and then shot, not two"
+    assert len(next(iter(out.values()))) == len(runner) + len(shooter)
