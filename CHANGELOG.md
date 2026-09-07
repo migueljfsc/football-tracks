@@ -1,3 +1,9 @@
+## v0.21.2 (2026-09-07)
+
+### Fix
+
+- **deps**: the vision extra was missing what RT-DETR itself imports
+
 ## v0.21.1 (2026-09-07)
 
 ### Fix
