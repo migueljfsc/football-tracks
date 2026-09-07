@@ -1,3 +1,9 @@
+## v0.19.0 (2026-09-07)
+
+### Feat
+
+- **bench**: judge a camera model where the players are, not at the probe points
+
 ## v0.18.0 (2026-09-07)
 
 ### Feat
