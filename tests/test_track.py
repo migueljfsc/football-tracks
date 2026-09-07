@@ -146,6 +146,22 @@ def test_colour_distance_is_neutral_when_a_kit_is_unknown() -> None:
     assert color_distance(a, np.array([0.0, 1.0])) == 1.0
 
 
+def test_a_kit_that_plainly_disagrees_is_refused_however_near_it_is() -> None:
+    # COLOR_WEIGHT is a preference, and a preference only decides between candidates that
+    # exist. When a track's own player is missed the nearest one left inside the gate can
+    # be an opponent, and paying the colour cost is still cheaper than going unmatched --
+    # so the track walks over to the other team. Measured on a broadcast clip: a yellow
+    # shirt took a white one and reached the board as the other side making the pass.
+    yellow, white = np.array([1.0, 0.0]), np.array([0.0, 1.0])
+    t = Track(id=1, observations=[obs(1, 100.0, 200.0)], color=yellow)
+    near = obs(2, 101.0, 200.0)
+    assert _cost(t, near, white, FPS, None) is None
+    assert _cost(t, near, yellow, FPS, None) is not None
+    # An unreadable kit scores exactly 0.5, and the veto sits above that so it can only
+    # ever refuse two colours that were both read and disagree.
+    assert _cost(t, near, None, FPS, None) is not None
+
+
 def test_the_two_kits_are_told_apart() -> None:
     pts = np.array([[1.0, 0.0]] * 5 + [[0.0, 1.0]] * 5)
     labels = split_kits(pts)

@@ -28,6 +28,19 @@ def test_two_players_are_not_joined_however_close_in_time() -> None:
     assert len(out) == 2
 
 
+def test_two_kits_are_not_one_player_however_well_the_prediction_lands() -> None:
+    # The same guard the tracker makes (D78), one gap later. A fragment ending where the
+    # next begins is the whole of the geometric case for a join, and it is exactly what an
+    # opponent standing in the runner's path also looks like -- so the kit decides, and a
+    # weight cannot: the join is refused outright.
+    yellow, white = np.array([1.0, 0.0]), np.array([0.0, 1.0])
+    pos = {1: _frag(0, 10, 50.0, 30.0), 2: _frag(12, 10, 51.0, 30.0)}
+    assert len(stage2_stitch.stitch(pos, {1: yellow, 2: white}, fps=25.0)) == 2
+    assert len(stage2_stitch.stitch(pos, {1: yellow, 2: yellow}, fps=25.0)) == 1
+    # An unread kit is not a disagreement, and must still join.
+    assert len(stage2_stitch.stitch(pos, {1: yellow}, fps=25.0)) == 1
+
+
 def test_a_long_gap_is_not_bridged() -> None:
     """Past MAX_GAP_S the position prior cannot tell two players in one kit apart."""
     far = int(stage2_stitch.MAX_GAP_S * 25.0) + 30

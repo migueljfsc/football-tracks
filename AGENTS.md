@@ -126,6 +126,13 @@ Each of these cost a day. Where one names a decision, the full account is in
   a track covers, which is what the importer asks.
 - **A bad camera frame throws every player at once**, so registration failures look like
   tracking failures (D62).
+- **A colour WEIGHT cannot stop a track walking onto the other team** (D78). A preference only
+  decides between candidates that exist; when the player's own detection is missing, paying the
+  colour cost is cheaper than going unmatched. Kits that plainly disagree are REFUSED, in the
+  tracker and in the stitcher, and the veto sits above 0.5 so an unreadable kit never triggers it.
+- **A switch between team-mates and a switch across kits cost different things.** Purity counts
+  them the same; the board does not — the second one draws the pass in the wrong colour, which is
+  what a coach reports. Judge a colour change on the TEAM split, not on purity alone.
 
 ### Teams and the ball
 

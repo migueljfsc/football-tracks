@@ -216,6 +216,21 @@ real and much shorter: SNGS-067 goes from 25.2 seconds to 6.6.
 `assign` now declines a side the kit split is not sure of (D72): 30% fewer wrong-coloured
 samples across six clips, for 6% fewer correct ones and a smaller roster.
 
+**A third complaint, and it was one track holding two people.** *"It shows that the away team
+held possession but it is not true, a home player made a run on the left and passed it to the
+second post for the goal"*. The runner's track picked up an opponent after a six-frame gap, and a
+team is clustered on a whole track's kit, so the yellow runner reached the board in the other
+side's colour. A colour WEIGHT cannot prevent that — it is only consulted between candidates that
+exist — so kits that plainly disagree are now refused outright, in the tracker and in the
+stitcher (D78, D79). Team accuracy 59% -> 77% on SNGS-147 and 70% -> 78% on SNGS-116, recall,
+precision and position error unchanged, purity within a point either way.
+
+**What that clip still gets wrong is the ball, not the labels.** No sighting at all between
+frames 121 and 178 — the 1.8 s of the run — and where there is one, it lands 1.9 m from a
+defender and 3.8 m from the player who actually has it. Possession therefore reads as one team
+for the whole passage. That is D66 and D75, and the importer-side answer (a runner-up margin
+before naming a carrier) was measured and is worse.
+
 **What is left is the honest shape of the thing.** An honest board is 3 to 14 seconds because
 that is how long the tracker holds a roster, and it fields 12 to 21 fragments of a 22-player
 game. Board length is now an upstream problem: it is the fragmentation number in the table

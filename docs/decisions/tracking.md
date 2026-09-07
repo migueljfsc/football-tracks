@@ -310,3 +310,61 @@ A wash on 25 fps footage, because half a second and a fifth of a second are both
 there. The whole cost fell on the clip nobody had run: this repo's benchmark is eleven clips at
 one frame rate, and a constant counted in samples is invisible until somebody brings their own
 video. Pitchboard's D52 is the same fault on the other side of the seam, found the same way.
+
+**D78 — a colour WEIGHT is a preference, and a preference loses when the right player is
+missing.** Found on a coach's own clip, the same way D77 was: *"by scene 3 it falls apart, it
+shows that the away team held possession but it is not true, a home player made a run on the
+left and passed it to the second post for the goal"*.
+
+The board was drawing a yellow-shirted player in the opponent's colour. One track held two
+people — the yellow attacker up to frame 89, a white-shirted opponent after it — and a track's
+team is clustered on its whole kit (D63), so the average landed on the white side and the runner
+came out as the other team. Cropping the track's own boxes at its own frames is what showed it:
+three yellow, then three white, in one id.
+
+`COLOR_WEIGHT` was supposed to prevent exactly this and cannot, because it is a preference and
+preferences only decide between candidates that exist. The player's own detection was missed for
+six frames, the gate grows with the wait, and the cheapest thing left inside it was an opponent
+— at which point 0.6 of colour cost is still cheaper than going unmatched. So the association is
+refused outright above `KIT_VETO`, whatever the geometry says. Above 0.5 by construction: an
+unreadable kit scores exactly 0.5 (`color_distance` neither attracts nor repels), so the veto can
+only ever refuse two colours that were both read and disagree.
+
+It is a rare event and a cheap guard — 0.5% of the associations on that clip are above 0.6, and
+the bad one is in the worst four of 2392.
+
+    veto      SNGS-147 purity/switches/teams   SNGS-116            SNGS-121
+    off       77.5%  56  59%                   74.7%  252  70%     74.4%  103  86%
+    0.7       78.0%  47  59%                   72.3%  253  74%     73.8%  100  85%
+    0.6       78.6%  43  77%                   73.5%  257  73%     73.9%  104  86%
+    0.55      78.5%  45  77%                   73.2%  264  71%     73.8%  108  85%
+
+Recall, precision and position error do not move at any setting — this only changes WHICH track
+a sample lands on. **The metric it pays out in is the team split, not identity purity**, which is
+the point: a switch between team-mates costs a shirt number nobody reads, and a switch across
+kits costs the colour of the pass. SNGS-147 gains eighteen points of team accuracy for one point
+of purity.
+
+**D79 — the stitcher makes the same claim across a longer gap, so it needs the same veto.** With
+D78 in place, the joins five clips actually make still include several whose kits disagree by
+0.6 to 0.88 — and this file's own `PREDICT_DRIFT_MS` note records what a joined track holding
+two kits costs: seventeen points of team split. The same guard, in the same units, on the colours
+the stitcher already carries:
+
+    stitch veto   SNGS-147             SNGS-116             SNGS-121
+    off           78.6%  43  77%       73.5%  257  73%      73.9%  104  86%
+    0.6           78.6%  43  77%       73.4%  257  78%      73.6%  104  86%
+
+Five points of team split on the crowded clip, nothing anywhere else, recall and precision
+unchanged. Vetoing on `kit_mean` instead of the fragment's end colour was measured at the same
+time and is a wash (116 +3, 121 +2, 147 unchanged), so the shipped guard is the one that needs
+no new signature.
+
+**What neither of them fixed, on the clip that found them.** The board now names the white-shirt
+carrier correctly through the first two thirds of the passage and gets the last third wrong,
+because the ball is not detected at all between frames 121 and 178 — 1.8 s covering the run —
+and where it IS seen, at 108 to 121, it lands 1.9 m from a defender and 3.8 m from the player
+who actually has it. That is D66 (a ball in flight is metres from where z = 0 puts it) and D75
+(recall cannot be bought by lowering confidence), not the labelling. A runner-up margin in the
+importer was tried against it and measured worse: at 1.5 m the board stops naming anybody and
+possession collapses onto whoever held it first.

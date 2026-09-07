@@ -67,6 +67,19 @@ MIN_GATE_BOXES = 0.35
 # turned back does not tear a track in half.
 COLOR_WEIGHT = 0.6
 
+# Kit distance beyond which a pair is refused outright, whatever the geometry says.
+#
+# A weight is a preference, and a preference is only consulted when there is something to
+# prefer. When a track's own player is missed for a few frames its gate has grown, and the
+# only candidate left inside it can be an opponent -- at which point 0.6 of colour cost is
+# still cheaper than going unmatched, and the track walks over to the other team. That is
+# not a close call about a shadow: it is a yellow shirt matching a white one.
+#
+# Above 0.5 by construction, because an unreadable kit scores exactly 0.5 and must neither
+# attract nor repel (`color_distance`). So this can only ever refuse a pair whose colours
+# were both read and disagree.
+KIT_VETO = 0.6
+
 # Seconds a track survives unmatched before it is closed.
 #
 # Short, and measured. 88 of 98 identity changes on SNGS-147 happened AFTER A GAP, at a
@@ -219,7 +232,10 @@ def _cost(
     dist = math.dist((px, py), (obs.x, obs.y))
     if dist > gate:
         return None
-    return dist / gate + COLOR_WEIGHT * color_distance(track.color, color)
+    kit_distance = color_distance(track.color, color)
+    if kit_distance > KIT_VETO:
+        return None
+    return dist / gate + COLOR_WEIGHT * kit_distance
 
 
 def run(

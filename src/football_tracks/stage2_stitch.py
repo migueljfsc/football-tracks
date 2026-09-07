@@ -40,6 +40,7 @@ from typing import Any
 import numpy as np
 
 from .stage2_track import MAX_SPEED
+from .stage2_track import color_distance as kit_distance
 from .tracks import Sample
 
 # How long a gap may be and still be bridged.
@@ -114,6 +115,20 @@ MIN_VELOCITY_S = 0.15
 # override a plain speed violation.
 COLOR_WEIGHT = 0.6
 
+# Kit distance beyond which a join is refused outright, whatever the prediction says.
+#
+# The same guard the tracker makes at association time (`stage2_track.KIT_VETO`) and for the
+# same reason, because a join is the same claim made across a longer gap: a weight only
+# decides between candidates that exist, and where a player's own fragment is missing the
+# best continuation on offer can be an opponent standing where he was heading. Measured on
+# the joins five clips actually make, several disagree on kit by 0.6 to 0.88 -- and a joined
+# track holding two kits is the case this file's own PREDICT_DRIFT_MS note records as
+# costing seventeen points of team split.
+#
+# In the tracker's units, not this file's `_color_distance`, so that one number means one
+# thing on both sides of the gap.
+KIT_VETO = 0.6
+
 
 @dataclass(slots=True)
 class Fragment:
@@ -182,6 +197,8 @@ def _cost(a: Fragment, b: Fragment, fps: float) -> float | None:
     worst = max(ahead, behind)
     if worst > tolerance:
         return None  # not where either of them was going; these are two different people
+    if kit_distance(a.color, b.color) > KIT_VETO:
+        return None  # two kits: whoever this is, it is not the same player
     return worst / tolerance + COLOR_WEIGHT * _color_distance(a.color, b.color)
 
 
