@@ -389,3 +389,40 @@ The two measurements disagree because they ask different questions. A ball that 
 three frames barely moves a median; put through `carrierAt` it is a player receiving a ball
 nobody passed him, and the board draws that as football (D71 in Pitchboard). **Where the ball
 is judged decides what the threshold should be**, and the board is the only place that counts.
+
+**D75 — the ball's recall cannot be bought by believing weaker candidates, and the ceiling is
+the detector.** Measured in image space against the annotated ball, where no camera model can
+interfere:
+
+    clip        a candidate sits on the real ball   the MOST CONFIDENT one does   we assert
+    SNGS-060                94%                                85%                   69%
+    SNGS-069                89%                                75%                   41%
+    SNGS-121                87%                                78%                   78%
+    SNGS-067                82%                                65%                   52%
+    SNGS-116                74%                                35%                   22%
+
+**The ball is there to be picked far more often than it is picked**, and what separates the two
+columns is confidence, which is a poor judge -- on SNGS-116 the most confident candidate is the
+right one in a third of frames. So the obvious move is to spend continuity instead: a candidate
+appearing where the ball already was, moments after it was last believed, could be taken at a
+lower bar than one appearing cold. Tried at 0.35 with the ordinary reach, and again with a
+tight leash (55 px per frame of gap) so a weak candidate has to be where the ball WOULD be
+rather than merely somewhere it could have reached.
+
+It buys sightings and loses truth. SNGS-060 improves on both counts (615 sightings to 686, 89.8%
+to 94.2% within three metres) and SNGS-116 collapses (262 to 451 sightings, 63.4% down to 51.3%)
+-- and through the importer, which is the only place that counts:
+
+    passes drawn   of them real   precision   recall
+        12              10           83%        43%     as it ships
+        12               8           67%        33%     with continuation
+
+Worse on both axes. Reverted.
+
+**What that leaves.** Tiling already made the ball findable (D66) and the selector already
+abstains rather than guess (D60, D73). The gap between 74-94% findable and 22-78% asserted is
+not closable by any rule that reads a confidence score, because on the clips where it matters
+the score does not rank the candidates correctly. That needs a better ball MODEL -- a detector
+trained on footballs rather than COCO's "sports ball", or a tracker that follows the object
+between sightings -- and it is the same size of project as jersey OCR (D32) or re-identification
+(the benchmark's crowded-scene note).
