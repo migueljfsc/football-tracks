@@ -1,3 +1,9 @@
+## v0.20.3 (2026-09-07)
+
+### Fix
+
+- **seed**: name the marking that is labelled with the wrong side
+
 ## v0.20.2 (2026-09-07)
 
 ### Fix
