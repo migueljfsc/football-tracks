@@ -377,3 +377,31 @@ flatters itself: with the naive centres SNGS-147 declined nothing at all.
 -- because a single accuracy figure counts a declined side as an error and would have scored
 this change as a regression. That is the same trap as `observed_error` (D67) in a third place:
 a metric that cannot see a refusal will always reward guessing.
+
+**D81 — the board wears the kits, because a coach reads his own clip in them.** Pitchboard
+draws `home` red and `away` blue, and `home` is whichever side defends the nearer goal (D63).
+On a coach's own clip that made Manchester United, in red, the blue team — and every sentence
+after it had to be translated: *"the blue team (which is man united) loses the ball to a red
+player"*. Three rounds of this repo's own analysis went past each other for the same reason.
+
+The measurement was already there. Every track carries a kit signature, which is what the two
+sides are told apart on — but a signature is a histogram and a histogram is not a colour, so a
+second and much simpler statistic rides along: the mean BGR of the same torso crop. The median
+of those across a side, written into `tracks.json` as `kits`, is what the board paints.
+
+Three things it does NOT do:
+
+- **It does not average a side into existence.** The MEDIAN across the tracks, so one track
+  holding two players (D78) or a keeper labelled as an outfielder is one shirt among a dozen
+  rather than a fifth of the answer.
+- **It does not offer two colours that look the same.** Where the sides' medians are closer
+  than `KIT_TONE_APART`, the field is absent and a consumer keeps its own palette -- two greys
+  is a worse board than two arbitrary colours that at least differ.
+- **It does not invent a hue.** A torso crop averages the shirt with shadow, skin and grass, so
+  a red kit measures as dull salmon; the hue survives that mixing and the rest does not, so the
+  hue is kept and the saturation and brightness are restated at what a kit actually has. Below
+  `KIT_ACHROMATIC` there is no hue to keep -- white, grey and black kits measure noise -- and
+  those get a light or dark neutral instead of whatever colour the noise pointed at.
+
+On the coach's clip: Everton `#3a81d1`, United `#d1493a`. The contract carries it as optional,
+so every file written before this one still imports, and a consumer that ignores it is correct.

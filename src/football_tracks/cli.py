@@ -795,6 +795,7 @@ def _pipeline(
         width=_size(CLIPS / clip, labels)[0],
         height=_size(CLIPS / clip, labels)[1],
         interval_s=interval_s,
+        kits=result.kits,
     )
     return path, result
 
@@ -915,8 +916,9 @@ def seed(
     check: Annotated[
         bool,
         typer.Option(
-            help="Write seed.<frame>.json as independent truth to score a carry against,"
-            " rather than replacing the seed the pipeline runs from."
+            help="Write seed.<frame>.json instead of replacing seed.json. The pipeline reads"
+            " those as EXTRA ANCHORS, so this is how a clip that pans gets a second one"
+            " (D34); it is also what `ft calibrate` scores a carried fit against."
         ),
     ] = False,
 ) -> None:

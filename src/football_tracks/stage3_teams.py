@@ -19,6 +19,7 @@ from __future__ import annotations
 
 from collections.abc import Callable
 
+import cv2
 import numpy as np
 import numpy.typing as npt
 
@@ -196,6 +197,71 @@ def _crowding(
 # read (D5): the answer is that there is no answer, and the importer already drops a
 # track whose side could not be told.
 KIT_MARGIN = 0.8
+
+
+# How far apart two sides' measured shirt colours have to be, in BGR, before a board is
+# told to use them.
+#
+# A kit colour is only worth carrying if it tells the two sides apart on sight, and the
+# average of a torso crop is a blunt instrument: floodlights, motion blur and a white
+# sleeve all pull it towards grey. Where the two answers come out close, the honest thing
+# is to say nothing and let the board keep its own two colours, which are at least
+# guaranteed to differ.
+KIT_TONE_APART = 60.0
+
+
+def kit_colours(tracks: list[Track], teams: dict[int, TeamLabel]) -> dict[str, str] | None:
+    """The two sides' shirt colours, as hex, or None where they cannot be told apart.
+
+    The MEDIAN across a side's tracks rather than the mean: one track holding two players
+    (D78) or a keeper mislabelled as an outfielder is a whole shirt of the wrong colour,
+    and a median of a dozen ignores it where an average would take a fifth of it.
+    """
+    sides: dict[str, list[Vec]] = {"home": [], "away": []}
+    for t in tracks:
+        side = teams.get(t.id)
+        tone = t.tone_mean
+        if tone is None or side not in sides:
+            continue
+        sides[side].append(tone)
+    if not (sides["home"] and sides["away"]):
+        return None
+
+    middle = {k: np.median(np.array(v, dtype=np.float64), axis=0) for k, v in sides.items()}
+    if float(np.linalg.norm(middle["home"] - middle["away"])) < KIT_TONE_APART:
+        return None
+    return {k: _hex(v) for k, v in middle.items()}
+
+
+# What a shirt colour is raised to before it is written down, as HSV fractions.
+#
+# The average of a torso crop is the kit mixed with everything else in the box -- shadow,
+# skin, a white sleeve, the grass showing between an arm and a body -- so a red shirt
+# measures as a dull salmon and a blue one as slate. Those are true averages and bad
+# COLOURS: a board painted in them is two greys, which is worse than the palette it
+# replaced. The hue survives all that mixing, so the hue is kept and the shirt is
+# restated at the saturation and brightness a kit actually has.
+KIT_SATURATION = 0.72
+KIT_VALUE = 0.82
+
+# Below this much saturation a shirt has no colour, only a brightness: white, grey, black.
+KIT_ACHROMATIC = 0.18
+
+
+def _hex(bgr: Vec) -> str:
+    pixel = np.array([[np.clip(bgr, 0, 255)]], dtype=np.uint8)
+    hue, sat, val = (int(v) for v in cv2.cvtColor(pixel, cv2.COLOR_BGR2HSV)[0, 0])
+    # A white, grey or black kit has no hue to keep -- what little it measures is noise,
+    # and lifting the saturation of noise paints the team a colour nobody is wearing. It
+    # gets a light or dark neutral instead, which is what it actually looks like.
+    if sat < KIT_ACHROMATIC * 255:
+        return "#e6e6e6" if val > 128 else "#2b2b2b"
+    lifted = np.array(
+        [[[hue, max(sat, round(KIT_SATURATION * 255)), max(val, round(KIT_VALUE * 255))]]],
+        dtype=np.uint8,
+    )
+    b, g, r = (int(v) for v in cv2.cvtColor(lifted, cv2.COLOR_HSV2BGR)[0, 0])
+    return f"#{r:02x}{g:02x}{b:02x}"
 
 
 def assign(

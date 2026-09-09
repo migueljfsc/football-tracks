@@ -196,6 +196,25 @@
           }
         }
       }
+    },
+    "kits": {
+      "type": "object",
+      "description": "What each side was wearing, measured from the shirts (stage 3). Absent when the two kits could not be told apart on colour, in which case a consumer keeps its own palette.",
+      "required": [
+        "home",
+        "away"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "home": {
+          "type": "string",
+          "pattern": "^#[0-9a-f]{6}$"
+        },
+        "away": {
+          "type": "string",
+          "pattern": "^#[0-9a-f]{6}$"
+        }
+      }
     }
   }
 }

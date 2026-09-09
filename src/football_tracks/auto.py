@@ -37,6 +37,7 @@ from . import (
     stage1_register,
     stage2_stitch,
     stage2_track,
+    stage3_teams,
 )
 from . import seed as seed_mod
 from .config import PITCH_LENGTH, PITCH_WIDTH
@@ -183,6 +184,7 @@ class Result:
     raw_tracks: int
     dropped_off_pitch: int
     unsolved_frames: int
+    kits: dict[str, str] | None = None
 
 
 def seed_paths(work: Path) -> list[Path]:
@@ -852,6 +854,7 @@ def build(
 
     return Result(
         ball=ball_path(balls or [], homs, frames),
+        kits=stage3_teams.kit_colours([t for t in raw if t.id in positions], teams),
         tracks=[
             Track(id=tid, team=teams.get(tid, "unknown"), number=None, samples=ss)
             for tid, ss in sorted(positions.items())

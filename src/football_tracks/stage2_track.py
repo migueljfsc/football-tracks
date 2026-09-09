@@ -157,6 +157,7 @@ class Track:
     velocity: tuple[float, float] = (0.0, 0.0)
     kit_sum: np.ndarray | None = None
     kit_seen: int = 0
+    tone_sum: np.ndarray | None = None
 
     @property
     def last(self) -> Observation:
@@ -177,11 +178,26 @@ class Track:
             return self.color
         return self.kit_sum / self.kit_seen
 
-    def saw_kit(self, seen: np.ndarray) -> None:
+    @property
+    def tone_mean(self) -> np.ndarray | None:
+        """The shirt's average colour in BGR, for anybody who has to DRAW this player.
+
+        Kept apart from `kit_mean`, which is a histogram: the histogram is what tells two
+        kits apart and is useless as a colour, and an average is the other way round -- a
+        red shirt and a blue one average to a grey nobody wears. One is for deciding, one
+        is for showing.
+        """
+        if self.tone_sum is None or self.kit_seen == 0:
+            return None
+        return self.tone_sum / self.kit_seen
+
+    def saw_kit(self, seen: np.ndarray, tone: np.ndarray | None = None) -> None:
         # Rolling average: one frame of shadow should not redefine a kit.
         self.color = seen if self.color is None else 0.8 * self.color + 0.2 * seen
         self.kit_sum = seen.astype(np.float64) if self.kit_sum is None else self.kit_sum + seen
         self.kit_seen += 1
+        if tone is not None:
+            self.tone_sum = tone if self.tone_sum is None else self.tone_sum + tone
 
     def predict(self, dt: float, motion: np.ndarray | None) -> tuple[float, float]:
         """Where they should be after `dt` seconds, in the NEXT frame's pixels.
@@ -208,6 +224,19 @@ def kit(bgr: Any, d: Detection) -> np.ndarray | None:
     if total <= 0:
         return None
     return np.asarray(hist.flatten() / total, dtype=np.float64)
+
+
+def tone(bgr: Any, d: Detection) -> np.ndarray | None:
+    """The shirt's average colour, in BGR. What a board would paint the team.
+
+    The same crop the signature is read from, so the two agree about what the shirt is.
+    """
+    from .detect import torso
+
+    crop = torso(bgr, d)
+    if crop is None or crop.size == 0:
+        return None
+    return np.asarray(crop.reshape(-1, 3).mean(axis=0), dtype=np.float64)
 
 
 def color_distance(a: np.ndarray | None, b: np.ndarray | None) -> float:
@@ -269,6 +298,7 @@ def run(
         obs = observations.get(f, [])
         img = read_frame(f) if obs else None
         colors = [kit(img, o.det) if img is not None else None for o in obs]
+        tones = [tone(img, o.det) if img is not None else None for o in obs]
 
         motion = motions.get(f) if motions is not None else None
 
@@ -313,14 +343,14 @@ def run(
                 track.observations.append(o)
                 seen = colors[oi]
                 if seen is not None:
-                    track.saw_kit(seen)
+                    track.saw_kit(seen, tones[oi])
 
         for oi, o in enumerate(obs):
             if oi not in used_o:
                 started = Track(id=next_id, observations=[o])
                 first = colors[oi]
                 if first is not None:
-                    started.saw_kit(first)
+                    started.saw_kit(first, tones[oi])
                 live.append(started)
                 next_id += 1
 

@@ -106,6 +106,15 @@ Each of these cost a day. Where one names a decision, the full account is in
 - **`pitch.py` is for looking, never for measuring.** It draws; `pitch.model()` is the one
   description of the markings.
 - **A carried homography drifts without bound and never announces it** (D18).
+- **One seed cannot cross a pan** (D34). A coach's clip seeded at frame 382 and carried back to
+  frame 56 puts the play about fifteen metres deeper than it is, and the board is self-consistent
+  about it -- every fidelity number stays good while the football happens in the wrong place.
+  The overlay at the far end of the clip is the check, and `ft seed <clip> --frame N --check`
+  writes the extra anchor that fixes it.
+- **Anchors reach BOTH ways, and the frames between two of them are a mix** (D80). `fill` used to
+  walk forward and cover only the head of the clip backwards, so a second seed did nothing for
+  the frames before it. Take the nearer chain instead of mixing and every track in the clip is
+  cut at the frame where the choice flips -- board density 72% to 50% on the clip that found it.
 - **`--carry -1` is uncapped, `--carry 0` is none**, and until D68 the segmenter branch read the
   first as the second — so every segmenter measurement in this repo carried nothing, whatever
   was asked for. Carrying off a learned fit is `--mode hybrid`.
@@ -147,6 +156,10 @@ Each of these cost a day. Where one names a decision, the full account is in
   difference between declining a quarter of a clip and declining nothing.
 - **`ft score`'s team accuracy counts a declined side as an error**, so read the `teams asserted`
   line instead when anything refuses: right, WRONG, declined.
+- **The kit signature is for DECIDING and the kit colour is for SHOWING** (D81). A histogram
+  tells two sides apart and paints nothing; a mean BGR paints a shirt and cannot tell a red one
+  from a blue one when they are averaged together. `tracks.json` carries the second as `kits`,
+  optional, absent where the two sides measure too close to be told apart on sight.
 - **The ball's POSITION is not usable and its HOLDER is** (D29).
 - **Picking the ball candidate nearest a player is worse than picking the most confident one**
   — there are a dozen candidates a frame and "nearest a player" selects whichever false

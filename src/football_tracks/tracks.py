@@ -154,6 +154,7 @@ def write(
     width: int | None = None,
     height: int | None = None,
     interval_s: float = DEFAULT_INTERVAL_S,
+    kits: dict[str, str] | None = None,
 ) -> Path:
     source: dict[str, Any] = {
         "clip": clip,
@@ -172,6 +173,12 @@ def write(
         "version": 1,
         "source": source,
         "pitch": {"length": PITCH_LENGTH, "width": PITCH_WIDTH},
+        # What the two sides were WEARING, where the clip said so clearly enough to be
+        # worth drawing (stage 3). A board that paints the sides in its own two colours
+        # makes a coach translate every judgement about his own clip, and he will read
+        # "the red team" as the team that was red. Absent rather than guessed: two kits
+        # a camera cannot tell apart are better answered by the board's own palette.
+        **({"kits": kits} if kits else {}),
         "tracks": [
             Track(
                 id=t.id,

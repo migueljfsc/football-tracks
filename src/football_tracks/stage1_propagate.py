@@ -416,7 +416,12 @@ def fill(
     motion: dict[int, H] | None = None,
     snap: Callable[[H, MatLike], H | None] | None = None,
 ) -> Chain:
-    """Walk the clip forwards, using the direct fit where there is one and carrying otherwise.
+    """Direct fits where there are any, carried both ways to cover the rest.
+
+    Two chains are built, one running with the clip and one against it, and every frame
+    takes whichever carried it FEWER frames. That is what makes a second anchor worth
+    clicking: a forward-only walk hands every frame between two anchors to the earlier
+    one, so a clip seeded at both ends is still carried its whole length from the first.
 
     `max_carry` caps how many frames a homography may be carried before it is given up
     on. Drift is unbounded, so an uncapped chain will eventually be confidently wrong;
@@ -430,7 +435,59 @@ def fill(
     over a finished chain it refused half the frames on the clip that needed it most.
     """
     frames = sorted(direct)
+    first = next((img for f in frames if (img := _read(frames_dir, f)) is not None), None)
+    height, width = (first.shape[0], first.shape[1]) if first is not None else (1080, 1920)
+    forward, forward_age = _carry_forward(frames_dir, frames, direct, max_carry, motion, snap)
+    backward, backward_age = _carry_backward(frames_dir, frames, direct, max_carry, motion, snap)
+
+    # Between two anchors, the two chains are MIXED in proportion to how far each has been
+    # carried. Walking forward alone means a second anchor only ever helps the frames after
+    # it -- everything between two of them chains off the earlier one, however far away it
+    # is, and a clip seeded at both ends is carried its whole length from the first
+    # (measured on a coach's clip seeded at 56 and 382: frame 380 was 324 frames from its
+    # basis and metres out, with an exact fit one frame away).
+    #
+    # Mixed rather than SWITCHED at the midpoint, for D68's reason: at the frame where the
+    # nearer anchor changes, the two chains disagree by whatever they have drifted, and
+    # taking the better one moves every player at once. `splitImpossible` then cuts every
+    # track in the clip at that frame -- measured on the same clip, board density fell from
+    # 72% to 50% and the importer had no passage left that spanned the join.
     out: dict[int, H | None] = {}
+    carried = 0
+    for f in frames:
+        if direct.get(f) is not None:
+            out[f] = direct[f]
+            continue
+        ahead, behind = forward.get(f), backward.get(f)
+        if ahead is None or behind is None:
+            out[f] = ahead if behind is None else behind
+        else:
+            span = forward_age[f] + backward_age[f]
+            share = forward_age[f] / span if span else 0.0
+            mixed = blend(ahead, behind, share, width=width, height=height)
+            out[f] = mixed if mixed is not None else (ahead if share <= 0.5 else behind)
+        if out[f] is not None:
+            carried += 1
+
+    return Chain(
+        homographies=out,
+        solved_directly=sum(1 for f in frames if direct.get(f) is not None),
+        carried=carried,
+        gaps=sum(1 for v in out.values() if v is None),
+    )
+
+
+def _carry_forward(
+    frames_dir: Path,
+    frames: list[int],
+    direct: dict[int, H | None],
+    max_carry: int | None,
+    motion: dict[int, H] | None,
+    snap: Callable[[H, MatLike], H | None] | None,
+) -> tuple[dict[int, H | None], dict[int, int]]:
+    """The chain running with the clip: each frame from the last anchor before it."""
+    out: dict[int, H | None] = {}
+    age: dict[int, int] = {}
     # What the NEXT frame carries from, which is deliberately not what this frame
     # reports. A snap that goes wrong is plausible enough to pass its own guard, and fed
     # back it becomes the basis for every frame after it -- one bad fit poisons the rest
@@ -439,7 +496,6 @@ def fill(
     prev_img: MatLike | None = None
     prev_f: int | None = None
     since_direct = 0
-    carried = 0
 
     for f in frames:
         img = _read(frames_dir, f)
@@ -460,7 +516,6 @@ def fill(
                 current = carry(previous, d)
                 if current is not None:
                     since_direct += 1
-                    carried += 1
 
         basis[f] = current
         if current is not None and snap is not None and img is not None:
@@ -468,44 +523,60 @@ def fill(
             if snapped is not None:
                 current = snapped
         out[f] = current
+        age[f] = since_direct if current is not None else 0
         prev_img, prev_f = img, f
+    return out, age
 
-    # Backwards, for the frames before the first one that solved. Without this a seed
-    # placed where the markings are actually visible leaves everything before it blank.
+
+def _carry_backward(
+    frames_dir: Path,
+    frames: list[int],
+    direct: dict[int, H | None],
+    max_carry: int | None,
+    motion: dict[int, H] | None,
+    snap: Callable[[H, MatLike], H | None] | None,
+) -> tuple[dict[int, H | None], dict[int, int]]:
+    """The same chain running against the clip: each frame from the next anchor after it.
+
+    A seed is rarely placed at frame one -- the camera is usually still finding the play
+    there -- so without this everything before the first anchor is blank.
+    """
+    out: dict[int, H | None] = {}
+    basis: dict[int, H | None] = {}
+    age: dict[int, int] = {}
     since_direct = 0
-    for i in range(len(frames) - 2, -1, -1):
-        f, later = frames[i], frames[i + 1]
-        if out.get(f) is not None:
-            since_direct = 0
-            continue
-        if later != f + 1 or out.get(later) is None:
-            continue
-        if max_carry is not None and since_direct >= max_carry:
-            continue
-        d = motion.get(later) if motion is not None else None
-        if d is None:
-            a, b = _read(frames_dir, f), _read(frames_dir, later)
-            d = between(a, b) if a is not None and b is not None else None
-        ahead = out.get(later)
-        if d is not None and ahead is not None:
-            back = carry_back(ahead, d)
-            if back is not None:
-                if snap is not None:
-                    here = _read(frames_dir, f)
-                    snapped = snap(back, here) if here is not None else None
-                    if snapped is not None:
-                        back = snapped
-                        since_direct = 0
-                out[f] = back
-                since_direct += 1
-                carried += 1
 
-    return Chain(
-        homographies=out,
-        solved_directly=sum(1 for f in frames if direct.get(f) is not None),
-        carried=carried,
-        gaps=sum(1 for v in out.values() if v is None),
-    )
+    for i in range(len(frames) - 1, -1, -1):
+        f = frames[i]
+        current = direct.get(f)
+        later = frames[i + 1] if i + 1 < len(frames) else None
+
+        if current is not None:
+            since_direct = 0
+        elif (
+            later == f + 1
+            and basis.get(later) is not None
+            and (max_carry is None or since_direct < max_carry)
+        ):
+            d = motion.get(later) if motion is not None else None
+            if d is None and later is not None:
+                a, b = _read(frames_dir, f), _read(frames_dir, later)
+                d = between(a, b) if a is not None and b is not None else None
+            previous = basis[later] if later is not None else None
+            if d is not None and previous is not None:
+                current = carry_back(previous, d)
+                if current is not None:
+                    since_direct += 1
+
+        basis[f] = current
+        if current is not None and snap is not None:
+            img = _read(frames_dir, f)
+            snapped = snap(current, img) if img is not None else None
+            if snapped is not None:
+                current = snapped
+        out[f] = current
+        age[f] = since_direct if current is not None else 0
+    return out, age
 
 
 def drift(

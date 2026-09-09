@@ -1023,3 +1023,40 @@ motion, or the grass, measured over the whole clip rather than frame to frame.
 **And the multi-seed path already exists** for real clips (`seed.*.json`, D34), so this is
 guidance rather than code: click frames where a lot of paint is visible, and do not click one
 just because a stretch of the clip has none.
+
+**D80 — a second anchor only helped the frames after it, because the chain walked one way.**
+`fill` carried forward from each direct fit and ran backwards only to cover the frames before
+the FIRST one. So two anchors did not halve anything: everything between them chained off the
+earlier one, however far away it was.
+
+Found on a coach's clip, seeded at frame 382 where the goalmouth markings are, then seeded again
+at 56 on his own initiative after the opening came out fifteen metres deep. It fixed the opening
+and broke the end — *"the run before the shot is very much on top of the penalty box, now it's
+more near the centre line"* — because frames 57 to 381 now chained off 56, up to 325 frames of
+carry, while the exact fit at 382 sat one frame away.
+
+Two chains are built now, one with the clip and one against it, and every frame between two
+anchors takes a MIX of them weighted by how far each has been carried. Mixed rather than
+switched at the midpoint, and that distinction is the whole decision:
+
+    taking the nearer anchor      taking a weighted mix
+    board density   50%           72%
+    fielded         16 players    21
+    window          4.9 s         9.2 s
+    tracks cut      every one at the join   none
+
+At the frame where the nearer anchor changes, the two chains disagree by whatever they have
+drifted, and swapping between them moves every player at once — so Pitchboard's
+`splitImpossible` cut EVERY track in the clip at that one frame, no passage was left that
+spanned it, and the importer picked a short honest window on one side of the join. That is D68's
+finding arriving from the other direction: a per-frame improvement that steps the whole picture
+is a per-track loss. `blend` already existed for it.
+
+The three benchmark clips are unchanged to the digit, which is the check that matters here: with
+one anchor the backward chain covers only the frames before it and the forward chain only those
+after, so nothing is mixed and the behaviour is exactly what it was.
+
+**This also puts a caveat under D74.** Those runs spread three to nine seeds across a clip and
+concluded that more anchors buy almost nothing — measured through a chain that walked forward
+only, so half of each anchor's reach was never used. Whether spreading seeds is worth it is
+worth asking again now, on the same clips.

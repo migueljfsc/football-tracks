@@ -10,7 +10,8 @@ from __future__ import annotations
 import numpy as np
 
 from football_tracks.stage2_track import Track
-from football_tracks.stage3_teams import assign
+from football_tracks.stage3_teams import assign, kit_colours
+from football_tracks.tracks import TeamLabel
 
 
 def kitted(track_id: int, kit: tuple[float, float, float]) -> Track:
@@ -59,3 +60,35 @@ def test_a_track_with_no_kit_at_all_is_still_unknown() -> None:
     mean_x = {t.id: (20.0 if t.id < 10 else 80.0) for t in tracks}
     mean_x[50] = 50.0
     assert assign(tracks, mean_x)[50] == "unknown"
+
+
+def toned(track_id: int, bgr: tuple[float, float, float]) -> Track:
+    t = kitted(track_id, RED)
+    t.tone_sum = np.array(bgr, dtype=np.float64)
+    return t
+
+
+def test_a_kit_colour_is_offered_only_when_the_two_sides_look_apart() -> None:
+    # A board painting both sides the same colour is worse than one painting them its own
+    # two: the average of a torso crop is blunt -- floodlights, blur and a white sleeve all
+    # pull it towards grey -- so where it cannot separate the kits, say nothing.
+    teams: dict[int, TeamLabel] = {1: "home", 2: "away"}
+    red, blue = (40.0, 40.0, 200.0), (200.0, 40.0, 40.0)
+    got = kit_colours([toned(1, red), toned(2, blue)], teams)
+    assert got == {"home": "#d12a2a", "away": "#2a2ad1"}
+    assert kit_colours([toned(1, red), toned(2, (45.0, 45.0, 195.0))], teams) is None
+
+
+def test_a_side_with_no_shirt_read_offers_no_colour() -> None:
+    teams: dict[int, TeamLabel] = {1: "home", 2: "away"}
+    assert kit_colours([toned(1, (40.0, 40.0, 200.0)), kitted(2, BLUE)], teams) is None
+
+
+def test_a_shirt_with_no_colour_is_not_given_one() -> None:
+    # White, grey and black kits measure a hue made of noise, and lifting its saturation
+    # paints the team a colour nobody is wearing.
+    teams: dict[int, TeamLabel] = {1: "home", 2: "away"}
+    got = kit_colours([toned(1, (215.0, 215.0, 215.0)), toned(2, (40.0, 40.0, 190.0))], teams)
+    assert got is not None
+    assert got["home"] == "#e6e6e6"
+    assert got["away"].startswith("#")

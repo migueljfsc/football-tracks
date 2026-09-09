@@ -7,6 +7,7 @@ features from the grass, which is the point of the mask.
 
 from __future__ import annotations
 
+from itertools import pairwise
 from pathlib import Path
 
 import cv2
@@ -88,6 +89,35 @@ def test_fill_prefers_the_direct_fit_and_carries_only_the_gaps(tmp_path: Path) -
     kept = chain.homographies[3]
     assert kept is not None
     assert np.allclose(kept, solved)
+
+
+def test_two_anchors_meet_in_the_middle_instead_of_one_reaching_the_whole_way(
+    tmp_path: Path,
+) -> None:
+    """A forward-only chain hands every frame between two anchors to the earlier one, so
+    the second seed a coach clicks does nothing for the frames before it (D80). The camera
+    here does not move, so any difference between the two ends is disagreement between the
+    anchors -- and the frames between them share it out rather than taking either whole."""
+    base = grass()
+    for f in range(1, 6):
+        cv2.imwrite(str(tmp_path / f"{f:06d}.jpg"), base)
+
+    start = np.array([[105.0 / W, 0.0, 0.0], [0.0, 68.0 / HGT, 0.0], [0.0, 0.0, 1.0]])
+    end = start.copy()
+    end[0, 2] = 4.0  # the same camera, four metres along the pitch
+    chain = prop.fill(tmp_path, {1: start, 2: None, 3: None, 4: None, 5: end})
+
+    xs = []
+    for f in range(1, 6):
+        h = chain.homographies[f]
+        assert h is not None
+        xs.append(calibration.to_pitch(h, W / 2, HGT / 2)[0])
+    # Anchors kept exactly, and the gap crossed in even steps: no frame moves the players
+    # further than any other, which is what stops a track being cut at the join.
+    assert xs[0] == pytest.approx(52.5, abs=0.01)
+    assert xs[-1] == pytest.approx(56.5, abs=0.01)
+    steps = [b - a for a, b in pairwise(xs)]
+    assert max(steps) - min(steps) < 0.2
 
 
 def test_fill_gives_up_rather_than_carrying_past_the_cap(tmp_path: Path) -> None:

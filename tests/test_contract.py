@@ -8,6 +8,7 @@ schema file rather than restating it, so the two cannot drift apart unnoticed.
 from __future__ import annotations
 
 import json
+import re
 from pathlib import Path
 from typing import Any
 
@@ -17,12 +18,15 @@ from football_tracks.config import PITCH_LENGTH, PITCH_WIDTH
 SCHEMA = json.loads((Path(__file__).resolve().parents[1] / "schema/tracks.schema.json").read_text())
 
 
-def emit(tmp_path: Path, interval_s: float = 0.0) -> dict[str, Any]:
+def emit(
+    tmp_path: Path, interval_s: float = 0.0, kits: dict[str, str] | None = None
+) -> dict[str, Any]:
     # Binning off by default: these assert the SHAPE of the contract, and a slot that
     # merged two of the samples would be testing the reduction instead.
     path = tracks.write(
         tmp_path / "tracks.json",
         interval_s=interval_s,
+        kits=kits,
         clip="c.mp4",
         fps=25.0,
         start_frame=1,
@@ -74,6 +78,18 @@ def test_source_keys_match_the_schema(tmp_path: Path) -> None:
     d = emit(tmp_path, interval_s=0.2)["source"]
     assert set(d) <= set(sschema["properties"]), set(d) - set(sschema["properties"])
     assert set(sschema["required"]) <= set(d)
+
+
+def test_the_kit_colours_match_the_schema(tmp_path: Path) -> None:
+    # Optional, and shaped: a board reads it to paint the sides, so a malformed colour is
+    # worse than none at all.
+    kschema = SCHEMA["properties"]["kits"]
+    assert "kits" not in emit(tmp_path)
+    d = emit(tmp_path, kits={"home": "#1e3a8a", "away": "#dc2626"})["kits"]
+    assert set(d) == set(kschema["properties"])
+    assert set(kschema["required"]) <= set(d)
+    for value in d.values():
+        assert re.fullmatch(kschema["properties"]["home"]["pattern"], value)
 
 
 def test_team_labels_are_all_declared_by_the_schema(tmp_path: Path) -> None:
