@@ -1,3 +1,9 @@
+## v0.22.1 (2026-09-09)
+
+### Fix
+
+- **seed**: stamp a seed with the picture it was clicked on
+
 ## v0.22.0 (2026-09-09)
 
 ### Feat
