@@ -1,3 +1,13 @@
+## v0.22.0 (2026-09-09)
+
+### Feat
+
+- **teams**: carry the kits the clip was played in
+
+### Fix
+
+- **tracking**: refuse an association whose kits plainly disagree
+
 ## v0.21.4 (2026-09-07)
 
 ### Fix
