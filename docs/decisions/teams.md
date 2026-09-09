@@ -405,3 +405,38 @@ Three things it does NOT do:
 
 On the coach's clip: Everton `#3a81d1`, United `#d1493a`. The contract carries it as optional,
 so every file written before this one still imports, and a consumer that ignores it is correct.
+
+**D84 — two ways to catch a track that changes shirt, both measured, both refused.** On a Porto
+possession highlight the board never showed the pass out of defence, because the player who
+received it is a track holding two people: Porto's stripes to frame 87, a Manchester City shirt
+after it. Stage 3 sees one kit sitting exactly between the two sides — own 0.24, other 0.24 —
+declines it (D72), and the board cannot field him. D78's veto did not catch the switch: the two
+histograms disagree by 0.53 at the frame it happens, under the 0.6 that ships.
+
+**A tone veto — the same crop's mean colour, which a hue histogram is blind to.** The switch is
+obvious in it: [170, 166, 157] to [75, 120, 110], a step of 62 where the histogram moved 0.53.
+It is also wrong:
+
+    tone veto      SNGS-147 purity/switches/teams     SNGS-116
+    off            78.6%  43  77%                     73.4%  257  78%
+    80             78.6%  44  73%                     72.6%  269  74%
+    50             75.5%  57  65%                     72.9%  290  76%
+    40             67.9%  81  87%                     67.6%  290  73%
+
+A tone is the shirt mixed with the light on it, and a player crossing into shadow moves thirty
+or forty without changing shirts — so every setting that catches the switch tears real tracks,
+and the team split falls with the purity. This is D81's warning arriving from the other side:
+the mean is for SHOWING a kit, and it is too blunt to decide anything.
+
+**Splitting a track whose kit changes halfway.** Cut each track at the point that maximises the
+difference between the two halves' mean kits, and refuse the join above a threshold. There is
+no threshold. Across three clips the declined tracks — the population this is for — split at
+0.12 to 0.71, and the tracks whose side the split was SURE of run to 0.63, 0.69 and 0.83. The
+distributions sit on top of each other, so any cut that catches the Porto/City switch at 0.53
+also cuts a dozen tracks that are one player.
+
+**What that leaves.** A switch between two kits that a hue histogram cannot separate needs an
+appearance model that is not a colour histogram, which is D32's and D61's answer in a third
+place. What ships instead is on the consumer's side and much smaller: a track nobody could name
+BLOCKS the ball rather than being stepped over (Pitchboard D78), so the ball stops being handed
+to the nearest player who happens to have a side, which on this clip was an opponent.
