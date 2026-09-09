@@ -1,3 +1,9 @@
+## v0.23.0 (2026-09-09)
+
+### Feat
+
+- **calibrate**: say where the camera model is weakest, and what to click
+
 ## v0.22.1 (2026-09-09)
 
 ### Fix
