@@ -551,6 +551,7 @@ def calibrate(
     # against this, and on a seeded clip it is the ONE clicked frame - `from_seed` has
     # already carried by the time it returns, so `homs` is the chain, not the evidence.
     direct: dict[int, Any] = {}
+    chain: stage1_propagate.Chain | None = None
 
     if c.labels_path.exists():
         # SoccerNet: every frame carries its own pitch lines.
@@ -564,20 +565,20 @@ def calibrate(
             typer.echo(f"IGNORING {path.name}: {why}")
         if not clicked:
             raise typer.BadParameter(f"{clip} has no usable seed")
-        homs = auto_mod.from_seeds(
+        chain = auto_mod.chain_from_seeds(
             clicked,
             frames_all,
             c.frames_dir,
             max_carry=None,
             motions=motions,
         )
+        homs = chain.homographies
         direct = {s.frame: seed_mod.homography(s) for s in clicked}
     else:
         raise typer.BadParameter(
             f"{clip} has neither SoccerNet labels nor {seed_path} - run `ft seed {clip}` first"
         )
 
-    chain = None
     if carry != 0 and labels is not None:
         chain = stage1_propagate.fill(
             c.frames_dir, homs, max_carry=None if carry < 0 else carry, motion=motions
@@ -661,6 +662,8 @@ def calibrate(
     if labels is None:
         solved = sum(1 for h in homs.values() if h is not None)
         typer.echo(f"frames solved     {solved}/{len(homs)}  ({solved / max(1, len(homs)):.1%})")
+        for line in _weakest(clip, chain, homs):
+            typer.echo(line)
         typer.echo("no ground truth here - check the overlay with --frame or --video")
         return
     typer.echo(stage1_register.report(stage1_register.evaluate(labels, homs)))
@@ -990,3 +993,53 @@ def seed(
 
 if __name__ == "__main__":
     app()
+
+
+def _runs(frames: list[int]) -> list[tuple[int, int]]:
+    """Consecutive frames, grouped."""
+    out: list[tuple[int, int]] = []
+    for f in sorted(frames):
+        if out and f == out[-1][1] + 1:
+            out[-1] = (out[-1][0], f)
+        else:
+            out.append((f, f))
+    return out
+
+
+def _weakest(clip: str, chain: stage1_propagate.Chain | None, homs: dict[int, Any]) -> list[str]:
+    """Where this clip's camera model is least supported, and what to do about it.
+
+    The one thing a coach can act on. A chain is right at its anchors and wrong a hundred
+    frames later (D18), and until now nothing said WHICH hundred frames -- so a second seed
+    was clicked where the drift happened to be noticed rather than where it is worst.
+
+    Two numbers, and they answer different questions. How far a frame is from an anchor is
+    available on any clip and is the only guide when there is one seed. Where two anchors
+    reach the same frame from opposite directions, their disagreement is drift MEASURED
+    rather than assumed, because the two chains accumulated it independently (D80).
+    """
+    lines: list[str] = []
+    missing = [f for f, h in homs.items() if h is None]
+    for start, end in _runs(missing):
+        span = f"{start}-{end}" if end > start else f"{start}"
+        lines.append(
+            f"no homography     {span} ({end - start + 1} frames)"
+            " - a cut, a whip pan, or no grass in shot"
+        )
+    if chain is None or not chain.carried_from:
+        return lines
+
+    frame = max(chain.carried_from, key=lambda f: chain.carried_from[f])
+    reach = chain.carried_from[frame]
+    if reach == 0:
+        return lines
+    lines.append(f"weakest           frame {frame}, carried {reach} frames from the nearest seed")
+    if chain.disagreement:
+        worst = max(chain.disagreement, key=lambda f: chain.disagreement[f])
+        lines.append(
+            f"anchors disagree  by {chain.disagreement[worst]:.1f} m at frame {worst},"
+            " which is the drift between them"
+        )
+        frame = worst
+    lines.append(f"seed it           ft seed {clip} --frame {frame} --check")
+    return lines

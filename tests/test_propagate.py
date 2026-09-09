@@ -120,6 +120,29 @@ def test_two_anchors_meet_in_the_middle_instead_of_one_reaching_the_whole_way(
     assert max(steps) - min(steps) < 0.2
 
 
+def test_a_chain_reports_where_it_is_least_supported(tmp_path: Path) -> None:
+    """A chain is right at its anchors and wrong a hundred frames later (D18), and until
+    it said WHICH hundred frames a second seed went wherever the drift was noticed. Two
+    numbers: how far a frame is from an anchor, and -- where two of them reach it from
+    opposite sides -- how far apart their answers are, which is drift measured."""
+    base = grass()
+    for f in range(1, 6):
+        cv2.imwrite(str(tmp_path / f"{f:06d}.jpg"), base)
+
+    start = np.array([[105.0 / W, 0.0, 0.0], [0.0, 68.0 / HGT, 0.0], [0.0, 0.0, 1.0]])
+    end = start.copy()
+    end[0, 2] = 4.0
+    chain = prop.fill(tmp_path, {1: start, 2: None, 3: None, 4: None, 5: end})
+
+    assert chain.carried_from[1] == 0 and chain.carried_from[5] == 0
+    assert chain.carried_from[3] == 2  # the nearest anchor, not the one it walked from
+    assert chain.disagreement[3] == pytest.approx(4.0, abs=0.1)
+    # One anchor and there is nothing to disagree with, but the distance still guides.
+    lone = prop.fill(tmp_path, {1: start, 2: None, 3: None, 4: None, 5: None})
+    assert lone.disagreement == {}
+    assert lone.carried_from[5] == 4
+
+
 def test_fill_gives_up_rather_than_carrying_past_the_cap(tmp_path: Path) -> None:
     base = grass()
     for f in range(1, 6):

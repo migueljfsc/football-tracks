@@ -1086,3 +1086,27 @@ Two guards, and they are the same guard at two ranges:
 
 Old seeds carry no stamp and are still trusted: the fingerprint is checked when it is there.
 That is the compatible half of the fix, and the reason the second guard exists.
+
+**D83 — the chain now says where it is weakest, because that is the only thing a coach can
+act on.** D18 established that a carried homography drifts without bound; D80 made a second
+anchor reach backwards as well as forwards. Neither told anybody WHERE to click. On two clips
+in a row the answer came from a coach noticing that the play was in the wrong place — once
+fifteen metres deep, once after a stale seed put it in another stadium — and the second seed
+went where the error happened to be visible rather than where the chain is worst supported.
+
+`ft calibrate <clip>` now reports it, from what building both chains already costs:
+
+    frames solved     256/256  (100.0%)
+    weakest           frame 256, carried 255 frames from the nearest seed
+    seed it           ft seed Untitled --frame 256 --check
+
+Two numbers, answering different questions. **How far a frame is from its nearest anchor** is
+available on every clip and is the only guide when there is one seed. **Where two anchors reach
+the same frame from opposite directions, their disagreement in metres is drift MEASURED** —
+the two chains accumulated it independently, so the gap between them is the error they have
+built up, not an estimate of it. With two seeds the report names that frame instead, because a
+measured six metres is worth more than a counted hundred frames.
+
+And where the chain has no answer at all, the report says so and where: `no homography 458-464
+(7 frames) - a cut, a whip pan, or no grass in shot`. That is the same signal the Manchester
+United clip's shot change produced, and nothing had ever surfaced it.

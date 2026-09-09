@@ -23,7 +23,7 @@ from __future__ import annotations
 import json
 import math
 from collections.abc import Callable
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 
 import cv2
@@ -189,6 +189,14 @@ class Chain:
     solved_directly: int
     carried: int
     gaps: int
+    # How far each frame is from the nearest anchor, in frames. Zero at an anchor. This is
+    # what says WHERE another seed would help, which is the one question a coach can act on.
+    carried_from: dict[int, int] = field(default_factory=dict)
+    # Where two anchors reach the same frame from opposite directions, how far apart the
+    # two answers are, in metres. Drift measured rather than assumed -- the two chains have
+    # accumulated it independently, so their disagreement is the error they have built up
+    # between them (D80).
+    disagreement: dict[int, float] = field(default_factory=dict)
 
     @property
     def coverage(self) -> float:
@@ -453,19 +461,26 @@ def fill(
     # track in the clip at that frame -- measured on the same clip, board density fell from
     # 72% to 50% and the importer had no passage left that spanned the join.
     out: dict[int, H | None] = {}
+    apart: dict[int, float] = {}
+    reach: dict[int, int] = {}
     carried = 0
     for f in frames:
         if direct.get(f) is not None:
             out[f] = direct[f]
+            reach[f] = 0
             continue
         ahead, behind = forward.get(f), backward.get(f)
         if ahead is None or behind is None:
             out[f] = ahead if behind is None else behind
+            if out[f] is not None:
+                reach[f] = forward_age[f] if behind is None else backward_age[f]
         else:
             span = forward_age[f] + backward_age[f]
             share = forward_age[f] / span if span else 0.0
             mixed = blend(ahead, behind, share, width=width, height=height)
             out[f] = mixed if mixed is not None else (ahead if share <= 0.5 else behind)
+            reach[f] = min(forward_age[f], backward_age[f])
+            apart[f] = disagreement(ahead, behind, width=width, height=height)
         if out[f] is not None:
             carried += 1
 
@@ -474,6 +489,8 @@ def fill(
         solved_directly=sum(1 for f in frames if direct.get(f) is not None),
         carried=carried,
         gaps=sum(1 for v in out.values() if v is None),
+        carried_from=reach,
+        disagreement=apart,
     )
 
 

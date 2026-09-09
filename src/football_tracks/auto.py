@@ -285,14 +285,28 @@ def from_seeds(
     clip is rarely best seeded at its first frame, because the camera is often still
     finding the play there.
     """
+    return chain_from_seeds(
+        seeds, frames, frames_dir, max_carry=max_carry, motions=motions, snap=snap
+    ).homographies
+
+
+def chain_from_seeds(
+    seeds: list[seed_mod.Seed],
+    frames: list[int],
+    frames_dir: Path,
+    *,
+    max_carry: int | None,
+    motions: dict[int, Any] | None = None,
+    snap: Any = None,
+) -> stage1_propagate.Chain:
+    """`from_seeds`, with what the chain knows about itself kept: how far each frame is
+    from an anchor, and where two anchors disagree. That is what says where to click next."""
     direct: dict[int, Any] = dict.fromkeys(frames)
     for seeded in seeds:
         h = seed_mod.homography(seeded)
         if h is not None and seeded.frame in direct:
             direct[seeded.frame] = h
-    return stage1_propagate.fill(
-        frames_dir, direct, max_carry=max_carry, motion=motions, snap=snap
-    ).homographies
+    return stage1_propagate.fill(frames_dir, direct, max_carry=max_carry, motion=motions, snap=snap)
 
 
 def _cached_fits(cache: Path, weights: Path, max_residual_m: float | None) -> dict[int, Any] | None:

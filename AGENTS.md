@@ -118,6 +118,9 @@ Each of these cost a day. Where one names a decision, the full account is in
 - **`--carry -1` is uncapped, `--carry 0` is none**, and until D68 the segmenter branch read the
   first as the second — so every segmenter measurement in this repo carried nothing, whatever
   was asked for. Carrying off a learned fit is `--mode hybrid`.
+- **`ft calibrate <clip>` says where to click the next seed** (D83): the frame furthest from an
+  anchor, or -- with two -- the frame where the two chains disagree most, which is drift
+  measured rather than counted. It also names the stretches with no homography at all.
 - **Replacing a carried homography with a fitted one moves every player at once.** A per-frame
   anchor is a per-frame win and a per-track loss; correct a chain towards an anchor a twentieth
   at a time (`anchor_chain`), never in one step (D68).
