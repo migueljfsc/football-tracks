@@ -17,6 +17,7 @@ import json
 import math
 from dataclasses import dataclass, field
 from pathlib import Path
+from typing import Any
 
 import numpy as np
 import numpy.typing as npt
@@ -149,11 +150,14 @@ class Seed:
     lines: list[tuple[tuple[float, float], tuple[float, float, float]]] = field(
         default_factory=list
     )  # (image, pitch line)
+    # A fingerprint of the picture these clicks were made on. See `fingerprint`.
+    image: str | None = None
 
     def to_json(self) -> dict[str, object]:
         return {
             "version": 1,
             "frame": self.frame,
+            **({"image": self.image} if self.image else {}),
             "points": [
                 {"image": [round(ix, 1), round(iy, 1)], "pitch": [px, py]}
                 for (ix, iy), (px, py) in self.points
@@ -188,6 +192,7 @@ def read(path: Path) -> Seed:
             )
             for p in d.get("lines", [])
         ],
+        image=d.get("image"),
     )
 
 
@@ -203,6 +208,41 @@ ORIENTATION_CONFIDENT = 0.5
 # put 0% of the frame there and the bad one 67%, so anything in between is a wide
 # margin rather than a boundary anyone has to defend.
 MAX_BEHIND_CAMERA = 0.25
+
+# How many of the fingerprint's 64 bits may differ before two pictures are called
+# different. JPEG noise moves one or two; a different frame of the same shot moves a
+# handful; a different match moves thirty.
+MAX_UNLIKE_BITS = 12
+
+
+def fingerprint(img: Any) -> str:
+    """A short hash of what a frame LOOKS like, so a seed can be checked against it.
+
+    A seed states a frame NUMBER, and frame 56 exists in every clip -- so a seed clicked
+    on one match anchors the next one silently, in a coordinate frame that has nothing to
+    do with it. Nothing downstream can tell: the tracks and the board share the wrong
+    space, so every fidelity number stays good while the football happens somewhere else
+    (D34, and it happened to a coach on his second clip).
+
+    A difference hash: each bit says whether one cell of a coarse grey grid is brighter
+    than the one to its right. Robust to compression and exposure, which is what makes it
+    a test of "the same picture" rather than "the same bytes".
+    """
+    import cv2
+
+    grid = cv2.resize(cv2.cvtColor(img, cv2.COLOR_BGR2GRAY), (9, 8), interpolation=cv2.INTER_AREA)
+    bits = (grid[:, 1:] > grid[:, :-1]).flatten()
+    return f"{int(''.join('1' if b else '0' for b in bits), 2):016x}"
+
+
+def unlike(a: str, b: str) -> int:
+    """How many bits two fingerprints differ by, or 64 if either is unreadable."""
+    try:
+        return bin(int(a, 16) ^ int(b, 16)).count("1")
+    except ValueError:
+        return 64
+
+
 BEHIND_GRID = 20
 
 

@@ -224,6 +224,21 @@ def usable_seeds(
         if img is None:
             bad.append((path, f"frame {seeded.frame} is not in the clip"))
             continue
+        # The frame NUMBER is not an identity: frame 56 exists in every clip, so a seed
+        # left behind by the last one anchors this one silently and everything downstream
+        # agrees with it. The picture is the identity.
+        if seeded.image and seed_mod.unlike(seeded.image, seed_mod.fingerprint(img)) > (
+            seed_mod.MAX_UNLIKE_BITS
+        ):
+            bad.append(
+                (
+                    path,
+                    f"it was clicked on a different picture - frame {seeded.frame} of the clip"
+                    " in this folder now is not the one these landmarks describe. Re-seed, or"
+                    " move this file out of the way",
+                )
+            )
+            continue
         h = seed_mod.homography(seeded)
         if h is None:
             clash = seed_mod.contradictions(seeded)

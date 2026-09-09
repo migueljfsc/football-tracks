@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from dataclasses import replace
 from pathlib import Path
 from typing import Annotated, Any, cast
 
@@ -897,10 +898,16 @@ def frames(
             if path.exists():
                 path.unlink()
                 typer.echo(f"dropped {cached}: it was measured from the frames just replaced")
-        if (work / "seed.json").exists():
+        # Every seed, not just the primary one: the extras are anchors too, and one left
+        # behind by the previous clip is the worst kind of stale cache -- it is human work,
+        # it looks deliberate, and it puts the football in the wrong half. Moved rather
+        # than deleted, and out of the name the pipeline reads.
+        for stale in auto_mod.seed_paths(work):
+            aside = stale.with_name(f"stale.{stale.name}")
+            stale.rename(aside)
             typer.echo(
-                f"NOTE: {work / 'seed.json'} was clicked on the clip that was here before."
-                " Re-seed unless this is the same camera on the same frame."
+                f"moved {stale.name} to {aside.name}: it was clicked on the clip that was"
+                " here before, and a seed only fits the picture it was clicked on"
             )
     typer.echo(
         f"{clip.frames} frames at {clip.fps:.2f} fps, {clip.width}x{clip.height}"
@@ -940,6 +947,8 @@ def seed(
     if got is None:
         typer.echo("abandoned; nothing written")
         raise typer.Exit(1)
+    # Stamped with the picture it was clicked on, so it can never anchor another clip.
+    got = replace(got, image=seed_mod.fingerprint(img))
 
     # The reprojection overlay CANNOT see a mirrored y axis: a pitch is symmetric about
     # the halfway line, so a flipped model draws onto the real markings perfectly. So it

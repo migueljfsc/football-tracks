@@ -196,6 +196,11 @@ Each of these cost a day. Where one names a decision, the full account is in
 
 ### Environment and video
 
+- **A seed only fits the picture it was clicked on** (D34). A frame NUMBER is not an identity:
+  frame 56 exists in every clip, so a `seed.*.json` left behind by the previous clip anchors the
+  next one silently and every fidelity score downstream stays good while the football happens in
+  the wrong half. Seeds are stamped with a fingerprint of their own frame and refused when it no
+  longer matches, and `ft frames` moves every seed aside rather than warning about one of them.
 - **`ft frames` clears the frames it is about to write, and drops what was cached from
   them.** Frames are numbered from one, so a shorter recording extracted over a longer one
   used to leave the tail of the old one behind and every stage read the two as one clip. The

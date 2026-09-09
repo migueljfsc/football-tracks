@@ -1060,3 +1060,29 @@ after, so nothing is mixed and the behaviour is exactly what it was.
 concluded that more anchors buy almost nothing — measured through a chain that walked forward
 only, so half of each anchor's reach was never used. Whether spreading seeds is worth it is
 worth asking again now, on the same clips.
+
+**D82 — a seed is stamped with the picture it was clicked on, because a frame number is not an
+identity.** D34 said a seed is checked against the frame it claims to describe, and the check it
+got was geometric: does this fit fold its own frame over the horizon? That catches a bad seed.
+It does not catch a seed that belongs to a different clip, and `work/<clip>/` is keyed by name,
+so a coach who exports two clips as "Untitled" gets the first one's anchors on the second.
+
+It happened, on the second clip in a row: `seed.56.json` from Monday's match was still in the
+folder, `seed_paths` returns every `seed.*.json` as an anchor, and both were used. Frames 56
+onward were registered from landmarks clicked on another stadium. The board was, in the coach's
+words, *"horrible, it has nothing to do with the actual clip"* — and nothing in the pipeline
+said a word, because a wrong coordinate frame is self-consistent: 41 tracks, zero detections
+dropped off the pitch, a full roster, a plausible window.
+
+Two guards, and they are the same guard at two ranges:
+
+- **The seed carries a fingerprint of its frame** — a difference hash, sixty-four bits of "is
+  this cell brighter than the one to its right", which survives compression and exposure and
+  does not survive a different match. A seed whose frame no longer looks like the one it was
+  clicked on is refused by name, with the reason.
+- **`ft frames` moves every seed aside**, not just `seed.json`, and says so. It used to print a
+  note about the primary seed alone — which is the one a coach re-clicks anyway. The extras are
+  the dangerous ones precisely because nobody thinks about them.
+
+Old seeds carry no stamp and are still trusted: the fingerprint is checked when it is there.
+That is the compatible half of the fix, and the reason the second guard exists.

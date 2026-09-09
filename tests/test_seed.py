@@ -427,3 +427,30 @@ def test_every_diagram_is_the_same_size_whatever_it_draws() -> None:
         assert seedui._diagram(name, False, width).shape == sizer.shape
     for name in seed.TRACEABLE:
         assert seedui._diagram(name, True, width, trace=True).shape == sizer.shape
+
+
+def test_a_seed_is_stamped_with_the_picture_it_was_clicked_on() -> None:
+    # A frame NUMBER is not an identity -- frame 56 exists in every clip -- so a seed left
+    # behind by the last clip anchors the next one silently, in a coordinate frame that has
+    # nothing to do with it. Measured on a coach's second clip: the board was unrecognisable
+    # and every fidelity number stayed good (D34).
+    rng = np.random.default_rng(0)
+    one = rng.integers(0, 255, (240, 320, 3), dtype=np.uint8)
+    other = rng.integers(0, 255, (240, 320, 3), dtype=np.uint8)
+    same_shot = cv2.convertScaleAbs(one, alpha=1.05, beta=4)
+
+    print_ = seed.fingerprint(one)
+    assert seed.unlike(print_, seed.fingerprint(one)) == 0
+    assert seed.unlike(print_, seed.fingerprint(same_shot)) <= seed.MAX_UNLIKE_BITS
+    assert seed.unlike(print_, seed.fingerprint(other)) > seed.MAX_UNLIKE_BITS
+
+
+def test_an_unreadable_fingerprint_is_treated_as_a_different_picture() -> None:
+    assert seed.unlike("not a hash", "0123456789abcdef") == 64
+
+
+def test_a_stamp_survives_a_round_trip(tmp_path: Path) -> None:
+    written = seed.Seed(frame=7, points=[((1.0, 2.0), (3.0, 4.0))], image="0123456789abcdef")
+    assert seed.read(seed.write(tmp_path / "seed.json", written)).image == "0123456789abcdef"
+    # And a seed written before this existed still reads, with nothing to check against.
+    assert seed.read(seed.write(tmp_path / "old.json", seed.Seed(frame=7, points=[]))).image is None
