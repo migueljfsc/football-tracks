@@ -158,6 +158,10 @@ class Track:
     kit_sum: np.ndarray | None = None
     kit_seen: int = 0
     tone_sum: np.ndarray | None = None
+    # Every shirt reading, with the frame it was taken on. The averages above answer "what
+    # kit is this"; the sequence answers "is it ONE kit", which is a different question and
+    # the only evidence that a track holds two players (D85).
+    kit_log: list[tuple[int, np.ndarray]] = field(default_factory=list)
 
     @property
     def last(self) -> Observation:
@@ -191,11 +195,15 @@ class Track:
             return None
         return self.tone_sum / self.kit_seen
 
-    def saw_kit(self, seen: np.ndarray, tone: np.ndarray | None = None) -> None:
+    def saw_kit(
+        self, seen: np.ndarray, tone: np.ndarray | None = None, f: int | None = None
+    ) -> None:
         # Rolling average: one frame of shadow should not redefine a kit.
         self.color = seen if self.color is None else 0.8 * self.color + 0.2 * seen
         self.kit_sum = seen.astype(np.float64) if self.kit_sum is None else self.kit_sum + seen
         self.kit_seen += 1
+        if f is not None:
+            self.kit_log.append((f, seen.astype(np.float64)))
         if tone is not None:
             self.tone_sum = tone if self.tone_sum is None else self.tone_sum + tone
 
@@ -343,14 +351,14 @@ def run(
                 track.observations.append(o)
                 seen = colors[oi]
                 if seen is not None:
-                    track.saw_kit(seen, tones[oi])
+                    track.saw_kit(seen, tones[oi], o.f)
 
         for oi, o in enumerate(obs):
             if oi not in used_o:
                 started = Track(id=next_id, observations=[o])
                 first = colors[oi]
                 if first is not None:
-                    started.saw_kit(first, tones[oi])
+                    started.saw_kit(first, tones[oi], o.f)
                 live.append(started)
                 next_id += 1
 

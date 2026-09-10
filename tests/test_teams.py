@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import numpy as np
 
+from football_tracks import stage3_teams
 from football_tracks.stage2_track import Track
 from football_tracks.stage3_teams import assign, kit_colours
 from football_tracks.tracks import TeamLabel
@@ -92,3 +93,49 @@ def test_a_shirt_with_no_colour_is_not_given_one() -> None:
     assert got is not None
     assert got["home"] == "#e6e6e6"
     assert got["away"].startswith("#")
+
+
+def logged(track_id: int, kits: list[tuple[int, tuple[float, float]]]) -> Track:
+    t = Track(id=track_id)
+    for f, kit in kits:
+        t.saw_kit(np.array(kit, dtype=np.float64), None, f)
+    return t
+
+
+CENTRES = (np.array([1.0, 0.0]), np.array([0.0, 1.0]))
+
+
+def test_a_declined_track_is_cut_where_the_shirt_changes() -> None:
+    # Only ever asked of a track already declined (D72), which is what makes it safe: a
+    # declined track is thrown away, so a cut that explains it costs nothing when it fails
+    # and returns two players when it works.
+    two = logged(
+        1, [(f, (1.0, 0.0)) for f in range(1, 13)] + [(f, (0.0, 1.0)) for f in range(13, 25)]
+    )
+    got = stage3_teams.two_shirts(two, CENTRES)
+    assert got is not None
+    at, first, second = got
+    assert at == 13
+    assert (first, second) == (0, 1)
+
+
+def test_one_player_in_changing_light_is_not_two_players() -> None:
+    # Both halves land on the same side: the kit moved, the shirt did not.
+    same = logged(
+        2, [(f, (1.0, 0.0)) for f in range(1, 13)] + [(f, (0.8, 0.2)) for f in range(13, 25)]
+    )
+    assert stage3_teams.two_shirts(same, CENTRES) is None
+
+
+def test_a_cut_that_leaves_a_half_still_ambiguous_is_refused() -> None:
+    muddy = logged(
+        3, [(f, (1.0, 0.0)) for f in range(1, 13)] + [(f, (0.5, 0.5)) for f in range(13, 25)]
+    )
+    assert stage3_teams.two_shirts(muddy, CENTRES) is None
+
+
+def test_a_track_with_too_few_readings_is_left_alone() -> None:
+    short = logged(
+        4, [(f, (1.0, 0.0)) for f in range(1, 6)] + [(f, (0.0, 1.0)) for f in range(6, 11)]
+    )
+    assert stage3_teams.two_shirts(short, CENTRES) is None

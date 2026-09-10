@@ -42,7 +42,7 @@ from . import (
 from . import seed as seed_mod
 from .config import PITCH_LENGTH, PITCH_WIDTH
 from .stage3_teams import assign
-from .tracks import PLAYER_MARGIN, Sample, Track, on_pitch
+from .tracks import PLAYER_MARGIN, Sample, TeamLabel, Track, on_pitch
 
 Mode = Literal["truth", "seed", "segmenter", "hybrid"]
 
@@ -875,15 +875,13 @@ def build(
         positions = stage2_stitch.stitch(positions, {t.id: t.color for t in raw}, fps)
 
     mean_x = {tid: float(np.mean([s.x for s in ss])) for tid, ss in positions.items()}
-    teams = assign(
-        [t for t in raw if t.id in positions],
-        mean_x,
-        {tid: [s.f for s in ss] for tid, ss in positions.items()},
-    )
+    kept = [t for t in raw if t.id in positions]
+    teams = assign(kept, mean_x, {tid: [s.f for s in ss] for tid, ss in positions.items()})
+    positions, teams = _split_two_shirts(kept, positions, teams)
 
     return Result(
         ball=ball_path(balls or [], homs, frames),
-        kits=stage3_teams.kit_colours([t for t in raw if t.id in positions], teams),
+        kits=stage3_teams.kit_colours(kept, teams),
         tracks=[
             Track(id=tid, team=teams.get(tid, "unknown"), number=None, samples=ss)
             for tid, ss in sorted(positions.items())
@@ -894,3 +892,42 @@ def build(
         dropped_off_pitch=dropped,
         unsolved_frames=sum(1 for f in frames if homs.get(f) is None),
     )
+
+
+def _split_two_shirts(
+    tracks: list[stage2_track.Track],
+    positions: dict[int, list[Sample]],
+    teams: dict[int, TeamLabel],
+) -> tuple[dict[int, list[Sample]], dict[int, TeamLabel]]:
+    """Cut a DECLINED track in two where its shirt changes, if both halves then have a side.
+
+    Only the declined ones, and that asymmetry is the whole argument (D85): a track stage 3
+    could not name is dropped by the board, so a split that explains it costs nothing when
+    it fails and returns two players when it works. Tried on every track it would need a
+    threshold nobody has (D84).
+    """
+    centres = stage3_teams.side_centres(tracks, teams)
+    if centres is None:
+        return positions, teams
+
+    out_positions = dict(positions)
+    out_teams = dict(teams)
+    next_id = max(positions, default=0) + 1
+    sides: tuple[TeamLabel, TeamLabel] = ("home", "away")
+    for track in tracks:
+        if out_teams.get(track.id) != "unknown":
+            continue
+        split = stage3_teams.two_shirts(track, centres)
+        if split is None:
+            continue
+        at, first, second = split
+        early = [s for s in positions[track.id] if s.f < at]
+        late = [s for s in positions[track.id] if s.f >= at]
+        if not early or not late:
+            continue
+        out_positions[track.id] = early
+        out_teams[track.id] = sides[first]
+        out_positions[next_id] = late
+        out_teams[next_id] = sides[second]
+        next_id += 1
+    return out_positions, out_teams

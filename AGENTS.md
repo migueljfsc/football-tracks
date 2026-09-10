@@ -159,6 +159,9 @@ Each of these cost a day. Where one names a decision, the full account is in
   difference between declining a quarter of a clip and declining nothing.
 - **`ft score`'s team accuracy counts a declined side as an error**, so read the `teams asserted`
   line instead when anything refuses: right, WRONG, declined.
+- **A track the kit split DECLINES may be cut where its shirt changes** (D85), and only such a
+  track: it is thrown away otherwise, so a cut that fails costs nothing and one that works
+  returns two players. Asked of every track it needs a threshold that does not exist (D84).
 - **The kit signature is for DECIDING and the kit colour is for SHOWING** (D81). A histogram
   tells two sides apart and paints nothing; a mean BGR paints a shirt and cannot tell a red one
   from a blue one when they are averaged together. `tracks.json` carries the second as `kits`,

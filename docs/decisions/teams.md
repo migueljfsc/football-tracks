@@ -440,3 +440,25 @@ appearance model that is not a colour histogram, which is D32's and D61's answer
 place. What ships instead is on the consumer's side and much smaller: a track nobody could name
 BLOCKS the ball rather than being stepped over (Pitchboard D78), so the ball stops being handed
 to the nearest player who happens to have a side, which on this clip was an opponent.
+
+**D85 — a DECLINED track may be cut where its shirt changes, and only a declined one.** D84
+looked for a threshold that says "this track holds two players" and found none: across three
+clips the declined tracks split at 0.12 to 0.71 and the confidently named ones run to 0.83, so
+any cut deep enough to catch a real switch also cuts a dozen tracks that are one man.
+
+The asymmetry it missed is that a declined track is ALREADY THROWN AWAY. Pitchboard fields
+nobody it cannot name (D72), so for that population the question is not "is this suspicious
+enough" but "does cutting it produce two halves the ordinary test is SURE of, one on each
+side". If it does, two players come back that were otherwise lost. If it does not, the track
+stays declined and nothing is worse. There is no threshold to defend, because the test is the
+same `KIT_MARGIN` that declined the whole track in the first place.
+
+On the coach's Porto clip the man who received the goalkeeper's pass was exactly this: Porto's
+stripes to frame 87, a Manchester City shirt after it, one kit sitting midway between the sides
+at own 0.24 against other 0.24. Cut at 87 it is two players, each named with the margin to
+spare, and the move he was in the middle of can be drawn. Across the benchmark it costs nothing
+-- SNGS-147 and SNGS-121 are unchanged to the digit, SNGS-116 gains one track with the same
+recall, precision, purity and team split.
+
+What it does not do is prevent the switch. The tracker still walked from one player to the
+other; this only reads the evidence it left behind.

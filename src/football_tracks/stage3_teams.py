@@ -264,6 +264,79 @@ def _hex(bgr: Vec) -> str:
     return f"#{r:02x}{g:02x}{b:02x}"
 
 
+# Fewest shirt readings a half must have before a split is believed. Below this a "half"
+# is a handful of frames of one player walking through another's box.
+MIN_HALF_READS = 8
+
+
+def two_shirts(
+    track: Track, centres: tuple[Vec, Vec], margin: float = KIT_MARGIN
+) -> tuple[int, int, int] | None:
+    """Where a track changes shirt, and which side each half is on -- or None.
+
+    Only ever asked of a track stage 3 has already DECLINED (D72), and that asymmetry is
+    what makes it safe. A declined track is thrown away: half of it would be in the wrong
+    colour and the board fields nobody it cannot name. So the question here is not "is this
+    track above some threshold of suspicion" -- D84 measured that and found no threshold
+    that separates a switch from an ambiguous kit -- but "does cutting it produce two halves
+    the ordinary test is SURE of, one on each side". If it does, two players come back that
+    were otherwise lost. If it does not, the track stays declined and nothing is worse.
+
+    Found on a coach's clip: the man who received a goalkeeper's pass was a track holding a
+    Porto shirt to frame 87 and a Manchester City one after it, so his kit sat exactly
+    between the two sides -- own 0.24, other 0.24 -- and the move he was in the middle of
+    could not be drawn.
+    """
+    log = track.kit_log
+    if len(log) < 2 * MIN_HALF_READS:
+        return None
+
+    best: tuple[float, int] | None = None
+    for i in range(MIN_HALF_READS, len(log) - MIN_HALF_READS):
+        a = np.mean([k for _, k in log[:i]], axis=0)
+        b = np.mean([k for _, k in log[i:]], axis=0)
+        apart = _intersection_distance(a, b)
+        if best is None or apart > best[0]:
+            best = (apart, i)
+    if best is None:
+        return None
+
+    cut = best[1]
+    sides = []
+    for half in (log[:cut], log[cut:]):
+        kit = np.mean([k for _, k in half], axis=0)
+        near = [float(np.linalg.norm(kit - c)) for c in centres]
+        first, second = (0, 1) if near[0] <= near[1] else (1, 0)
+        # The same margin the whole track failed, applied to each half: a cut that leaves
+        # two kits still sitting between the sides has explained nothing.
+        if near[first] > margin * near[second]:
+            return None
+        sides.append(first)
+    if sides[0] == sides[1]:
+        return None  # one player who changed light, not two players
+    return (log[cut][0], sides[0], sides[1])
+
+
+def _intersection_distance(a: Vec, b: Vec) -> float:
+    """0 when two kit signatures agree, 1 when they share nothing."""
+    return float(np.clip(1.0 - np.minimum(a, b).sum(), 0.0, 1.0))
+
+
+def side_centres(tracks: list[Track], teams: dict[int, TeamLabel]) -> tuple[Vec, Vec] | None:
+    """The mean kit of each side, from the tracks the split was sure of."""
+    kits: dict[str, list[Vec]] = {"home": [], "away": []}
+    for t in tracks:
+        side = teams.get(t.id)
+        if side in kits and t.kit_mean is not None:
+            kits[side].append(t.kit_mean)
+    if not (kits["home"] and kits["away"]):
+        return None
+    return (
+        np.mean(np.array(kits["home"], dtype=np.float64), axis=0),
+        np.mean(np.array(kits["away"], dtype=np.float64), axis=0),
+    )
+
+
 def assign(
     tracks: list[Track],
     mean_x: dict[int, float],
