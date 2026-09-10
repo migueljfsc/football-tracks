@@ -1,3 +1,9 @@
+## v0.24.0 (2026-09-10)
+
+### Feat
+
+- **teams**: cut a declined track where its shirt changes
+
 ## v0.23.0 (2026-09-09)
 
 ### Feat
