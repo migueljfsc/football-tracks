@@ -1,3 +1,9 @@
+## v0.26.0 (2026-09-11)
+
+### Feat
+
+- **teams**: paint the kit from the signature that names the sides
+
 ## v0.25.1 (2026-09-11)
 
 ### Fix
