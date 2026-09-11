@@ -1,3 +1,9 @@
+## v0.25.1 (2026-09-11)
+
+### Fix
+
+- **cli**: restore `ft seed`, which a stray decorator had unregistered
+
 ## v0.25.0 (2026-09-11)
 
 ### Feat
