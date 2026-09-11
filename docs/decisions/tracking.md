@@ -419,3 +419,41 @@ against a bar of 0.251 -- clustered with the right side, 8% short of the confide
 so. He carries the ball at frames 506-573 and the board cannot draw him, because a track the
 kit will not settle is never fielded (D72). That is the next thing, and it is a question
 about the margin rather than about him.
+
+**D93 — the ball cannot be recovered from this detector by any selection rule, and nearness
+to a player is evidence AGAINST it.** A coach's clip opens with thirty frames his team spends
+losing possession, and the board draws none of it: the ball is not asserted until frame 43.
+It is not invisible there -- the detector finds it on the grass at 0.44 to 0.53, under
+`BALL_ASSERT_CONF`, which D73 measured at 0.75 and which buys two phantom passes of four
+across six boards. Lowering it undoes that, so the question is whether a weak sighting can be
+CORROBORATED instead.
+
+Two corroborations were built and measured. Both fail, and the second fails in an
+instructive direction.
+
+**Continuity, walking back from the first confident sighting.** It recovers a path, and the
+path is made of 0.15 to 0.26 detections that converge on a point the best-scoring blob of the
+same frames disagrees with. There are several stationary candidates in that opening and
+continuity cannot separate them -- which is the same wall `ball_path` documents from the
+shortest-path experiment.
+
+**A tracked player carrying it**, on the argument that a fixed artefact cannot follow a man
+across the grass. It found 201 candidates at somebody's feet in the first 44 frames, and 595
+of the clip's 603 frames have one, which is already a warning: a test that fires everywhere
+is not a test. Measuring what is actually at a player's feet says why:
+
+    band                   n     within 2 m of a player    median gap
+    confident >= 0.75    290              37%                 2.7 m
+    middling 0.5-0.75    222              59%                 1.6 m
+    faint < 0.5         5440              58%                 1.6 m
+
+**The faint sightings are MORE likely to be at a player's feet than the real ball is.** They
+are boots, socks and the white of a shirt -- the false positives live ON the players, which
+is exactly where this test looked. Proximity to a player selects against the ball.
+
+So no rule over these candidates gets the opening, and D73's line is the honest summary made
+sharper: the ball can be frequent or right and not both, because the detector finds it at all
+in 41% of frames and its errors are not scattered -- they are on the people. What is left is
+a ball-specific detector, which is a model rather than a rule.
+
+Nothing shipped. The measurement is the result.

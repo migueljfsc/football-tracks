@@ -222,6 +222,12 @@ Each of these cost a day. Where one names a decision, the full account is in
   tells two sides apart and paints nothing; a mean BGR paints a shirt and cannot tell a red one
   from a blue one when they are averaged together. `tracks.json` carries the second as `kits`,
   optional, absent where the two sides measure too close to be told apart on sight.
+- **A faint ball sighting near a player is evidence of a FALSE POSITIVE** (D93). The real ball
+  is within 2 m of somebody 37% of the time; sightings under 0.5 are, 58%. The detector's
+  errors are boots, socks and shirt-white, so they live on the players -- any rule that
+  corroborates a weak sighting by who is near it selects against the ball. Continuity fails
+  too, on competing stationary candidates. The opening of a clip with no confident sighting
+  cannot be recovered by a selection rule; it needs a ball-specific detector.
 - **The ball's POSITION is not usable and its HOLDER is** (D29).
 - **Picking the ball candidate nearest a player is worse than picking the most confident one**
   — there are a dozen candidates a frame and "nearest a player" selects whichever false
