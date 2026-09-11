@@ -19,52 +19,71 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
+import cv2
 import numpy as np
 import numpy.typing as npt
 
-from .config import PITCH_LENGTH, PITCH_WIDTH
+from .config import DEFAULT_PITCH, Pitch
 
 # The landmarks worth offering, in metres, for the goal at x=0. A clip showing the far
 # goal is seeded with the same names mirrored, which `mirrored()` does, so a coach
 # never has to think about which end the pitch model calls zero.
-MID = PITCH_WIDTH / 2
 # FAR means away from the camera and NEAR means toward it - never left and right,
 # which depend on where the camera is standing and are ambiguous on a screen. The
 # broadcast camera sits on one touchline, so "near" is always the bottom of the frame.
 # The centre circle's radius, for the two points where the halfway line crosses it.
 CENTRE_R = 9.15
 
-LANDMARKS: dict[str, tuple[float, float]] = {
-    "goal post far": (0.0, MID - 3.66),
-    "goal post near": (0.0, MID + 3.66),
-    "6yd box far corner": (0.0, MID - 9.16),
-    "6yd box near corner": (0.0, MID + 9.16),
-    "6yd front far": (5.5, MID - 9.16),
-    "6yd front near": (5.5, MID + 9.16),
-    "penalty box far corner": (0.0, MID - 20.16),
-    "penalty box near corner": (0.0, MID + 20.16),
-    "penalty box front far": (16.5, MID - 20.16),
-    "penalty box front near": (16.5, MID + 20.16),
-    "penalty spot": (11.0, MID),
-    "corner far": (0.0, 0.0),
-    "corner near": (0.0, PITCH_WIDTH),
-    "halfway far": (PITCH_LENGTH / 2, 0.0),
-    "halfway near": (PITCH_LENGTH / 2, PITCH_WIDTH),
-    # Where the halfway line crosses the centre circle. The two exact points a MIDFIELD
-    # view offers and nothing else does: the circle itself is not traceable (a curve is
-    # not a line) and its crossings are, which is the same trick the learned fitter uses
-    # on predicted markings. Without them a camera parked on the halfway line has evidence
-    # only where the paint is -- along one line and around the edges -- and nothing fixes
-    # the scale through the middle of the picture, where the players are.
-    "circle far": (PITCH_LENGTH / 2, MID - CENTRE_R),
-    "circle near": (PITCH_LENGTH / 2, MID + CENTRE_R),
-}
+
+def landmarks(pitch: Pitch = DEFAULT_PITCH) -> dict[str, tuple[float, float]]:
+    """The landmarks worth offering, in metres, for the goal at x=0.
+
+    A clip showing the far goal is seeded with the same names mirrored, which `mirrored`
+    does, so a coach never has to think about which end the pitch model calls zero.
+
+    Everything here except the corners, the touchlines and the halfway line is fixed by
+    the Laws and identical on every ground; what `pitch` moves is where the middle of the
+    goal is, and how far away the far end and the far touchline are (D89).
+    """
+    mid = pitch.middle
+    return {
+        "goal post far": (0.0, mid - 3.66),
+        "goal post near": (0.0, mid + 3.66),
+        "6yd box far corner": (0.0, mid - 9.16),
+        "6yd box near corner": (0.0, mid + 9.16),
+        "6yd front far": (5.5, mid - 9.16),
+        "6yd front near": (5.5, mid + 9.16),
+        "penalty box far corner": (0.0, mid - 20.16),
+        "penalty box near corner": (0.0, mid + 20.16),
+        "penalty box front far": (16.5, mid - 20.16),
+        "penalty box front near": (16.5, mid + 20.16),
+        "penalty spot": (11.0, mid),
+        "corner far": (0.0, 0.0),
+        "corner near": (0.0, pitch.width),
+        "halfway far": (pitch.halfway, 0.0),
+        "halfway near": (pitch.halfway, pitch.width),
+        # Where the halfway line crosses the centre circle. The two exact points a MIDFIELD
+        # view offers and nothing else does: the circle itself is not traceable (a curve is
+        # not a line) and its crossings are, which is the same trick the learned fitter uses
+        # on predicted markings. Without them a camera parked on the halfway line has
+        # evidence only where the paint is -- along one line and around the edges -- and
+        # nothing fixes the scale through the middle of the picture, where the players are.
+        "circle far": (pitch.halfway, mid - CENTRE_R),
+        "circle near": (pitch.halfway, mid + CENTRE_R),
+    }
 
 
-def mirrored(name: str) -> tuple[float, float]:
+def mirrored(name: str, pitch: Pitch = DEFAULT_PITCH) -> tuple[float, float]:
     """The same landmark at the other end of the pitch."""
-    x, y = LANDMARKS[name]
-    return (PITCH_LENGTH - x, y)
+    x, y = landmarks(pitch)[name]
+    return (pitch.length - x, y)
+
+
+def mirror_line(
+    a: float, b: float, c: float, pitch: Pitch = DEFAULT_PITCH
+) -> tuple[float, float, float]:
+    """A pitch line reflected end to end. x = k becomes x = L - k; y = k is unchanged."""
+    return (-a, b, c + a * pitch.length) if a else (a, b, c)
 
 
 # How far a clicked point may sit from where the fitted camera puts it, in metres,
@@ -94,53 +113,73 @@ MIN_SPREAD_M = 3.0
 # Named pitch lines a human can trace, and what they are in metres. Tracing beats
 # clicking a corner: a corner is one exact pixel and is often out of shot, while a line
 # you can see is easy to follow and just as informative once several points are stacked.
-TRACEABLE: dict[str, tuple[float, float, float]] = {
-    "goal line": (1.0, 0.0, 0.0),
-    "6yd box front": (1.0, 0.0, -5.5),
-    "penalty box front": (1.0, 0.0, -16.5),
-    "6yd box far side": (0.0, 1.0, -(MID - 9.16)),
-    "6yd box near side": (0.0, 1.0, -(MID + 9.16)),
-    "penalty box far side": (0.0, 1.0, -(MID - 20.16)),
-    "penalty box near side": (0.0, 1.0, -(MID + 20.16)),
-    "far touchline": (0.0, 1.0, 0.0),
-    "near touchline": (0.0, 1.0, -PITCH_WIDTH),
-    # The one marking a MIDFIELD view always has, and the only line here that mirroring
-    # leaves alone. Without it such a frame can only offer box lines and a touchline --
-    # every one of them in the same band across the picture, which is unconstrained in
-    # depth and folds the fit over just below it (D34). A real clip was refused for
-    # exactly that: `usable_seeds` saw 34% of the frame mapped behind the camera.
-    "halfway line": (1.0, 0.0, -PITCH_LENGTH / 2),
-}
+def traceable(pitch: Pitch = DEFAULT_PITCH) -> dict[str, tuple[float, float, float]]:
+    """Named pitch lines a human can trace, and what they are in metres.
+
+    Tracing beats clicking a corner: a corner is one exact pixel and is often out of
+    shot, while a line you can see is easy to follow and just as informative once several
+    points are stacked.
+    """
+    mid = pitch.middle
+    return {
+        "goal line": (1.0, 0.0, 0.0),
+        "6yd box front": (1.0, 0.0, -5.5),
+        "penalty box front": (1.0, 0.0, -16.5),
+        "6yd box far side": (0.0, 1.0, -(mid - 9.16)),
+        "6yd box near side": (0.0, 1.0, -(mid + 9.16)),
+        "penalty box far side": (0.0, 1.0, -(mid - 20.16)),
+        "penalty box near side": (0.0, 1.0, -(mid + 20.16)),
+        "far touchline": (0.0, 1.0, 0.0),
+        "near touchline": (0.0, 1.0, -pitch.width),
+        # The one marking a MIDFIELD view always has, and the only line here that
+        # mirroring leaves alone. Without it such a frame can only offer box lines and a
+        # touchline -- every one of them in the same band across the picture, which is
+        # unconstrained in depth and folds the fit over just below it (D34). A real clip
+        # was refused for exactly that: `usable_seeds` saw 34% of the frame behind the
+        # camera.
+        "halfway line": (1.0, 0.0, -pitch.halfway),
+    }
 
 
 # Where each marking actually STOPS, in metres. A traceable line is stored as an
 # infinite one because that is what the solver wants, but a diagram drawn from that
 # claims the six-yard box runs the length of the pitch - which is what it was doing,
 # pointing the coach at grass instead of at a line.
-EXTENTS: dict[str, tuple[tuple[float, float], tuple[float, float]]] = {
-    "goal line": ((0.0, 0.0), (0.0, PITCH_WIDTH)),
-    "6yd box front": ((5.5, MID - 9.16), (5.5, MID + 9.16)),
-    "penalty box front": ((16.5, MID - 20.16), (16.5, MID + 20.16)),
-    "6yd box far side": ((0.0, MID - 9.16), (5.5, MID - 9.16)),
-    "6yd box near side": ((0.0, MID + 9.16), (5.5, MID + 9.16)),
-    "penalty box far side": ((0.0, MID - 20.16), (16.5, MID - 20.16)),
-    "penalty box near side": ((0.0, MID + 20.16), (16.5, MID + 20.16)),
-    "far touchline": ((0.0, 0.0), (PITCH_LENGTH, 0.0)),
-    "near touchline": ((0.0, PITCH_WIDTH), (PITCH_LENGTH, PITCH_WIDTH)),
-    "halfway line": ((PITCH_LENGTH / 2, 0.0), (PITCH_LENGTH / 2, PITCH_WIDTH)),
-}
+def extents(
+    pitch: Pitch = DEFAULT_PITCH,
+) -> dict[str, tuple[tuple[float, float], tuple[float, float]]]:
+    """Where each marking actually STOPS, in metres.
+
+    A traceable line is stored as an infinite one because that is what the solver wants,
+    but a diagram drawn from that claims the six-yard box runs the length of the pitch --
+    which is what it was doing, pointing the coach at grass instead of at a line.
+    """
+    mid = pitch.middle
+    return {
+        "goal line": ((0.0, 0.0), (0.0, pitch.width)),
+        "6yd box front": ((5.5, mid - 9.16), (5.5, mid + 9.16)),
+        "penalty box front": ((16.5, mid - 20.16), (16.5, mid + 20.16)),
+        "6yd box far side": ((0.0, mid - 9.16), (5.5, mid - 9.16)),
+        "6yd box near side": ((0.0, mid + 9.16), (5.5, mid + 9.16)),
+        "penalty box far side": ((0.0, mid - 20.16), (16.5, mid - 20.16)),
+        "penalty box near side": ((0.0, mid + 20.16), (16.5, mid + 20.16)),
+        "far touchline": ((0.0, 0.0), (pitch.length, 0.0)),
+        "near touchline": ((0.0, pitch.width), (pitch.length, pitch.width)),
+        "halfway line": ((pitch.halfway, 0.0), (pitch.halfway, pitch.width)),
+    }
 
 
-def mirrored_extent(name: str) -> tuple[tuple[float, float], tuple[float, float]]:
+def mirrored_extent(
+    name: str, pitch: Pitch = DEFAULT_PITCH
+) -> tuple[tuple[float, float], tuple[float, float]]:
     """The same marking at the other end of the pitch."""
-    (ax, ay), (bx, by) = EXTENTS[name]
-    return ((PITCH_LENGTH - ax, ay), (PITCH_LENGTH - bx, by))
+    (ax, ay), (bx, by) = extents(pitch)[name]
+    return ((pitch.length - ax, ay), (pitch.length - bx, by))
 
 
-def mirrored_line(name: str) -> tuple[float, float, float]:
-    """The same marking at the other end. x = k becomes x = 105 - k; y = k is unchanged."""
-    a, b, c = TRACEABLE[name]
-    return (-a, b, c + a * PITCH_LENGTH) if a else (a, b, c)
+def mirrored_line(name: str, pitch: Pitch = DEFAULT_PITCH) -> tuple[float, float, float]:
+    """The same marking at the other end, by name."""
+    return mirror_line(*traceable(pitch)[name], pitch=pitch)
 
 
 @dataclass(slots=True)
@@ -302,22 +341,70 @@ def orientation(seed: Seed) -> float:
     return float(np.corrcoef(image_y, pitch_y)[0, 1])
 
 
-def flip_y(seed: Seed) -> Seed:
-    """The same clicks, with the pitch y axis reflected. Fixes a swapped far/near."""
+# The smallest projected triangle worth trusting a sign from, in square metres. Below
+# this the fit is degenerate and the handedness is noise rather than an answer.
+MIN_HANDED_AREA = 1.0
+
+
+def handedness(h: npt.NDArray[np.float64], width: int, height: int) -> float:
+    """Which way round the ground plane is, as seen through this camera. -1, 0 or +1.
+
+    A camera cannot get underneath a football pitch, so every frame of a clip sees the
+    plane from the same side and the image-to-pitch map has the same handedness
+    throughout -- panning, zooming and tilting cannot change it. Labelling the clicks
+    with the WRONG END does change it, because reflecting pitch x while far and near
+    stay pinned to the image is a reflection, and a reflection reverses handedness.
+
+    So this is the end check, and it is the exact sibling of `orientation`: between them
+    they cover every way a symmetric pitch can be mislabelled. A pitch has three
+    non-identity symmetries -- flip x, flip y, and both -- and `orientation` catches the
+    two that move y while this catches the two that move x.
+
+    Unlike `orientation` it cannot judge one seed alone: a clip's handedness depends on
+    which touchline the camera sits on, so the answer is only meaningful against the
+    other seeds of the SAME clip.
+
+    Zero where the fit is too degenerate to have an opinion.
+    """
+    quarter = np.array(
+        [[[width / 2.0, height / 2.0], [width * 0.75, height / 2.0], [width / 2.0, height * 0.75]]],
+        dtype=np.float64,
+    )
+    (ax, ay), (bx, by), (cx, cy) = cv2.perspectiveTransform(quarter, h)[0]
+    area = ((bx - ax) * (cy - ay) - (by - ay) * (cx - ax)) / 2.0
+    if not np.isfinite(area) or abs(area) < MIN_HANDED_AREA:
+        return 0.0
+    return 1.0 if area > 0 else -1.0
+
+
+def flip_x(seed: Seed, pitch: Pitch = DEFAULT_PITCH) -> Seed:
+    """The same clicks, at the other end of the pitch. Fixes a seed clicked on the goal
+    the tool was not offering -- the `e` key in the click tool, applied after the fact."""
     return Seed(
         frame=seed.frame,
-        points=[(img, (px, PITCH_WIDTH - py)) for img, (px, py) in seed.points],
-        # A line a*x + b*y + c = 0 reflected in y = W/2 becomes a*x - b*y + (c + b*W).
-        lines=[(img, (a, -b, c + b * PITCH_WIDTH)) for img, (a, b, c) in seed.lines],
+        points=[(img, (pitch.length - px, py)) for img, (px, py) in seed.points],
+        lines=[(img, mirror_line(a, b, c, pitch)) for img, (a, b, c) in seed.lines],
+        image=seed.image,
     )
 
 
-def traced_name(line: tuple[float, float, float]) -> str:
+def flip_y(seed: Seed, pitch: Pitch = DEFAULT_PITCH) -> Seed:
+    """The same clicks, with the pitch y axis reflected. Fixes a swapped far/near."""
+    return Seed(
+        frame=seed.frame,
+        points=[(img, (px, pitch.width - py)) for img, (px, py) in seed.points],
+        # A line a*x + b*y + c = 0 reflected in y = W/2 becomes a*x - b*y + (c + b*W).
+        lines=[(img, (a, -b, c + b * pitch.width)) for img, (a, b, c) in seed.lines],
+    )
+
+
+def traced_name(line: tuple[float, float, float], pitch: Pitch = DEFAULT_PITCH) -> str:
     """What a traced line is called, so a complaint about it can name it."""
-    for name in TRACEABLE:
-        if line == TRACEABLE[name]:
+    named = traceable(pitch)
+    for name, here in named.items():
+        if line == here:
             return name
-        if line == mirrored_line(name):
+        if line == mirrored_line(name, pitch):
             return f"{name} (far end)"
     return f"the line {line}"
 

@@ -158,6 +158,9 @@ class Track:
     kit_sum: np.ndarray | None = None
     kit_seen: int = 0
     tone_sum: np.ndarray | None = None
+    side_sum: np.ndarray | None = None
+    side_seen: int = 0
+    side_weight: float = 0.0
     # Every shirt reading, with the frame it was taken on. The averages above answer "what
     # kit is this"; the sequence answers "is it ONE kit", which is a different question and
     # the only evidence that a track holds two players (D85).
@@ -183,6 +186,27 @@ class Track:
         return self.kit_sum / self.kit_seen
 
     @property
+    def side_mean(self) -> np.ndarray | None:
+        """Every sighting again, with the colourless pixels left out. Which SIDE this is.
+
+        The third question about a shirt, and it wants different evidence from the other
+        two. Associating asks "is this the same player next frame", where a white hoop or a
+        black sleeve is as much a part of what they look like as anything else. Naming the
+        side asks "which of these two kits is it", and only hue carries that -- so the
+        pixels with no hue to carry must not vote (D87).
+
+        Weighted by how BIG the player was, too, which the other two are not. A sighting
+        sixty pixels tall is a handful of shirt against a lot of grass and reads like
+        neither kit; one two hundred tall is the shirt. Counting them equally is how a
+        track gets less certain the more of it there is -- a coach's striker, tracked from
+        the halfway line and then up close, came out surer of his side from the near half
+        alone than from both (D90).
+        """
+        if self.side_sum is None or self.side_weight <= 0:
+            return None
+        return self.side_sum / self.side_weight
+
+    @property
     def tone_mean(self) -> np.ndarray | None:
         """The shirt's average colour in BGR, for anybody who has to DRAW this player.
 
@@ -196,7 +220,12 @@ class Track:
         return self.tone_sum / self.kit_seen
 
     def saw_kit(
-        self, seen: np.ndarray, tone: np.ndarray | None = None, f: int | None = None
+        self,
+        seen: np.ndarray,
+        tone: np.ndarray | None = None,
+        f: int | None = None,
+        side: np.ndarray | None = None,
+        weight: float = 1.0,
     ) -> None:
         # Rolling average: one frame of shadow should not redefine a kit.
         self.color = seen if self.color is None else 0.8 * self.color + 0.2 * seen
@@ -206,6 +235,31 @@ class Track:
             self.kit_log.append((f, seen.astype(np.float64)))
         if tone is not None:
             self.tone_sum = tone if self.tone_sum is None else self.tone_sum + tone
+        if side is not None:
+            scaled = side * weight
+            self.side_sum = scaled if self.side_sum is None else self.side_sum + scaled
+            self.side_seen += 1
+            self.side_weight += weight
+
+    def absorb(self, other: Track) -> None:
+        """Take on another track's shirt readings, where it turns out to be this player.
+
+        Only the kit evidence: the positions are merged separately, and `color` is left
+        alone because it is a rolling average about the NEXT frame's match, which is over
+        by the time anybody knows these two were one man (D90).
+        """
+        self.side_weight += other.side_weight
+        for mine, theirs in (("kit_sum", other.kit_sum), ("side_sum", other.side_sum)):
+            held = getattr(self, mine)
+            if theirs is not None:
+                setattr(self, mine, theirs.copy() if held is None else held + theirs)
+        if other.tone_sum is not None:
+            self.tone_sum = (
+                other.tone_sum.copy() if self.tone_sum is None else self.tone_sum + other.tone_sum
+            )
+        self.kit_seen += other.kit_seen
+        self.side_seen += other.side_seen
+        self.kit_log = sorted(self.kit_log + other.kit_log, key=lambda row: row[0])
 
     def predict(self, dt: float, motion: np.ndarray | None) -> tuple[float, float]:
         """Where they should be after `dt` seconds, in the NEXT frame's pixels.
@@ -232,6 +286,39 @@ def kit(bgr: Any, d: Detection) -> np.ndarray | None:
     if total <= 0:
         return None
     return np.asarray(hist.flatten() / total, dtype=np.float64)
+
+
+# A pixel needs saturation before its hue means anything: white, grey and black each have
+# one and it is noise. Below this it is counted as colourless instead (D87).
+ACHROMATIC = 46
+
+
+def side(bgr: Any, d: Detection) -> np.ndarray | None:
+    """`kit`, with the colourless pixels gathered instead of spread. Which TEAM this is.
+
+    Same hue/value grid, one bin added. A pixel with no saturation has no hue, so it goes
+    to that bin rather than into whichever of the twelve its noise happens to favour --
+    which is what put two of Sporting's hooped shirts on Galatasaray, the white landing
+    beside the red.
+
+    Gathered and not DROPPED, because colourlessness is a kit and not a gap: SNGS-116 is
+    white against red, and a white shirt with its colourless pixels discarded is a
+    signature of trim and skin. One bin says what the shirt is; twelve say what it is not.
+    """
+    from .detect import torso
+
+    crop = torso(bgr, d)
+    if crop is None or crop.size == 0:
+        return None
+    hsv = cv2.cvtColor(crop, cv2.COLOR_BGR2HSV)
+    coloured = (hsv[:, :, 1] >= ACHROMATIC).astype(np.uint8)
+    hist = cv2.calcHist([hsv], [0, 2], coloured, [12, 4], [0, 180, 0, 256])
+    colourless = float(coloured.size - int(coloured.sum()))
+    out = np.concatenate([hist.flatten(), [colourless]])
+    total = float(out.sum())
+    if total <= 0:
+        return None
+    return np.asarray(out / total, dtype=np.float64)
 
 
 def tone(bgr: Any, d: Detection) -> np.ndarray | None:
@@ -307,6 +394,7 @@ def run(
         img = read_frame(f) if obs else None
         colors = [kit(img, o.det) if img is not None else None for o in obs]
         tones = [tone(img, o.det) if img is not None else None for o in obs]
+        sides = [side(img, o.det) if img is not None else None for o in obs]
 
         motion = motions.get(f) if motions is not None else None
 
@@ -351,14 +439,14 @@ def run(
                 track.observations.append(o)
                 seen = colors[oi]
                 if seen is not None:
-                    track.saw_kit(seen, tones[oi], o.f)
+                    track.saw_kit(seen, tones[oi], o.f, sides[oi], o.det.height)
 
         for oi, o in enumerate(obs):
             if oi not in used_o:
                 started = Track(id=next_id, observations=[o])
                 first = colors[oi]
                 if first is not None:
-                    started.saw_kit(first, tones[oi], o.f)
+                    started.saw_kit(first, tones[oi], o.f, sides[oi], o.det.height)
                 live.append(started)
                 next_id += 1
 

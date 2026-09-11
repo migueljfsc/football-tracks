@@ -91,6 +91,16 @@ Each of these cost a day. Where one names a decision, the full account is in
 
 ### Geometry
 
+- **A pitch is 105 x 68 only in elite competition** (D89). The Laws fix the markings and leave
+  the field variable (90-120 by 45-90); UEFA pins it for the Champions League. The size is an
+  INPUT, not an annotation: `seed.landmarks` writes a goal post as `(0, W/2 - 3.66)`, so the
+  wrong W moves every player and nothing downstream can tell -- good residuals, an overlay that
+  matches the paint, and a touchline in the wrong place. `ft pitch <clip> --length --width`
+  before seeding; it lives beside the seed because it is human knowledge, not a derived file.
+- **`calibration.PITCH_LINES` stays on 105 x 68 on purpose**: it names SoccerNet's ground
+  truth, which is their convention. So do the `s = float(PITCH_LENGTH)` conditioning scales,
+  where all that matters is that the pitch is roughly unit size. `refine` still assumes it and
+  is off by default (D35).
 - **A homography assumes z = 0.** Ball height is not recoverable from one camera, so a ball in
   flight lands metres from where it is — 8-26% of SoccerNet's own ball annotations project off
   the pitch for this reason. Aerial play cannot be drawn (D66).
@@ -118,6 +128,23 @@ Each of these cost a day. Where one names a decision, the full account is in
 - **`--carry -1` is uncapped, `--carry 0` is none**, and until D68 the segmenter branch read the
   first as the second — so every segmenter measurement in this repo carried nothing, whatever
   was asked for. Carrying off a learned fit is `--mode hybrid`.
+- **ONE refused motion pair costs every frame after it** (D86). `fill` cannot step over a
+  missing link, so a pair that misses the inlier threshold by ones ends the chain for the rest
+  of the clip -- 356 of 634 frames on the clip that found it. And the refusal is usually about
+  FEATURES, not footage: `QUALITY` is relative to the strongest corner inside the grass mask, so
+  a bright line junction in shot starves the plain grass behind it. Suspect the threshold before
+  believing "a cut, a whip pan, or too little texture".
+- **Coverage and accuracy are separate problems, and fixing the first exposes the second.**
+  Carrying 633 frames from one seed solves every frame and puts 13% of the late ones past a goal
+  line. `frames solved 100%` is not `the players are where they are`.
+- **A pitch is symmetric END TO END, not just side to side** (D88). `orientation` guards
+  far/near; `handedness` guards which goal, and it must be judged ACROSS a clip because it
+  depends on which touchline the camera is on. A seed clicked on the far goal without pressing
+  `e` fits its own clicks perfectly, reports small residuals, draws onto the real markings, and
+  anchors that stretch 105 m away -- it showed up only as `anchors disagree by 111.5 m`.
+  Between them the two checks cover all three of a pitch's symmetries; neither alone does.
+- **`seed.*.json` is a GLOB, so a backup named `seed.as-clicked.json` is a live anchor.** Back a
+  seed up as `seed-<something>.json` or `stale.seed.json`, which do not match.
 - **`ft calibrate <clip>` says where to click the next seed** (D83): the frame furthest from an
   anchor, or -- with two -- the frame where the two chains disagree most, which is drift
   measured rather than counted. It also names the stretches with no homography at all.
@@ -134,6 +161,16 @@ Each of these cost a day. Where one names a decision, the full account is in
 - **Retire stale tracks BEFORE associating.** The gate grows with the gap, so a track that is
   already too old would otherwise match anyway.
 - **Off-pitch people are dropped before tracking, not after** (D27).
+- **Two tracks can be ONE player, live at once** (D90). `stitch` only joins across a gap, so a
+  renumbering the tracker never noticed leaves both ids running and alternating frames -- and
+  they get labelled separately, which is a turnover nobody played. Distance cannot decide it:
+  a striker and his marker run a metre apart all move. The DETECTOR decides -- it finds a
+  player once, so two tracks on one man take turns (0-9% of frames shared) and two tracks on
+  two men each get a box every frame (81-100%).
+- **Which SIDE a track is on is the shirt question that cares how big the player looked**
+  (D90). Sixty pixels of a player is mostly grass and reads like neither kit, so counting
+  sightings equally makes a track LESS certain the more of it there is. `side_mean` is weighted
+  by detection height; `kit` (association) and `tone` (painting) are not.
 - **A raw track count overstates fragmentation.** What matters is how much of a player's time
   a track covers, which is what the importer asks.
 - **A bad camera frame throws every player at once**, so registration failures look like
@@ -159,9 +196,22 @@ Each of these cost a day. Where one names a decision, the full account is in
   difference between declining a quarter of a clip and declining nothing.
 - **`ft score`'s team accuracy counts a declined side as an error**, so read the `teams asserted`
   line instead when anything refuses: right, WRONG, declined.
+- **The margin is SILENCE, and the man on the ball cannot afford it** (D91). Declining an
+  outfielder costs a board one player; declining the carrier costs it the move, because
+  Pitchboard fields nobody it cannot name. A track the ball went through is named on the plain
+  comparison -- own < other -- without `KIT_MARGIN`. Only where the kit agrees: a carrier
+  leaning the other way stays unknown. It renames one track across three coach clips, and the
+  ground-truth clips cannot judge it because they decline nothing.
 - **A track the kit split DECLINES may be cut where its shirt changes** (D85), and only such a
   track: it is thrown away otherwise, so a cut that fails costs nothing and one that works
   returns two players. Asked of every track it needs a threshold that does not exist (D84).
+- **A shirt answers THREE questions and the signature only suits two** (D87). Associating
+  ("same player next frame") wants every pixel; naming the side ("which of these two kits")
+  wants only the ones with a hue, because a colourless pixel's hue is noise and the noise pools
+  -- warm floodlight puts near-white next to red, and it crossed two hooped shirts onto the red
+  team. `side_mean` gathers the colourless pixels into ONE bin. Gathering is not dropping:
+  SNGS-116 is white against red, so a discarded white kit is a signature of trim and skin.
+  Applying the floor to `kit` as well starves the tracker -- 116 went 57 tracks to 79.
 - **The kit signature is for DECIDING and the kit colour is for SHOWING** (D81). A histogram
   tells two sides apart and paints nothing; a mean BGR paints a shirt and cannot tell a red one
   from a blue one when they are averaged together. `tracks.json` carries the second as `kits`,

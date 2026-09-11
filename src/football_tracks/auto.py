@@ -40,7 +40,7 @@ from . import (
     stage3_teams,
 )
 from . import seed as seed_mod
-from .config import PITCH_LENGTH, PITCH_WIDTH
+from .config import DEFAULT_PITCH, Pitch
 from .stage3_teams import assign
 from .tracks import PLAYER_MARGIN, Sample, TeamLabel, Track, on_pitch
 
@@ -136,6 +136,7 @@ BALL_MARGIN_M = 1.5
 # pipeline produces, because a coach reads it as football.
 BALL_ASSERT_CONF = 0.75
 
+
 # Where a restart puts the ball: the four corner arcs and the centre spot.
 #
 # NOT the penalty spots. They are where the detector's favourite false positive lives --
@@ -143,13 +144,15 @@ BALL_ASSERT_CONF = 0.75
 # photographs (see _painted_spots) -- and a penalty is the one restart these clips never
 # contain, so opening the floor there would admit exactly what that filter exists to
 # remove and buy nothing.
-RESTART_SPOTS = (
-    (0.0, 0.0),
-    (0.0, PITCH_WIDTH),
-    (PITCH_LENGTH, 0.0),
-    (PITCH_LENGTH, PITCH_WIDTH),
-    (PITCH_LENGTH / 2, PITCH_WIDTH / 2),
-)
+def restart_spots(pitch: Pitch = DEFAULT_PITCH) -> tuple[tuple[float, float], ...]:
+    return (
+        (0.0, 0.0),
+        (0.0, pitch.width),
+        (pitch.length, 0.0),
+        (pitch.length, pitch.width),
+        (pitch.halfway, pitch.middle),
+    )
+
 
 # How close to one of those a sighting must land, and how many frames it must keep
 # landing there, before the ball is believed at the detector's own floor rather than at
@@ -216,7 +219,7 @@ def usable_seeds(
     fit that could not be made at all is usually two markings labelled with the wrong
     side, which `seed.contradictions` can name.
     """
-    good: list[seed_mod.Seed] = []
+    good: list[tuple[Path, seed_mod.Seed, float]] = []
     bad: list[tuple[Path, str]] = []
     for path in seed_paths(work):
         seeded = seed_mod.read(path)
@@ -264,8 +267,33 @@ def usable_seeds(
                 )
             )
         else:
-            good.append(seeded)
-    return good, bad
+            good.append((path, seeded, seed_mod.handedness(h, img.shape[1], img.shape[0])))
+
+    # The end check, which no single seed can make: a pitch is symmetric end to end, so a
+    # seed clicked on the far goal while the tool offered the near one fits its own clicks
+    # perfectly and anchors that stretch of the clip 105 m away. What it cannot do is agree
+    # with the other seeds about which way round the ground plane is -- the camera never
+    # gets underneath the pitch, so that is one answer for the whole clip (D88).
+    #
+    # The primary is the reference because it is the one clicked without `--check`, and a
+    # disagreeing extra is refused rather than flipped: `ft seed` flips at the point of
+    # clicking, where a person is present to read the message. Reinterpreting a file this
+    # far downstream would be the silent kind of fix this whole guard exists to prevent.
+    opinionated = [row for row in good if row[2]]
+    if len(opinionated) > 1:
+        reference, against = opinionated[0][2], opinionated[0][0].name
+        wrong = {path for path, _seeded, hand in opinionated if hand != reference}
+        for path in sorted(wrong):
+            bad.append(
+                (
+                    path,
+                    f"it sees the pitch the other way round from {against}, which means these"
+                    " clicks are on the OTHER GOAL - re-seed this frame and press 'e' for the"
+                    " far end, or move this file out of the way",
+                )
+            )
+        good = [row for row in good if row[0] not in wrong]
+    return [seeded for _path, seeded, _hand in good], bad
 
 
 def from_seeds(
@@ -590,11 +618,11 @@ def homographies(
     ).homographies
 
 
-def _restart_cell(cell: tuple[int, int]) -> bool:
+def _restart_cell(cell: tuple[int, int], pitch: Pitch = DEFAULT_PITCH) -> bool:
     """Whether a square metre holds a restart spot, within the radius one is believed at."""
     x, y = (cell[0] + 0.5) * STATIC_BIN_M, (cell[1] + 0.5) * STATIC_BIN_M
     reach = RESTART_RADIUS_M + STATIC_BIN_M
-    return any(math.hypot(x - sx, y - sy) <= reach for sx, sy in RESTART_SPOTS)
+    return any(math.hypot(x - sx, y - sy) <= reach for sx, sy in restart_spots(pitch))
 
 
 def _bin_of(x: float, y: float) -> tuple[int, int]:
@@ -641,9 +669,11 @@ def _painted_spots(
     }
 
 
-def _ball_near_pitch(x: float, y: float, margin_m: float = BALL_MARGIN_M) -> bool:
+def _ball_near_pitch(
+    x: float, y: float, margin_m: float = BALL_MARGIN_M, pitch: Pitch = DEFAULT_PITCH
+) -> bool:
     """`tracks.on_pitch`, but with a margin in METRES rather than a share of the pitch."""
-    return -margin_m <= x <= PITCH_LENGTH + margin_m and -margin_m <= y <= PITCH_WIDTH + margin_m
+    return -margin_m <= x <= pitch.length + margin_m and -margin_m <= y <= pitch.width + margin_m
 
 
 def _is_static(b: detect.Sighting, h: Any, static: set[tuple[int, int]]) -> bool:
@@ -651,7 +681,12 @@ def _is_static(b: detect.Sighting, h: Any, static: set[tuple[int, int]]) -> bool
     return _bin_of(x, y) in static
 
 
-def _smoothed(best: dict[int, tuple[float, float]], frames: list[int], smooth: int) -> list[Sample]:
+def _smoothed(
+    best: dict[int, tuple[float, float]],
+    frames: list[int],
+    smooth: int,
+    pitch: Pitch = DEFAULT_PITCH,
+) -> list[Sample]:
     """Per-frame positions, median-filtered over their neighbours."""
     out: list[Sample] = []
     for f in frames:
@@ -668,7 +703,7 @@ def _smoothed(best: dict[int, tuple[float, float]], frames: list[int], smooth: i
         # ball legitimately sits on the line -- SoccerNet's own annotation of SNGS-116's
         # corner projects to (105.2, -0.4). Still bounded, because a ball in flight
         # projects anywhere: that same clip has one at (135.5, -16.6).
-        if _ball_near_pitch(x, y):
+        if _ball_near_pitch(x, y, pitch=pitch):
             out.append(Sample(f=f, x=x, y=y))
     return out
 
@@ -679,6 +714,7 @@ def _restart_balls(
     static: set[tuple[int, int]],
     emitted: set[int],
     smooth: int,
+    pitch: Pitch = DEFAULT_PITCH,
 ) -> dict[int, tuple[float, float]]:
     """The ball sitting still on a restart spot, believed without the confidence gate.
 
@@ -708,7 +744,7 @@ def _restart_balls(
             if _is_static(b, h, static):
                 continue
             x, y = calibration.to_pitch(h, b.x, b.y)
-            d = min(math.hypot(x - sx, y - sy) for sx, sy in RESTART_SPOTS)
+            d = min(math.hypot(x - sx, y - sy) for sx, sy in restart_spots(pitch))
             if d <= RESTART_RADIUS_M:
                 near.append((d, x, y))
         if near:
@@ -741,6 +777,7 @@ def ball_path(
     homs: dict[int, Any],
     frames: list[int],
     smooth: int = BALL_SMOOTH_FRAMES,
+    pitch: Pitch = DEFAULT_PITCH,
 ) -> list[Sample]:
     """Where the ball is, per frame, in pitch metres.
 
@@ -799,11 +836,11 @@ def ball_path(
 
     # The confident pass first, then the one that knows where a restart puts the ball.
     # Second because it defers to it: it fills the stretches this leaves empty.
-    first = _smoothed(best, frames, smooth)
-    extra = _restart_balls(per_frame, homs, static, {s.f for s in first}, smooth)
+    first = _smoothed(best, frames, smooth, pitch)
+    extra = _restart_balls(per_frame, homs, static, {s.f for s in first}, smooth, pitch)
     if not extra:
         return first
-    return _smoothed({**best, **extra}, frames, smooth)
+    return _smoothed({**best, **extra}, frames, smooth, pitch)
 
 
 def build(
@@ -816,6 +853,7 @@ def build(
     motions: dict[int, Any] | None = None,
     balls: list[detect.Sighting] | None = None,
     stitch: bool = True,
+    pitch: Pitch = DEFAULT_PITCH,
 ) -> Result:
     """Detections plus a camera model -> tracks in pitch metres.
 
@@ -846,7 +884,7 @@ def build(
         h = homs.get(d.f)
         if h is None:
             continue
-        if not on_pitch(*calibration.to_pitch(h, *d.foot), PLAYER_MARGIN):
+        if not on_pitch(*calibration.to_pitch(h, *d.foot), PLAYER_MARGIN, pitch):
             dropped += 1
             continue
         observations.setdefault(d.f, []).append(stage2_track.Observation.of(d))
@@ -861,12 +899,23 @@ def build(
             if h is None:
                 continue
             x, y = calibration.to_pitch(h, o.x, o.y)
-            if not on_pitch(x, y):
+            if not on_pitch(x, y, pitch=pitch):
                 dropped += 1
                 continue
             samples.append(Sample(f=o.f, x=x, y=y, conf=o.det.score))
         if samples:
             positions[t.id] = samples
+
+    # Before stitching, because a duplicate is not a fragment: it occupies the slot the
+    # real continuation wants, and `stitch` refuses anything that overlaps in time anyway.
+    # The shirt readings move with it, so the surviving track is named on both halves'
+    # evidence rather than on whichever half happened to be longer (D90).
+    held = {t.id: t for t in raw}
+    same = stage2_stitch.duplicates(positions, fps)
+    for gone, keep in same.items():
+        if gone in held and keep in held:
+            held[keep].absorb(held[gone])
+    positions = stage2_stitch.merge(positions, same)
 
     if stitch:
         # After registration, because whether two fragments are one player is a question
@@ -876,11 +925,20 @@ def build(
 
     mean_x = {tid: float(np.mean([s.x for s in ss])) for tid, ss in positions.items()}
     kept = [t for t in raw if t.id in positions]
-    teams = assign(kept, mean_x, {tid: [s.f for s in ss] for tid, ss in positions.items()})
+    # Computed before the sides are named, because who had the ball is one of the things
+    # that decides them (D91).
+    ball = ball_path(balls or [], homs, frames, pitch=pitch)
+    teams = assign(
+        kept,
+        mean_x,
+        {tid: [s.f for s in ss] for tid, ss in positions.items()},
+        pitch,
+        on_the_ball(ball, positions, fps),
+    )
     positions, teams = _split_two_shirts(kept, positions, teams)
 
     return Result(
-        ball=ball_path(balls or [], homs, frames),
+        ball=ball,
         kits=stage3_teams.kit_colours(kept, teams),
         tracks=[
             Track(id=tid, team=teams.get(tid, "unknown"), number=None, samples=ss)
@@ -892,6 +950,39 @@ def build(
         dropped_off_pitch=dropped,
         unsolved_frames=sum(1 for f in frames if homs.get(f) is None),
     )
+
+
+# How close a player must be to the ball to be holding it, in metres, and for how long
+# before the side he is on stops being a detail. Pitchboard asks the same two questions of
+# the same file with the same answers (its CARRIER_RADIUS_M and MIN_ON_THE_BALL).
+CARRIER_RADIUS_M = 2.0
+ON_THE_BALL_S = 0.5
+
+
+def on_the_ball(ball: list[Sample], positions: dict[int, list[Sample]], fps: float) -> set[int]:
+    """The tracks the ball went through, by id.
+
+    Nearest player to the ball and within reach of it, counted over the frames the ball
+    was actually located. Not a claim that they controlled it -- only that the move went
+    through them, which is what makes their side worth more than the usual caution.
+    """
+    if not ball:
+        return set()
+    at: dict[int, dict[int, Sample]] = {tid: {s.f: s for s in ss} for tid, ss in positions.items()}
+    held: dict[int, int] = {}
+    for b in ball:
+        best, near = None, CARRIER_RADIUS_M
+        for tid, byf in at.items():
+            s = byf.get(b.f)
+            if s is None:
+                continue
+            d = float(np.hypot(s.x - b.x, s.y - b.y))
+            if d < near:
+                best, near = tid, d
+        if best is not None:
+            held[best] = held.get(best, 0) + 1
+    floor = max(1, round(ON_THE_BALL_S * fps))
+    return {tid for tid, n in held.items() if n >= floor}
 
 
 def _split_two_shirts(

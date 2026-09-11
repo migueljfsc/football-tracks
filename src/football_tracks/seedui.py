@@ -16,7 +16,16 @@ import cv2
 import numpy as np
 
 from . import pitch as pitch_mod
-from .seed import EXTENTS, LANDMARKS, TRACEABLE, Seed, mirrored, mirrored_extent, mirrored_line
+from .config import DEFAULT_PITCH, Pitch
+from .seed import (
+    Seed,
+    extents,
+    landmarks,
+    mirrored,
+    mirrored_extent,
+    mirrored_line,
+    traceable,
+)
 
 WINDOW = "seed - click a landmark, then pick its name"
 MARK = (60, 240, 90)
@@ -37,14 +46,16 @@ TEXT_PANEL_OPACITY = 0.6
 DIAGRAM_MIN_SCALE = 4.0
 
 
-def _diagram(name: str, far_goal: bool, width: int, trace: bool = False) -> Any:
+def _diagram(
+    name: str, far_goal: bool, width: int, trace: bool = False, pitch: Pitch = DEFAULT_PITCH
+) -> Any:
     scale = max(DIAGRAM_MIN_SCALE, width / 420)
-    img = pitch_mod.draw(scale, 2.0)
+    img = pitch_mod.draw(scale, 2.0, pitch)
     if trace:
         # The marking's real extent, not the infinite line the solver stores. Drawing the
         # infinite one claims the six-yard box runs the length of the pitch, which points
         # the coach at grass rather than at a line.
-        p0, p1 = mirrored_extent(name) if far_goal else EXTENTS[name]
+        p0, p1 = mirrored_extent(name, pitch) if far_goal else extents(pitch)[name]
         cv2.line(
             img,
             pitch_mod.to_px(*p0, scale, 2.0),
@@ -65,7 +76,7 @@ def _diagram(name: str, far_goal: bool, width: int, trace: bool = False) -> Any:
         )
         return img
 
-    x, y = mirrored(name) if far_goal else LANDMARKS[name]
+    x, y = mirrored(name, pitch) if far_goal else landmarks(pitch)[name]
     px, py = pitch_mod.to_px(x, y, scale, 2.0)
     r = max(10, round(scale * 2.2))
     cv2.circle(img, (px, py), r, TARGET, max(2, r // 4), cv2.LINE_AA)
@@ -183,7 +194,7 @@ def _draw(
     return img
 
 
-def collect(frame: Any, frame_index: int) -> Seed | None:
+def collect(frame: Any, frame_index: int, pitch: Pitch = DEFAULT_PITCH) -> Seed | None:
     """Run the window until saved or abandoned. Returns None if abandoned.
 
     Two modes, because they suit different footage. POINT mode wants an exact landmark,
@@ -191,8 +202,8 @@ def collect(frame: Any, frame_index: int) -> Seed | None:
     anywhere along a named line, which is what a tight goalmouth shot actually offers -
     long clear markings whose corners are off screen.
     """
-    names = list(LANDMARKS)
-    line_names = list(TRACEABLE)
+    names = list(landmarks(pitch))
+    line_names = list(traceable(pitch))
     state: dict[str, Any] = {"i": 0, "far": False, "trace": False, "corner": 0, "rect": None}
     points: list[Any] = []
     traced: list[Any] = []
@@ -208,12 +219,12 @@ def collect(frame: Any, frame_index: int) -> Seed | None:
             return
         if state["trace"]:
             name = line_names[state["i"]]
-            line = mirrored_line(name) if state["far"] else TRACEABLE[name]
+            line = mirrored_line(name, pitch) if state["far"] else traceable(pitch)[name]
             traced.append(((float(x), float(y)), line))
             return  # stay on the same line - tracing wants several clicks
         name = names[state["i"]]
-        pitch = mirrored(name) if state["far"] else LANDMARKS[name]
-        points.append(((float(x), float(y)), pitch))
+        spot = mirrored(name, pitch) if state["far"] else landmarks(pitch)[name]
+        points.append(((float(x), float(y)), spot))
         state["i"] = min(state["i"] + 1, len(names) - 1)
 
     # One panel, measured once: every diagram is the same size whatever it draws, so the

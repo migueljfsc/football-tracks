@@ -153,3 +153,52 @@ def test_a_run_and_a_shot_are_one_player_at_a_high_frame_rate() -> None:
     out = stage2_stitch.stitch({17: runner, 21: shooter}, {}, fps=fps)
     assert len(out) == 1, "one player who ran and then shot, not two"
     assert len(next(iter(out.values()))) == len(runner) + len(shooter)
+
+
+def _every_other(start: int, n: int, x: float, y: float, step: float, odd: bool) -> list[Sample]:
+    """Half a player's frames — what one of two tracks taking turns on him looks like."""
+    return [
+        Sample(f=start + i, x=x + i * step, y=y, conf=0.9) for i in range(n) if (i % 2 == 1) == odd
+    ]
+
+
+def test_two_tracks_taking_turns_on_one_player_are_one_player() -> None:
+    # The tracker renumbers a player without ever losing him, so both ids stay live and
+    # alternate frames. `stitch` cannot see it: it asks whether one fragment CONTINUES
+    # another and refuses anything overlapping (D90).
+    positions = {
+        1: _every_other(100, 60, 40.0, 30.0, 0.1, odd=False),
+        2: _every_other(100, 60, 40.3, 30.2, 0.1, odd=True),
+    }
+    assert stage2_stitch.duplicates(positions, 25.0) == {2: 1}
+
+
+def test_a_striker_and_the_man_marking_him_are_two_players() -> None:
+    # The case distance alone cannot separate, and the reason the frame test exists: these
+    # two run a metre apart for the whole move, and merging them destroys two players.
+    # The detector finds each of them every frame, which is what says there are two.
+    both = {
+        1: _frag(100, 60, 40.0, 30.0, 0.1),
+        2: _frag(100, 60, 40.0, 31.2, 0.1),
+    }
+    assert stage2_stitch.duplicates(both, 25.0) == {}
+
+
+def test_tracks_far_apart_are_left_alone_however_they_interleave() -> None:
+    positions = {
+        1: _every_other(100, 60, 40.0, 30.0, 0.1, odd=False),
+        2: _every_other(100, 60, 40.0, 50.0, 0.1, odd=True),
+    }
+    assert stage2_stitch.duplicates(positions, 25.0) == {}
+
+
+def test_merging_keeps_one_sample_a_frame_and_fills_the_gaps() -> None:
+    positions = {
+        1: _every_other(100, 60, 40.0, 30.0, 0.1, odd=False),
+        2: _every_other(100, 60, 40.3, 30.2, 0.1, odd=True),
+    }
+    merged = stage2_stitch.merge(positions, {2: 1})
+    assert 2 not in merged
+    frames = [s.f for s in merged[1]]
+    assert frames == sorted(frames)
+    assert len(frames) == len(set(frames)) == 60

@@ -18,7 +18,7 @@ from . import render as render_mod
 from . import score as score_mod
 from . import seed as seed_mod
 from . import video as video_mod
-from .config import CALIB_DATA, CLIPS, work_dir
+from .config import CALIB_DATA, CLIPS, Pitch, read_pitch, work_dir, write_pitch
 
 app = typer.Typer(add_completion=False, help="Broadcast clip -> player tracks in pitch metres.")
 
@@ -720,6 +720,7 @@ def _pipeline(
 
     c = soccernet.Clip(name=clip, root=CLIPS / clip)
     out = work_dir(Path(clip))
+    pitch = read_pitch(out)
     dets_path = out / "detections.json"
     if not dets_path.exists():
         raise typer.BadParameter(f"no {dets_path} - run `ft detect {clip}` first")
@@ -786,6 +787,7 @@ def _pipeline(
         motions=motions,
         balls=balls,
         stitch=stitch,
+        pitch=pitch,
     )
 
     path = tracks.write(
@@ -798,6 +800,7 @@ def _pipeline(
         ball=result.ball,
         width=_size(CLIPS / clip, labels)[0],
         height=_size(CLIPS / clip, labels)[1],
+        pitch=pitch,
         interval_s=interval_s,
         kits=result.kits,
     )
@@ -920,6 +923,71 @@ def frames(
 
 
 @app.command()
+@app.command()
+def pitch(
+    clip: str,
+    length: float = typer.Option(0.0, help="Goal line to goal line, in metres."),
+    width: float = typer.Option(0.0, help="Touchline to touchline, in metres."),
+) -> None:
+    """How big this clip's pitch really is.
+
+    The Laws fix the markings and leave the field variable -- 90 to 120 m long, 45 to 90
+    wide -- and only elite competition pins it, so the 105 x 68 default is right for a
+    European night and wrong for most football. It matters because the seed's landmarks
+    are written in it: click a goal post as `(0, W/2 - 3.66)` with the wrong W and every
+    player lands a metre or two off across the pitch, with good residuals and a touchline
+    that is not where the touchline is (D89).
+
+    Set it BEFORE seeding. A seed already clicked was written against whatever was in
+    force then, and this does not go back and change it.
+    """
+    work = work_dir(Path(clip))
+    if not length and not width:
+        here = read_pitch(work)
+        typer.echo(f"{clip}: {here.length:g} x {here.width:g} m")
+        return
+    here = read_pitch(work)
+    want = Pitch(length=length or here.length, width=width or here.width)
+    if not (90.0 <= want.length <= 120.0 and 45.0 <= want.width <= 90.0):
+        raise typer.BadParameter(
+            f"{want.length:g} x {want.width:g} m is not a football pitch -"
+            " the Laws allow 90-120 by 45-90"
+        )
+    if auto_mod.seed_paths(work):
+        typer.echo(
+            "WARNING: this clip is already seeded, and those clicks were written against"
+            f" {here.length:g} x {here.width:g} m. Re-seed, or they describe a different pitch."
+        )
+    typer.echo(f"wrote {write_pitch(work, want)}")
+
+
+def name_of(frame: int, check: bool) -> str:
+    """What a seed for this frame is called: the primary, or an extra anchor."""
+    return f"seed.{frame}.json" if check else "seed.json"
+
+
+def _settled_handedness(work: Path, frames_dir: Path, *, skip: str) -> float:
+    """Which way round this clip's existing seeds see the pitch, if they agree.
+
+    Zero when there are none, when none has an opinion, or when they disagree among
+    themselves -- in the last case there is already a mislabelled seed in the folder and
+    guessing which one from a new arrival would be picking a side.
+    """
+    seen = set()
+    for path in auto_mod.seed_paths(work):
+        if path.name == skip:
+            continue
+        seeded = seed_mod.read(path)
+        img = video_mod.read_frame(frames_dir, seeded.frame)
+        h = seed_mod.homography(seeded)
+        if img is None or h is None:
+            continue
+        hand = seed_mod.handedness(h, img.shape[1], img.shape[0])
+        if hand:
+            seen.add(hand)
+    return seen.pop() if len(seen) == 1 else 0.0
+
+
 def seed(
     clip: Annotated[str, typer.Argument(help="A clip in data/clips/.")],
     frame: Annotated[int, typer.Option(help="Which frame to seed.")] = 1,
@@ -946,7 +1014,8 @@ def seed(
     if img is None:
         raise typer.BadParameter(f"no frame {frame} in {root / 'img1'}")
 
-    got = seedui.collect(img, frame)
+    pitch = read_pitch(work_dir(Path(clip)))
+    got = seedui.collect(img, frame, pitch)
     if got is None:
         typer.echo("abandoned; nothing written")
         raise typer.Exit(1)
@@ -959,12 +1028,30 @@ def seed(
     agreement = seed_mod.orientation(got)
     if agreement < -seed_mod.ORIENTATION_CONFIDENT:
         typer.echo("far and near look swapped - flipping the pitch y axis to match the camera")
-        got = seed_mod.flip_y(got)
+        got = seed_mod.flip_y(got, pitch)
     elif agreement < seed_mod.ORIENTATION_CONFIDENT:
         typer.echo(
             "WARNING: cannot tell which side the camera is on from these points."
             " If the board comes out mirrored, far and near are swapped."
         )
+
+    # And the END check, which needs the clip rather than the clicks: a pitch is
+    # symmetric end to end as well as side to side, so a seed clicked on the far goal
+    # while the tool offers the near one fits its own evidence perfectly and anchors the
+    # play 105 m away. The camera cannot get under the pitch, so every seed of one clip
+    # must see the ground plane the same way round (D88).
+    fitted = seed_mod.homography(got)
+    if fitted is not None:
+        mine = seed_mod.handedness(fitted, img.shape[1], img.shape[0])
+        theirs = _settled_handedness(
+            work_dir(Path(clip)), root / "img1", skip=name_of(frame, check)
+        )
+        if mine and theirs and mine != theirs:
+            typer.echo(
+                "the goal in shot is the other one - flipping the pitch end to match the"
+                " seeds already clicked for this clip"
+            )
+            got = seed_mod.flip_x(got, pitch)
 
     clash = seed_mod.contradictions(got)
     for a, b in clash:
@@ -980,8 +1067,7 @@ def seed(
             " down nothing across them - the exact points are carrying the fit."
         )
 
-    name = f"seed.{frame}.json" if check else "seed.json"
-    path = seed_mod.write(work_dir(Path(clip)) / name, got)
+    path = seed_mod.write(work_dir(Path(clip)) / name_of(frame, check), got)
     h = seed_mod.homography(got)
     typer.echo(
         f"{len(got.points)} points + {len(got.lines)} traced"
@@ -1024,7 +1110,7 @@ def _weakest(clip: str, chain: stage1_propagate.Chain | None, homs: dict[int, An
         span = f"{start}-{end}" if end > start else f"{start}"
         lines.append(
             f"no homography     {span} ({end - start + 1} frames)"
-            " - a cut, a whip pan, or no grass in shot"
+            " - a cut, a whip pan, or too little texture to track"
         )
     if chain is None or not chain.carried_from:
         return lines

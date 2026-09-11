@@ -41,7 +41,11 @@ H = npt.NDArray[np.float64]
 # feeding them in is cheaper and leaves the inlier count meaning what it says.
 MIN_INLIERS = 25
 MAX_CORNERS = 800
-QUALITY = 0.01
+# Relative to the strongest corner inside the mask, so it sets how many features a frame
+# offers by whatever bright thing happens to be in shot rather than by how much grass
+# there is. RANSAC decides and MIN_INLIERS guards, so the bar for a CANDIDATE is low
+# (D86) -- and the cap above, not this, is what limits the count on an ordinary frame.
+QUALITY = 0.003
 MIN_DISTANCE = 8
 
 # Erosion pulls the mask off the boundary between grass and everything else, where a
@@ -69,6 +73,10 @@ def between(prev_bgr: MatLike, next_bgr: MatLike) -> H | None:
     None when the ground plane could not be tracked - a cut, a whip pan, or a frame
     that is mostly players. A refusal here is a gap in the chain, which is correct:
     guessing would put every later frame on a different pitch.
+
+    It is also the most expensive refusal in the pipeline. `fill` cannot step over a
+    missing link, so ONE refused pair ends the chain for every frame after it, however
+    well the next pair tracks (D86).
     """
     prev_gray = cv2.cvtColor(prev_bgr, cv2.COLOR_BGR2GRAY)
     next_gray = cv2.cvtColor(next_bgr, cv2.COLOR_BGR2GRAY)

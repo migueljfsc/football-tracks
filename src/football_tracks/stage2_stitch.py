@@ -173,6 +173,100 @@ def _velocity(samples: list[Sample], fps: float, *, at_end: bool) -> tuple[float
     return (vx, vy)
 
 
+# How close two tracks must sit, in metres, before they might be one player seen twice,
+# and over how many samples.
+SAME_PLAYER_M = 1.5
+MIN_SHARED_SAMPLES = 5
+
+# And the test that actually decides it: what share of the overlap both tracks have a
+# sample on.
+#
+# Distance alone cannot separate a duplicate from a striker and the man marking him -- they
+# run a metre apart for as long as the move lasts, and merging them destroys two players to
+# fix nothing. What separates them is the DETECTOR: it finds a player once, so two tracks
+# on one man have to take turns, while two tracks on two men each get a box every frame.
+# Measured on the coach's clip the split is unmissable -- the duplicates share 0%, 5% and
+# 9% of their frames, the real pairs 81% and 100% (D90).
+TOGETHER_MAX = 0.25
+
+
+def _at(samples: list[Sample], f: int) -> tuple[float, float] | None:
+    """Where a track was at a frame, interpolated INSIDE its span and nowhere else."""
+    if f < samples[0].f or f > samples[-1].f:
+        return None
+    before = [s for s in samples if s.f <= f]
+    after = [s for s in samples if s.f >= f]
+    lo, hi = before[-1], after[0]
+    if hi.f == lo.f:
+        return (lo.x, lo.y)
+    r = (f - lo.f) / (hi.f - lo.f)
+    return (lo.x + r * (hi.x - lo.x), lo.y + r * (hi.y - lo.y))
+
+
+def duplicates(positions: dict[int, list[Sample]], fps: float) -> dict[int, int]:
+    """Absorbed track id -> the track it is a duplicate of.
+
+    The case `stitch` cannot see, because it asks whether one fragment CONTINUES another
+    and refuses anything that overlaps in time (`gap <= 0`). Two tracks running alongside
+    each other a metre apart are not a continuation and not two players either; they are
+    one man the tracker renumbered without ever losing.
+
+    It matters more than a spare track. The two halves are labelled separately, so a
+    player who is home for the first half of a clip is away for the second: 30 of these
+    pairs across the benchmark disagree about the SIDE, which reaches the board as a
+    turnover that never happened. And a coach found it the other way round -- his striker
+    was tracked from the halfway line as one id and the run was thrown away as `unknown`,
+    while a second id starting 190 frames later was fielded and held, parking him offside
+    for nine seconds.
+    """
+    ids = sorted(positions)
+    same: dict[int, int] = {}
+    for i, a in enumerate(ids):
+        for b in ids[i + 1 :]:
+            here, there = positions[a], positions[b]
+            if not here or not there:
+                continue
+            lo = max(here[0].f, there[0].f)
+            hi = min(here[-1].f, there[-1].f)
+            if hi <= lo:
+                continue
+            apart = [
+                float(np.hypot(s.x - o[0], s.y - o[1]))
+                for s in here
+                if lo <= s.f <= hi
+                for o in [_at(there, s.f)]
+                if o is not None
+            ]
+            if len(apart) < MIN_SHARED_SAMPLES:
+                continue
+            mine = {s.f for s in here if lo <= s.f <= hi}
+            theirs = {s.f for s in there if lo <= s.f <= hi}
+            together = len(mine & theirs) / max(1, len(mine | theirs))
+            if together > TOGETHER_MAX:
+                continue  # both had a detection of their own: two players, not one twice
+            if float(np.median(apart)) < SAME_PLAYER_M:
+                # The longer track survives, so the shorter one's samples fill its gaps
+                # rather than the other way round.
+                keep, gone = (a, b) if len(here) >= len(there) else (b, a)
+                while keep in same:
+                    keep = same[keep]
+                if keep != gone and gone not in same:
+                    same[gone] = keep
+    return same
+
+
+def merge(positions: dict[int, list[Sample]], same: dict[int, int]) -> dict[int, list[Sample]]:
+    """Fold every duplicate into the track it duplicates, keeping one sample per frame."""
+    out = {i: list(ss) for i, ss in positions.items()}
+    for gone, keep in same.items():
+        if gone not in out or keep not in out:
+            continue
+        held = {s.f for s in out[keep]}
+        out[keep] = sorted(out[keep] + [s for s in out[gone] if s.f not in held], key=lambda s: s.f)
+        del out[gone]
+    return out
+
+
 def _cost(a: Fragment, b: Fragment, fps: float) -> float | None:
     """What it costs to call `b` the continuation of `a`, or None if it cannot be.
 

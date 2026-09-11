@@ -462,3 +462,90 @@ recall, precision, purity and team split.
 
 What it does not do is prevent the switch. The tracker still walked from one player to the
 other; this only reads the evidence it left behind.
+
+**D87 — a shirt answers three questions, and only one of them is about hue.** D81 split
+DECIDING from SHOWING: a histogram tells two kits apart and paints nothing, a mean BGR
+paints a shirt and cannot tell red from blue. The coach's Sporting–Galatasaray clip found
+a third question hiding inside the first.
+
+Two of Sporting's hooped shirts came out on Galatasaray. Not marginally: the leave-one-out
+test was SURER of them than of two genuinely red tracks (0.58 and 0.74 against 0.69 and
+0.67), so no threshold reaches this. The split itself had them, and it had them because
+their signatures really did sit nearer the red centre:
+
+    hue bin          h0     h1     h2    ...    h9    h10    h11
+    hoops, near     .155   .351   .354         .024   .034   .046
+    red             .440   .125   .097         .000   .037   .301
+    t13             .150   .301   .117         .089   .239   .104
+    t14             .220   .271   .103         .047   .224   .135
+
+t13 and t14 keep the hoops' green peak at h1 and carry 40% of their mass at h9-h11, where
+the near-side hooped tracks carry 10%. That mass is their WHITE. A pixel with no
+saturation still has a hue and it is noise, and the noise is not evenly spread -- a warm
+floodlight lands it at the pink end, next door to red. Far-side players are small and
+blurred, so proportionally more of their crop is that noise, which is why this hit the two
+deepest players and nobody else.
+
+So the side is now read from `side_mean`: the same hue/value grid with the colourless
+pixels gathered into one bin instead of spread across twelve.
+
+**Gathered, not dropped**, and the difference is a whole clip. Discarding them scored
+better on the clip that found the bug and collapsed on SNGS-116, which is WHITE against
+red -- a white shirt with its colourless pixels thrown away is a signature of trim and
+skin. Colourlessness is a kit, not a gap. One bin says what the shirt is; twelve say what
+it is not.
+
+    teams               147  77% -> 89%      116  78% -> 77%      121  86% -> 83%
+    asserted right           2919 -> 3402        5410 -> 5328        6564 -> 6395
+    asserted WRONG            366 ->  301        1185 -> 1628        1097 -> 1266
+    declined                  522 ->  104         361 ->    0           0 ->    0
+    the coach's clip    11 of 13 right, 2 WRONG  ->  14 of 14 right
+
+And the tracker does not see it. Associating asks a different question -- is this the same
+player next frame -- and there a white hoop or a black sleeve is as much a part of what
+somebody looks like as anything else. Applied to `kit` as well, the floor starved the
+tracker and fragmented it: SNGS-116 went 57 tracks to 79 and its purity 74.9% to 69.4%,
+SNGS-121 38 to 58 and 73.7% to 63.0%. Kept to the side question, recall, precision, error
+and purity are identical to the digit on all three clips.
+
+The sides also came out named the way a coach names them, which is a consequence rather
+than a goal: with the two deep defenders back among their own team, Sporting's mean x
+includes its own keeper and the board calls them home.
+
+**D91 — the margin is silence, and silence costs more for the man on the ball.** D72 declines
+a side the kit will not settle, because a wrong colour reaches the board as a pass between
+the wrong shirts. That price is right for the twenty-one players who are not on the ball and
+wrong for the one who is, and the difference is not a matter of degree: Pitchboard fields
+nobody it cannot name, so declining an outfielder leaves a board with ten men, while
+declining the CARRIER leaves the move undrawn.
+
+The coach watched it happen. His striker was tracked from the halfway line through the run
+that won a penalty, carried the ball for frames 506-573, and came out `unknown` at own 0.270
+against a bar of 0.251 -- clustered with the right side, 8% short of the confidence to say
+so. What the board drew in his place was a player first seen forty frames from the end, held
+at the position he would eventually reach, standing offside for nine seconds of a thirteen
+second clip.
+
+So a track the ball went through is named on the plain comparison, without the margin.
+**Still only where the kit agrees**: nearer its own side than the other is the whole claim,
+and a carrier that fails it stays unknown. The exemption is one track, not a looser
+threshold -- naming a carrier against his own kit is exactly the invented turnover D72
+exists to prevent, and this does not do it.
+
+It is a surgical rule and the measurement says so. Across the three coach clips it renames
+ONE track:
+
+    Untitled      ball through 4 tracks   declined 4 -> 3   rescued t23 (the striker)
+    nottingham    ball through 3 tracks   declined 6 -> 6   rescued nothing
+    geny_rioave   ball never located      declined 0 -> 0   rescued nothing
+
+The benchmark cannot judge it, and that is worth saying rather than hiding behind: after
+D90's weighting, SNGS-147, SNGS-116 and SNGS-121 decline NOTHING, so there is nothing for
+this to rescue and the numbers are identical to the digit. It is the same shape as D86 --
+the clips with ground truth are the harm test, and the harm they can show is zero because
+the condition never arises on them. What validates the rule is that it fires nine times out
+of ten on nobody, and the tenth is a striker the coach could see.
+
+The board now draws the move he described: `keeper -> midfielder -> striker -> a Galatasaray
+defender after the foul`, with the striker first drawn at (47.6, 43.2), beside the man who
+receives rather than twenty-five metres past him.

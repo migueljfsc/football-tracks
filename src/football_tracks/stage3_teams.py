@@ -23,7 +23,7 @@ import cv2
 import numpy as np
 import numpy.typing as npt
 
-from .config import PITCH_LENGTH
+from .config import DEFAULT_PITCH, Pitch
 from .stage2_track import Track
 from .tracks import TeamLabel
 
@@ -341,11 +341,15 @@ def assign(
     tracks: list[Track],
     mean_x: dict[int, float],
     frames: dict[int, list[int]] | None = None,
+    pitch: Pitch = DEFAULT_PITCH,
+    carried: set[int] | None = None,
 ) -> dict[int, TeamLabel]:
     """Track id -> team label.
 
-    Clustered on `kit_mean` and not `color`: the tracker's rolling average is about the
-    next frame's match, and which team a track is on is about the whole track.
+    Clustered on `side_mean` and not `color`: the tracker's rolling average is about the
+    next frame's match, and which team a track is on is about the whole track. And on the
+    colourless pixels left out rather than the whole crop (D87), because a hue read off
+    white is noise and noise pools in whichever bin it favours.
 
     `mean_x` is each track's average position along the pitch, in metres, which is what
     decides which cluster is which. Tracks with no colour signature at all come back
@@ -358,11 +362,11 @@ def assign(
     split from a real one. It is optional only so a caller with nothing but tracks still
     gets a labelling; the observations are a poorer answer once fragments are stitched.
     """
-    usable = [t for t in tracks if t.kit_mean is not None and t.id in mean_x]
+    usable = [t for t in tracks if t.side_mean is not None and t.id in mean_x]
     if len(usable) < 2:
         return {t.id: "unknown" for t in tracks}
 
-    points = np.array([t.kit_mean for t in usable], dtype=np.float64)
+    points = np.array([t.side_mean for t in usable], dtype=np.float64)
     first = split_kits(points)
 
     # A kit far from both teams, standing near a goal, is that goal's keeper. Both
@@ -372,7 +376,7 @@ def assign(
     odd = oddness > OUTLIER_RATIO
     in_a_goal = np.array(
         [
-            mean_x[t.id] <= KEEPER_ZONE_M or mean_x[t.id] >= PITCH_LENGTH - KEEPER_ZONE_M
+            mean_x[t.id] <= KEEPER_ZONE_M or mean_x[t.id] >= pitch.length - KEEPER_ZONE_M
             for t in usable
         ]
     )
@@ -390,7 +394,7 @@ def assign(
     outfield = [t for i, t in enumerate(usable) if not keeper[i]]
     if len(outfield) >= 2:
         labels = split_kits(
-            np.array([t.kit_mean for t in outfield], dtype=np.float64),
+            np.array([t.side_mean for t in outfield], dtype=np.float64),
             _crowding(outfield, frames),
         )
     else:
@@ -399,7 +403,7 @@ def assign(
     # Named against the FINAL split rather than the rough one that found the keepers: an
     # outlier test is only as good as the model it measures distance from, and the first
     # cut is a single unconstrained axis.
-    settled = _oddness(np.array([t.kit_mean for t in outfield], dtype=np.float64), labels)
+    settled = _oddness(np.array([t.side_mean for t in outfield], dtype=np.float64), labels)
     at_a_goal = {t.id for i, t in enumerate(usable) if in_a_goal[i]}
     candidates = [
         i
@@ -416,7 +420,7 @@ def assign(
 
     # Which tracks the split is actually sure of. Distance to its own side's kit against
     # distance to the other's, in the same colour space the cut was made in.
-    kits = np.array([t.kit_mean for t in outfield], dtype=np.float64)
+    kits = np.array([t.side_mean for t in outfield], dtype=np.float64)
     sure = np.ones(len(outfield), dtype=bool)
     for k in (0, 1):
         mine, theirs = labels == k, labels != k
@@ -430,7 +434,20 @@ def assign(
         without = (total - kits[mine]) / (n - 1) if n > 1 else kits[mine]
         own = np.linalg.norm(kits[mine] - without, axis=1)
         other = np.linalg.norm(kits[mine] - kits[theirs].mean(axis=0), axis=1)
-        sure[mine] = own <= KIT_MARGIN * other
+        settled = own <= KIT_MARGIN * other
+        # A track the ball went THROUGH is named on the plain comparison, without the
+        # margin. `KIT_MARGIN` buys silence, and silence is the right price for the
+        # twenty-one players who are not on the ball: a wrong colour there is a pass
+        # between the wrong shirts (D72). For the one who IS on the ball it buys nothing
+        # -- Pitchboard fields nobody it cannot name, so declining him does not leave the
+        # move uncoloured, it leaves the move undrawn, and a coach watches a striker
+        # receive, run and win a penalty while the board stands somebody else offside in
+        # his place. Still only where the kit AGREES: nearer his own side than the other
+        # is the whole claim, and a track that fails that stays unknown (D91).
+        if carried:
+            leading = own < other
+            settled = settled | (leading & np.array([t.id in carried for t in outfield])[mine])
+        sure[mine] = settled
 
     out: dict[int, TeamLabel] = {t.id: "unknown" for t in tracks}
     for i, (t, lab) in enumerate(zip(outfield, labels, strict=True)):
@@ -442,5 +459,5 @@ def assign(
     for i, t in enumerate(usable):
         if keeper[i]:
             # The keeper of the goal they are standing in, whichever side that is.
-            out[t.id] = "gkHome" if mean_x[t.id] <= PITCH_LENGTH / 2 else "gkAway"
+            out[t.id] = "gkHome" if mean_x[t.id] <= pitch.halfway else "gkAway"
     return out

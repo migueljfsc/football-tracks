@@ -368,3 +368,54 @@ who actually has it. That is D66 (a ball in flight is metres from where z = 0 pu
 (recall cannot be bought by lowering confidence), not the labelling. A runner-up margin in the
 importer was tried against it and measured worse: at 1.5 m the board stops naming anybody and
 possession collapses onto whoever held it first.
+
+**D90 — two tracks in the same place at the same time are one player, and the detector says
+which.** `stitch` asks whether one fragment CONTINUES another and refuses anything that
+overlaps in time (`gap <= 0`), so the case it cannot see is the tracker renumbering a player
+it never actually lost. Both ids stay live and alternate frames.
+
+It is not a spare track. The two halves are labelled independently, so a player is home for
+one stretch and away for the next, and that reaches the board as a turnover nobody played.
+A coach found it the other way round: his striker was tracked from the halfway line through
+the run that won a penalty, and that half was declined as `unknown` while a second id
+starting 190 frames later was named, fielded, and HELD -- parking him in an offside position
+for nine seconds of a thirteen-second clip.
+
+Distance alone cannot decide it, and this is the trap. Across fourteen clips the overlapping
+pairs cluster at 0.6-1.5 m and then climb steadily from 2 m into the thousands, so a cut
+under the tracker's own 1.7 m resolution looks safe -- and it is not, because a striker and
+the man marking him run a metre apart for the whole move. Merging those destroys two players
+to fix nothing.
+
+**What separates them is the detector.** It finds a player once, so two tracks on one man
+have to take turns, while two tracks on two men each get a box of their own every frame.
+Measured on the coach's clip the populations do not touch:
+
+    t23 + t36   1.4 m apart   9% of frames shared   one player  (the striker)
+    t35 + t38   0.8 m          5%                   one player
+    t42 + t43   0.6 m          0%                   one player
+    t19 + t36   2.0 m         81%                   two players (the marker and the striker)
+    t28 + t46   1.9 m        100%                   two players
+
+The absorbed track's shirt readings move with it, so the survivor is named on both halves'
+evidence rather than on whichever half was longer.
+
+**And that exposed the second half of this.** Merging made the striker LESS certain of his
+own side, because `side_mean` counted every sighting equally and his distant ones outnumbered
+his close ones -- sixty pixels of a player is mostly grass and reads like neither kit. So the
+side signature is now weighted by how big he looked, which is the one shirt question that
+should care: associating wants every pixel and painting wants a mean colour, but "which of
+these two kits" is only as good as the look at the shirt (D87's split, one level deeper).
+
+    teams            147  89% -> 92%      116  77% -> 77%      121  83% -> 83%
+    asserted right        3402 -> 3486         unchanged            unchanged
+    declined               104 -> 0            unchanged            unchanged
+
+Tracks, recall, precision, error and purity are identical to the digit on all three: the
+merge fires on none of them, because their close pairs share frames and are real players.
+
+What it does NOT fix is the striker. Merged and weighted he is still declined, at own 0.270
+against a bar of 0.251 -- clustered with the right side, 8% short of the confidence to say
+so. He carries the ball at frames 506-573 and the board cannot draw him, because a track the
+kit will not settle is never fielded (D72). That is the next thing, and it is a question
+about the margin rather than about him.

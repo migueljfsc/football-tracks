@@ -1110,3 +1110,126 @@ measured six metres is worth more than a counted hundred frames.
 And where the chain has no answer at all, the report says so and where: `no homography 458-464
 (7 frames) - a cut, a whip pan, or no grass in shot`. That is the same signal the Manchester
 United clip's shot change produced, and nothing had ever surfaced it.
+
+**D86 — the chain broke for want of corners, not for want of grass.** A coach's clip
+registered 278 of its 634 frames and the board stopped dead halfway through the play. The
+report blamed a cut, a whip pan or no grass in shot (D83) and all three were wrong: the
+grass share never left 70–79%, the flow tracked 43 of 44 features it was given, and the
+frame after the break solved fine.
+
+What actually happened is that `goodFeaturesToTrack` returned 39 corners on a 2761 × 1551
+frame with a cap of 800. `qualityLevel` is RELATIVE to the strongest corner inside the
+mask, so a painted line junction or a bright shadow edge in shot raises the bar for every
+patch of plain grass behind it. At 0.01 the feature count on this clip swung between 39
+and 106 with the grass share flat, and 54 pairs came back with 19–24 RANSAC inliers
+against a threshold of 25 — missing the bar by ones.
+
+The cost of each refusal is not one frame. `fill` cannot step over a missing link, so the
+first of those 54 ended the chain for all 356 frames after it:
+
+    frames solved     278/634  (43.8%)     ->  634/634  (100.0%)
+
+Dropping `QUALITY` to 0.003 recovers all 54, at a median of 246 candidates and 94
+inliers — four times the threshold, so these are not marginal rescues. RANSAC is the
+arbiter and `MIN_INLIERS` is the guard, which is why the bar for a CANDIDATE can be this
+low: more features to choose from cannot fabricate an agreement among 94 of them.
+
+Two alternatives were measured and refused. **Straddling the gap** — fitting frame f-1 to
+f+1 when the pair between them fails — is worse, not better: the six straddles tried came
+back with 15–23 inliers where the consecutive pairs had 19–24, because the camera moves
+twice as far. **Another seed** cannot help either; the holes run 279 to 467, so a chain
+started anywhere inside them dies within two frames.
+
+On the three clips with ground truth it is a wash, and it has to be: all three already
+registered 100% of their frames, so they can only show harm.
+
+    at the players, within 2 m     147  73% -> 72%     116  78% -> 77%     121  75% -> 75%
+    p50                                0.98 -> 0.96 m      0.76 -> 0.76 m      1.44 -> 1.45 m
+    thrown off the pitch                 40 -> 72            196 -> 237            0 -> 0
+
+A tenth of a percent more boxes land off the pitch, against 56% of a real broadcast clip
+that had no camera model at all. **A clip that never fails cannot measure a fix for
+failure** — the benchmark is the harm test here, and the coach's clip is the only one
+that shows the benefit.
+
+What the fix does NOT do is make the tail accurate. The clip now carries 633 frames from
+one seed, and the overlay at frame 600 puts the lines metres off the painted ones — 13% of
+positions after frame 450 land past a goal line on a 105 m pitch. Coverage and accuracy are
+separate problems and this is the first one; `ft calibrate` names the frame for the second.
+
+**D88 — a pitch is symmetric END TO END as well as side to side, and only one of those
+was guarded.** `orientation` catches a swapped far/near, and catches it arithmetically
+because the overlay cannot: a y-mirrored model draws onto the real markings perfectly
+while every position is flipped. The other axis had nothing, and it cost a clip. The
+coach seeded frame 634 of Sporting–Galatasaray without pressing `e`, so nine clicks and
+thirty-two traced points describing the FAR goal were all written as the near one. The
+fit was clean, every residual was small, and the board came out mangled:
+
+    anchors disagree  by 111.5 m at frame 633
+
+Which is one pitch length, and that is the whole tell — but only because a second anchor
+existed to disagree with. The number was already being printed and still needed a person
+to interpret it.
+
+The check that does not need interpreting is **handedness**. A camera cannot get
+underneath a football pitch, so every frame of a clip sees the ground plane from the same
+side and the image-to-pitch map keeps the same handedness however the camera pans, zooms
+or tilts. Labelling the clicks with the wrong end is a REFLECTION, and a reflection
+reverses it. So the seeds of one clip must agree, and one that does not is on the other
+goal.
+
+It has to be judged across a clip rather than within a seed, which is the difference from
+`orientation`: handedness depends on which touchline the camera sits on, and that is a
+property of the broadcast rather than of the pitch. nottingham's two seeds are both
+left-handed and agree with each other, which is all the check asks.
+
+Between them the two guards are complete. A pitch has three non-identity symmetries and
+they divide as:
+
+    reflect y       orientation catches it      handedness does not
+    reflect x       orientation does not        handedness catches it
+    reflect both    orientation catches it      handedness does not - two reflections
+                                                are a rotation
+
+`ft seed` flips the end to match the clip, the way it already flips far/near, because
+that is where a person is present to read the message. `usable_seeds` REFUSES rather than
+flips: reinterpreting a file at pipeline time is the silent kind of fix this guard exists
+to prevent, and by then nobody is watching.
+
+It found a second one immediately. `geny_rioave/seed.as-clicked.json` is a backup of an
+earlier clicking that still matches `seed.*.json`, so it had been loading as a live
+anchor, mirrored, for as long as it had been sitting there.
+
+**D89 — a pitch is 105 x 68 only in elite competition, and the seed is written in metres.**
+The Laws fix the MARKINGS and leave the FIELD variable: a goal is 7.32 m wide, a penalty
+spot 11 m out and a penalty box 16.5 deep on every ground in the world, while the field
+itself may be anything from 90 x 45 to 120 x 90. UEFA pins 105 x 68 for the Champions
+League, which is why the coach's Sporting clip was exactly right and most football is not.
+
+It matters because the dimensions are not an annotation on the output, they are an INPUT.
+`seed.landmarks` writes "goal post far" as `(0, W/2 - 3.66)`, so clicking it with the wrong
+W puts the fit a metre or two out across the whole pitch. Nothing catches that afterwards:
+the clicks agree with whatever they were told they meant, so the residuals are small, the
+overlay draws onto the real markings, and every fidelity score stays good while the
+touchline is not where the touchline is. It is D34's failure exactly, in the other axis.
+
+So `Pitch` is carried rather than assumed. `ft pitch <clip> --length --width` records it
+beside the seed -- human knowledge the video does not contain, so `ft frames` must not
+throw it away with the derived artefacts -- and it flows to the three places that need it:
+
+* **the landmarks and traceable lines**, which is where it enters the fit at all;
+* **`on_pitch`**, which decides what is a player and what is a spectator;
+* **`tracks.json`'s `pitch` field**, which Pitchboard has always read and which has always
+  been told 105 x 68.
+
+Three places deliberately keep the constant. `calibration.PITCH_LINES` names SoccerNet's
+own ground truth, which is 105 x 68 by their convention and not ours to reinterpret; the
+two `s = float(PITCH_LENGTH)` in the solvers are numerical conditioning, where the only
+requirement is that the pitch scales to roughly unit size; and `refine` is off by default
+(D35) and still assumes it.
+
+The order matters and the command says so. A seed already clicked was written against
+whatever was in force then, and setting the size afterwards does not go back and change
+it -- so `ft pitch` warns when the clip is already seeded, and the range check refuses
+anything that is not a football pitch rather than accepting a typo that would land every
+player somewhere plausible.

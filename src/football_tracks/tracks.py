@@ -18,7 +18,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Literal
 
-from .config import PITCH_LENGTH, PITCH_WIDTH
+from .config import DEFAULT_PITCH, Pitch
 
 TeamLabel = Literal["home", "away", "gkHome", "gkAway", "referee", "unknown"]
 
@@ -130,7 +130,9 @@ def at_interval(samples: list[Sample], fps: float, interval_s: float) -> list[Sa
     return out
 
 
-def on_pitch(x: float, y: float, margin: float = PITCH_MARGIN) -> bool:
+def on_pitch(
+    x: float, y: float, margin: float = PITCH_MARGIN, pitch: Pitch = DEFAULT_PITCH
+) -> bool:
     """Whether a projected position is credible enough to keep.
 
     Rejecting rather than clamping: a position 200 m out is not a player standing on
@@ -138,8 +140,8 @@ def on_pitch(x: float, y: float, margin: float = PITCH_MARGIN) -> bool:
     failure into a plausible-looking coordinate that the reduction then fits a curve
     through.
     """
-    mx, my = PITCH_LENGTH * margin, PITCH_WIDTH * margin
-    return -mx <= x <= PITCH_LENGTH + mx and -my <= y <= PITCH_WIDTH + my
+    mx, my = pitch.length * margin, pitch.width * margin
+    return -mx <= x <= pitch.length + mx and -my <= y <= pitch.width + my
 
 
 def write(
@@ -155,6 +157,7 @@ def write(
     height: int | None = None,
     interval_s: float = DEFAULT_INTERVAL_S,
     kits: dict[str, str] | None = None,
+    pitch: Pitch = DEFAULT_PITCH,
 ) -> Path:
     source: dict[str, Any] = {
         "clip": clip,
@@ -172,7 +175,7 @@ def write(
     doc = {
         "version": 1,
         "source": source,
-        "pitch": {"length": PITCH_LENGTH, "width": PITCH_WIDTH},
+        "pitch": {"length": pitch.length, "width": pitch.width},
         # What the two sides were WEARING, where the clip said so clearly enough to be
         # worth drawing (stage 3). A board that paints the sides in its own two colours
         # makes a coach translate every judgement about his own clip, and he will read

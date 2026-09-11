@@ -11,18 +11,23 @@ tie-breaks they rest on.
 
 from __future__ import annotations
 
+import cv2
 import numpy as np
+import pytest
 from scipy.optimize import linear_sum_assignment
 
 from football_tracks.detect import Detection
 from football_tracks.stage2_track import (
+    ACHROMATIC,
     MAX_SPEED,
     UNREACHABLE,
     Observation,
     Track,
     _cost,
     color_distance,
+    kit,
     run,
+    side,
 )
 from football_tracks.stage3_teams import assign, split_kits
 
@@ -196,10 +201,38 @@ def test_home_is_the_side_nearer_x_zero_not_the_side_that_scores_best() -> None:
     left = np.array([1.0, 0.0])
     right = np.array([0.0, 1.0])
     tracks = [
-        Track(id=1, observations=[obs(1, 20.0, 30.0)], color=left),
-        Track(id=2, observations=[obs(1, 25.0, 30.0)], color=left),
-        Track(id=3, observations=[obs(1, 80.0, 30.0)], color=right),
-        Track(id=4, observations=[obs(1, 85.0, 30.0)], color=right),
+        Track(
+            id=1,
+            observations=[obs(1, 20.0, 30.0)],
+            color=left,
+            side_sum=left,
+            side_seen=1,
+            side_weight=1.0,
+        ),
+        Track(
+            id=2,
+            observations=[obs(1, 25.0, 30.0)],
+            color=left,
+            side_sum=left,
+            side_seen=1,
+            side_weight=1.0,
+        ),
+        Track(
+            id=3,
+            observations=[obs(1, 80.0, 30.0)],
+            color=right,
+            side_sum=right,
+            side_seen=1,
+            side_weight=1.0,
+        ),
+        Track(
+            id=4,
+            observations=[obs(1, 85.0, 30.0)],
+            color=right,
+            side_sum=right,
+            side_seen=1,
+            side_weight=1.0,
+        ),
     ]
     teams = assign(tracks, {1: 20.0, 2: 25.0, 3: 80.0, 4: 85.0})
     assert teams[1] == "home" and teams[2] == "home"
@@ -359,16 +392,25 @@ def test_an_odd_kit_away_from_both_goals_is_an_official() -> None:
     tracks, mean_x = [], {}
     for i in range(10):
         kit = np.array([1.0, 0.0]) if i < 5 else np.array([0.0, 1.0])
+        worn = kit + rng.normal(0, 0.01, 2)
         tracks.append(
             Track(
                 id=i,
                 observations=[obs(f, 100.0, 50.0) for f in range(6)],
-                color=kit + rng.normal(0, 0.01, 2),
+                color=worn,
+                side_sum=worn,
+                side_seen=1,
+                side_weight=1.0,
             )
         )
         mean_x[i] = 30.0 if i < 5 else 75.0
     official = Track(
-        id=99, observations=[obs(f, 100.0, 50.0) for f in range(6)], color=np.array([0.5, 0.5])
+        id=99,
+        observations=[obs(f, 100.0, 50.0) for f in range(6)],
+        color=np.array([0.5, 0.5]),
+        side_sum=np.array([0.5, 0.5]),
+        side_seen=1,
+        side_weight=1.0,
     )
     tracks.append(official)
     mean_x[99] = 52.5
@@ -385,16 +427,25 @@ def test_an_odd_kit_standing_in_a_goal_is_still_a_keeper() -> None:
     tracks, mean_x = [], {}
     for i in range(10):
         kit = np.array([1.0, 0.0]) if i < 5 else np.array([0.0, 1.0])
+        worn = kit + rng.normal(0, 0.01, 2)
         tracks.append(
             Track(
                 id=i,
                 observations=[obs(f, 100.0, 50.0) for f in range(6)],
-                color=kit + rng.normal(0, 0.01, 2),
+                color=worn,
+                side_sum=worn,
+                side_seen=1,
+                side_weight=1.0,
             )
         )
         mean_x[i] = 30.0 if i < 5 else 75.0
     keeper = Track(
-        id=99, observations=[obs(f, 100.0, 50.0) for f in range(6)], color=np.array([0.5, 0.5])
+        id=99,
+        observations=[obs(f, 100.0, 50.0) for f in range(6)],
+        color=np.array([0.5, 0.5]),
+        side_sum=np.array([0.5, 0.5]),
+        side_seen=1,
+        side_weight=1.0,
     )
     tracks.append(keeper)
     mean_x[99] = 8.0
@@ -403,3 +454,84 @@ def test_an_odd_kit_standing_in_a_goal_is_still_a_keeper() -> None:
         assign(tracks, mean_x, {t.id: [o.f for o in t.observations] for t in tracks})[99]
         == "gkHome"
     )
+
+
+def _shirt(bgr: tuple[int, int, int], hoop: tuple[int, int, int] | None = None) -> np.ndarray:
+    """A torso-sized patch of one kit, optionally hooped with a second colour."""
+    img = np.zeros((160, 80, 3), dtype=np.uint8)
+    img[:, :] = bgr
+    if hoop is not None:
+        for y in range(0, 160, 20):
+            img[y : y + 10, :] = hoop
+    return img
+
+
+def _patch(hue: tuple[int, int], sat: tuple[int, int], val: tuple[int, int]) -> np.ndarray:
+    rng = np.random.default_rng(0)
+    hsv = np.empty((10, 80, 3), dtype=np.uint8)
+    for i, (lo, hi) in enumerate((hue, sat, val)):
+        hsv[:, :, i] = rng.integers(lo, hi, (10, 80))
+    return cv2.cvtColor(hsv, cv2.COLOR_HSV2BGR)
+
+
+def test_white_does_not_vote_for_a_hue() -> None:
+    # Near-white is not neutral: a warm floodlight lands it at the pink end of the hue
+    # axis, next door to red. Read at every pixel, a green-and-white hooped shirt
+    # therefore shares bins with a red one it has nothing in common with -- which is what
+    # put two of Sporting's players on Galatasaray. Gathered, the white says only that it
+    # is white and the two shirts separate (D87).
+    d = Detection(f=1, x1=0.0, y1=0.0, x2=80.0, y2=160.0, score=1.0)
+    hooped = np.zeros((160, 80, 3), dtype=np.uint8)
+    hooped[:, :] = (60, 120, 40)
+    for y in range(0, 160, 20):
+        hooped[y : y + 10] = _patch((150, 180), (0, ACHROMATIC), (200, 256))
+    red = np.zeros((160, 80, 3), dtype=np.uint8)
+    for y in range(0, 160, 10):
+        red[y : y + 10] = _patch((150, 180), (180, 256), (200, 256))
+
+    assert color_distance(side(hooped, d), side(red, d)) > color_distance(
+        kit(hooped, d), kit(red, d)
+    )
+
+
+def test_a_colourless_shirt_is_a_kit_and_not_a_gap() -> None:
+    # White is a kit -- SNGS-116 is white against red. Dropping the colourless pixels
+    # would leave it a signature of trim and skin, so they are gathered into one bin.
+    d = Detection(f=1, x1=0.0, y1=0.0, x2=80.0, y2=160.0, score=1.0)
+    white = side(_shirt((235, 235, 235)), d)
+    assert white is not None
+    assert np.isclose(white[-1], 1.0)
+    assert color_distance(white, side(_shirt((40, 40, 190)), d)) > 0.9
+    assert ACHROMATIC > 0
+
+
+def test_a_close_look_at_a_shirt_outweighs_a_distant_one() -> None:
+    # Which SIDE a track is on is the one shirt question that cares how big the player
+    # looked: sixty pixels of him is mostly grass and reads like neither kit. Counted
+    # equally, a track gets LESS certain the more of it there is -- which is how a striker
+    # tracked from the halfway line and then up close came out surer from the near half
+    # alone than from both (D90).
+    near, far = np.array([1.0, 0.0]), np.array([0.0, 1.0])
+    t = Track(id=1)
+    for _ in range(10):
+        t.saw_kit(near, None, None, far, 40.0)
+    t.saw_kit(near, None, None, near, 200.0)
+
+    settled = t.side_mean
+    assert settled is not None
+    # Ten distant looks at 40 px carry 400 between them; one close look at 200 carries
+    # half as much again as any three of them.
+    assert settled[0] == pytest.approx(200 / 600)
+    assert t.side_seen == 11
+
+
+def test_absorbing_a_duplicate_takes_its_shirt_readings_too() -> None:
+    # The positions are merged elsewhere; this is what stops the survivor being named on
+    # whichever half happened to be longer.
+    kit = np.array([1.0, 0.0])
+    a, b = Track(id=1), Track(id=2)
+    a.saw_kit(kit, None, None, kit, 100.0)
+    b.saw_kit(kit, None, None, kit, 50.0)
+    a.absorb(b)
+    assert a.side_weight == pytest.approx(150.0)
+    assert a.side_seen == 2

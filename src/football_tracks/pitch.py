@@ -14,7 +14,7 @@ import numpy as np
 import numpy.typing as npt
 from cv2.typing import MatLike
 
-from .config import PITCH_LENGTH, PITCH_WIDTH
+from .config import DEFAULT_PITCH, Pitch
 
 Poly = npt.NDArray[np.float64]
 Point2 = tuple[float, float]
@@ -37,23 +37,23 @@ def _arc(cx: float, cy: float, r: float, a0: float, a1: float, n: int = 40) -> P
     return np.stack([cx + r * np.cos(a), cy + r * np.sin(a)], axis=1)
 
 
-def model() -> list[Poly]:
+def model(pitch: Pitch = DEFAULT_PITCH) -> list[Poly]:
     """The markings as polylines in METRES.
 
     The one description of pitch geometry in this repo. `draw` renders it top-down and
     `overlay` reprojects it onto a video frame; neither restates it.
     """
-    mid = PITCH_WIDTH / 2
+    mid = pitch.middle
     polys: list[Poly] = [
         np.array(
-            [[0, 0], [PITCH_LENGTH, 0], [PITCH_LENGTH, PITCH_WIDTH], [0, PITCH_WIDTH], [0, 0]],
+            [[0, 0], [pitch.length, 0], [pitch.length, pitch.width], [0, pitch.width], [0, 0]],
             dtype=np.float64,
         ),
-        np.array([[PITCH_LENGTH / 2, 0], [PITCH_LENGTH / 2, PITCH_WIDTH]], dtype=np.float64),
-        _arc(PITCH_LENGTH / 2, mid, CENTRE_R, 0, 360),
+        np.array([[pitch.halfway, 0], [pitch.halfway, pitch.width]], dtype=np.float64),
+        _arc(pitch.halfway, mid, CENTRE_R, 0, 360),
     ]
 
-    for near, sign in ((0.0, 1.0), (PITCH_LENGTH, -1.0)):
+    for near, sign in ((0.0, 1.0), (pitch.length, -1.0)):
         for depth, half in (
             (PENALTY_DEPTH, PENALTY_HALF_WIDTH),
             (GOAL_AREA_DEPTH, GOAL_AREA_HALF_WIDTH),
@@ -75,22 +75,22 @@ def model() -> list[Poly]:
 
     for cx, cy, a0 in (
         (0.0, 0.0, 0.0),
-        (PITCH_LENGTH, 0.0, 90.0),
-        (PITCH_LENGTH, PITCH_WIDTH, 180.0),
-        (0.0, PITCH_WIDTH, 270.0),
+        (pitch.length, 0.0, 90.0),
+        (pitch.length, pitch.width, 180.0),
+        (0.0, pitch.width, 270.0),
     ):
         polys.append(_arc(cx, cy, CORNER_R, a0, a0 + 90.0))
 
     return polys
 
 
-def spots() -> list[Point2]:
+def spots(pitch: Pitch = DEFAULT_PITCH) -> list[Point2]:
     """The centre spot and both penalty spots, in metres."""
-    mid = PITCH_WIDTH / 2
+    mid = pitch.middle
     return [
-        (PITCH_LENGTH / 2, mid),
+        (pitch.halfway, mid),
         (PENALTY_SPOT, mid),
-        (PITCH_LENGTH - PENALTY_SPOT, mid),
+        (pitch.length - PENALTY_SPOT, mid),
     ]
 
 
@@ -99,24 +99,24 @@ def to_px(x: float, y: float, scale: float, margin: float) -> tuple[int, int]:
     return (round((x + margin) * scale), round((y + margin) * scale))
 
 
-def canvas_size(scale: float, margin: float) -> tuple[int, int]:
+def canvas_size(scale: float, margin: float, pitch: Pitch = DEFAULT_PITCH) -> tuple[int, int]:
     return (
-        round((PITCH_LENGTH + 2 * margin) * scale),
-        round((PITCH_WIDTH + 2 * margin) * scale),
+        round((pitch.length + 2 * margin) * scale),
+        round((pitch.width + 2 * margin) * scale),
     )
 
 
-def draw(scale: float = 10.0, margin: float = 3.0) -> MatLike:
+def draw(scale: float = 10.0, margin: float = 3.0, pitch: Pitch = DEFAULT_PITCH) -> MatLike:
     """A fresh pitch, ready to have dots put on it. Renders `model()` and nothing else."""
-    w, h = canvas_size(scale, margin)
+    w, h = canvas_size(scale, margin, pitch)
     img = np.full((h, w, 3), GRASS, dtype=np.uint8)
     t = max(1, round(scale / 8))
 
-    for poly in model():
+    for poly in model(pitch):
         pts = np.array([to_px(x, y, scale, margin) for x, y in poly], dtype=np.int32)
         cv2.polylines(img, [pts], False, LINE, t, cv2.LINE_AA)
 
-    for sx, sy in spots():
+    for sx, sy in spots(pitch):
         cv2.circle(
             img, to_px(sx, sy, scale, margin), max(2, round(0.3 * scale)), LINE, -1, cv2.LINE_AA
         )

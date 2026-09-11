@@ -19,6 +19,9 @@ def kitted(track_id: int, kit: tuple[float, float, float]) -> Track:
     t = Track(id=track_id)
     t.kit_sum = np.array(kit, dtype=np.float64)
     t.kit_seen = 1
+    t.side_sum = np.array(kit, dtype=np.float64)
+    t.side_seen = 1
+    t.side_weight = 1.0
     return t
 
 
@@ -139,3 +142,51 @@ def test_a_track_with_too_few_readings_is_left_alone() -> None:
         4, [(f, (1.0, 0.0)) for f in range(1, 6)] + [(f, (0.0, 1.0)) for f in range(6, 11)]
     )
     assert stage3_teams.two_shirts(short, CENTRES) is None
+
+
+def _a_clip(rng: np.random.Generator) -> tuple[list[Track], dict[int, float]]:
+    """Six a side with a real spread, and three officials.
+
+    The officials matter: `MAX_REFEREES` is spent on the oddest kits, and without anything
+    genuinely odd on the pitch a merely AMBIGUOUS one is the oddest thing there and gets
+    named an official instead of being declined. Real clips have both.
+    """
+    tracks, mean_x = [], {}
+    for i in range(12):
+        base = np.array(RED if i < 6 else BLUE, dtype=np.float64)
+        worn = np.abs(base + rng.normal(0, 0.08, 3))
+        tracks.append(kitted(i, (float(worn[0]), float(worn[1]), float(worn[2]))))
+        mean_x[i] = 25.0 if i < 6 else 80.0
+    for j, odd in enumerate([(0.0, 1.0, 0.0), (0.05, 0.95, 0.0), (0.0, 0.95, 0.05)]):
+        tracks.append(kitted(90 + j, odd))
+        mean_x[90 + j] = 50.0 + j
+    return tracks, mean_x
+
+
+# Leaning red, and short of the margin KIT_MARGIN asks for.
+BETWEEN = (0.52, 0.0, 0.48)
+
+
+def test_a_track_the_ball_went_through_is_named_on_the_plain_comparison() -> None:
+    # KIT_MARGIN buys silence, and silence is the right price for the twenty-one players
+    # who are not on the ball. For the one who IS, declining does not leave the move
+    # uncoloured -- Pitchboard fields nobody it cannot name -- it leaves the move undrawn,
+    # and a coach watched his striker receive, run and win a penalty while the board stood
+    # somebody else offside in his place (D91).
+    tracks, mean_x = _a_clip(np.random.default_rng(0))
+    tracks.append(kitted(99, BETWEEN))
+    mean_x[99] = 40.0
+
+    assert assign(tracks, mean_x)[99] == "unknown"
+    assert assign(tracks, mean_x, carried={99})[99] == "home"
+
+
+def test_the_exemption_is_one_track_and_not_a_looser_threshold() -> None:
+    # The ball going through somebody says nothing about anybody else's shirt. A carrier
+    # who was already named changes nothing, and the ambiguous track stays declined.
+    tracks, mean_x = _a_clip(np.random.default_rng(0))
+    tracks.append(kitted(99, BETWEEN))
+    mean_x[99] = 40.0
+
+    assert assign(tracks, mean_x, carried={0})[99] == "unknown"
+    assert assign(tracks, mean_x, carried={99})[99] == "home"
