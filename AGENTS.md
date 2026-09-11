@@ -212,6 +212,12 @@ Each of these cost a day. Where one names a decision, the full account is in
   team. `side_mean` gathers the colourless pixels into ONE bin. Gathering is not dropping:
   SNGS-116 is white against red, so a discarded white kit is a signature of trim and skin.
   Applying the floor to `kit` as well starves the tracker -- 116 went 57 tracks to 79.
+- **The shown kit comes from the SIGNATURE, not from a mean of the same pixels** (D92). Strike
+  the pitch's hues out first (every crop has grass, and a dark kit has less colour than the
+  grass around it); let colourless compete on TOTAL mass (skin and trim out-argmax a bin);
+  take a circular mean (red wraps across the first bin and the last). Under `KIT_CONFIDENT`,
+  paint nothing -- a green-and-white team on green grass cannot be told from the pitch, and
+  Sporting came out yellow before this refused them.
 - **The kit signature is for DECIDING and the kit colour is for SHOWING** (D81). A histogram
   tells two sides apart and paints nothing; a mean BGR paints a shirt and cannot tell a red one
   from a blue one when they are averaged together. `tracks.json` carries the second as `kits`,

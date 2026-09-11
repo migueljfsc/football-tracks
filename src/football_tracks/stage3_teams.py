@@ -210,27 +210,124 @@ KIT_MARGIN = 0.8
 KIT_TONE_APART = 60.0
 
 
+# How much of a side's signature must agree before its colour is worth writing down.
+#
+# Measured across five clips: every answer that came out right carries 0.56 to 0.83 in one
+# category, and the one that came out yellow carries 0.41 against 0.25.
+KIT_CONFIDENT = 0.45
+
+# How far apart the two painted kits must be, as BGR distance, before they are worth showing.
+KIT_APART = 60.0
+
+
+# The hue bins the PITCH occupies, of the twelve the signature keeps. `GREEN_LO`/`GREEN_HI`
+# put grass at 35-85 of OpenCV's 0-179, which is bins 2 through 5.
+#
+# They cannot name a kit, because every torso crop contains them: a box is part shirt and
+# part pitch, and for a dark kit the pitch is the larger share. Read without this,
+# SNGS-147's red-and-black team came out green (D92).
+#
+# The cost is a genuinely green shirt, which is then painted by whatever else it has --
+# Sporting's green-and-white hoops come out white. That is the honest answer: this cannot
+# tell a green shirt from the grass behind it, so it does not claim green.
+GRASS_HUES = range(2, 6)
+
+
+def _paint(mine: Vec, theirs: Vec, tone: Vec) -> str | None:
+    """One side's shirt colour, from the signature that NAMES the sides.
+
+    D81 read this off a mean of the torso instead, and could not tell two sides apart that
+    a camera plainly could: averaging a red shirt with the grass and the shorts around it
+    gives a dull olive, and so does averaging a green one. The histogram never mixed them,
+    which is why it can name the sides at all -- so the colour comes from its hues (D92).
+
+    Three things had to be right, and each was found by getting it wrong:
+
+    * **The pitch's hues are struck out**, because every crop contains them: a box is part
+      shirt and part grass, and for a dark kit the grass is the larger share. Read without
+      this, SNGS-147's red-and-black team came out green.
+    * **Colourless beats colour on the TOTAL**, not on the biggest single hue. What is left
+      of a white shirt after the grass goes is skin and trim, and either will out-argmax a
+      bin. Sporting's green-and-white hoops came out amber that way.
+    * **The hue is a circular MEAN, not an argmax.** Red wraps: it sits in the first bin and
+      the last one, so counting bins separately splits it in half and hands the kit to
+      whatever is merely contiguous.
+
+    Brightness comes from the mean, for the kits with no hue to read. The signature gathers
+    every colourless pixel into one bin (D87), so white and black look identical to it, and
+    an average is perfectly good at telling those two apart.
+
+    `theirs` is kept because the first attempt subtracted it -- both sides stand on the same
+    grass, so their difference cancels it. Measured, that moved the hue without fixing it:
+    SNGS-147's red team went from green to amber and Sporting's hoops to yellow.
+    """
+    del theirs
+    hue = mine[:48].reshape(12, 4).sum(axis=1)
+    for b in GRASS_HUES:
+        hue[b] = 0.0
+    colour, grey = float(hue.sum()), float(mine[48])
+    # Neither half of this is a preference. A kit is what most of a shirt is, so the answer
+    # is only worth writing down when most of the shirt agrees -- and where it does not, the
+    # board's own palette beats a colour nobody is wearing (D72, D81, and the rule D5 applies
+    # to a shirt number). Sporting's green-and-white hoops are the case that needs it: their
+    # green IS the pitch's green and is struck out by definition, leaving 41% colourless
+    # against 25% of everything else. Painted anyway, they came out yellow.
+    if max(colour, grey) < KIT_CONFIDENT:
+        return None
+    if grey > colour:
+        return "#e6e6e6" if float(np.mean(tone)) > 128 else "#2b2b2b"
+
+    # OpenCV's hue is 0..179 for the whole circle, and each bin is fifteen of it.
+    middles = (np.arange(12) * 15 + 7.5) / 180.0 * 2 * np.pi
+    turn = np.arctan2(float((hue * np.sin(middles)).sum()), float((hue * np.cos(middles)).sum()))
+    mean_hue = round(turn % (2 * np.pi) / (2 * np.pi) * 180) % 180
+    worn = np.array(
+        [[[mean_hue, round(KIT_SATURATION * 255), round(KIT_VALUE * 255)]]], dtype=np.uint8
+    )
+    b, g, r = (int(v) for v in cv2.cvtColor(worn, cv2.COLOR_HSV2BGR)[0, 0])
+    return f"#{r:02x}{g:02x}{b:02x}"
+
+
+def _rgb(hex_colour: str) -> Vec:
+    return np.array([int(hex_colour[i : i + 2], 16) for i in (1, 3, 5)], dtype=np.float64)
+
+
 def kit_colours(tracks: list[Track], teams: dict[int, TeamLabel]) -> dict[str, str] | None:
     """The two sides' shirt colours, as hex, or None where they cannot be told apart.
 
-    The MEDIAN across a side's tracks rather than the mean: one track holding two players
-    (D78) or a keeper mislabelled as an outfielder is a whole shirt of the wrong colour,
-    and a median of a dozen ignores it where an average would take a fifth of it.
+    The MEDIAN tone across a side's tracks and the MEAN of their signatures: one track
+    holding two players (D78) or a keeper mislabelled as an outfielder is a whole shirt of
+    the wrong colour, and neither a median of a dozen nor a mean of their histograms lets
+    one of them decide the team's colour.
     """
-    sides: dict[str, list[Vec]] = {"home": [], "away": []}
+    seen: dict[str, list[tuple[Vec, Vec]]] = {"home": [], "away": []}
     for t in tracks:
         side = teams.get(t.id)
-        tone = t.tone_mean
-        if tone is None or side not in sides:
+        if side not in seen or t.tone_mean is None or t.side_mean is None:
             continue
-        sides[side].append(tone)
-    if not (sides["home"] and sides["away"]):
+        seen[side].append((t.side_mean, t.tone_mean))
+    if not (seen["home"] and seen["away"]):
         return None
 
-    middle = {k: np.median(np.array(v, dtype=np.float64), axis=0) for k, v in sides.items()}
-    if float(np.linalg.norm(middle["home"] - middle["away"])) < KIT_TONE_APART:
+    signature = {
+        side: np.mean(np.array([sig for sig, _tone in rows], dtype=np.float64), axis=0)
+        for side, rows in seen.items()
+    }
+    worn = {
+        side: _paint(
+            signature[side],
+            signature["away" if side == "home" else "home"],
+            np.median(np.array([tone for _sig, tone in rows], dtype=np.float64), axis=0),
+        )
+        for side, rows in seen.items()
+    }
+    # Both or neither. A board wearing one real kit and one from its own palette is harder
+    # to read than one wearing two of its own, because only one of them means anything.
+    if worn["home"] is None or worn["away"] is None:
         return None
-    return {k: _hex(v) for k, v in middle.items()}
+    if float(np.linalg.norm(_rgb(worn["home"]) - _rgb(worn["away"]))) < KIT_APART:
+        return None
+    return {side: colour for side, colour in worn.items() if colour is not None}
 
 
 # What a shirt colour is raised to before it is written down, as HSV fractions.

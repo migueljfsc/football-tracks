@@ -549,3 +549,50 @@ of ten on nobody, and the tenth is a striker the coach could see.
 The board now draws the move he described: `keeper -> midfielder -> striker -> a Galatasaray
 defender after the foul`, with the striker first drawn at (47.6, 43.2), beside the man who
 receives rather than twenty-five metres past him.
+
+**D92 — the kit is painted from the signature that NAMES the sides, and refused where that
+signature will not settle.** D81 split deciding from showing and read the shown colour off a
+mean of the torso, which could not tell two sides apart that a camera plainly could: a red
+shirt averaged with the grass and shorts around it is a dull olive, and so is a green one.
+On the coach's Sporting-Galatasaray clip the two sides' means were 6.3 apart against a
+threshold of 60, so `kits` was absent and the board painted its own two colours -- home red
+and away blue, which on that clip is Sporting in red and Galatasaray in blue, the exact
+inverse of the shirts. He read a board for six rounds translating it.
+
+The histogram never mixed them. It is why the sides can be named at all, so the colour comes
+from there. Three things had to be right and each was found by getting it wrong:
+
+* **The pitch's own hues are struck out.** Every torso crop is part shirt and part grass, and
+  for a dark kit the grass is the larger share: read without this, SNGS-147's red-and-black
+  team came out GREEN.
+* **Colourless competes on the TOTAL, not against the biggest single hue.** What survives the
+  grass in a white shirt is skin and trim, and either out-argmaxes a bin. Sporting's
+  green-and-white hoops came out AMBER that way.
+* **The hue is a circular mean.** Red wraps -- it sits in the first bin and the last -- so
+  counting bins apart halves it and hands the kit to whatever is merely contiguous. Counted
+  properly, SNGS-116's red is 0.67 of the side.
+
+A fourth thing was measured and refused: subtracting the other side's signature, on the
+argument that both stand on the same grass so it cancels. It moved the hue without fixing it
+-- SNGS-147's red went green to amber, Sporting's hoops green to yellow.
+
+    SNGS-116   white / red      the clip IS white against red
+    SNGS-121   white / red
+    SNGS-147   orange / white   the red-and-black team reads orange under floodlight
+    nottingham red / blue
+    Untitled   nothing
+
+**Untitled is the point of `KIT_CONFIDENT`, not a failure of it.** Sporting's green IS the
+pitch's green, struck out by definition, leaving 41% colourless against 25% of everything
+else -- and painted anyway they came out yellow, a colour nobody on the field is wearing.
+The answers that came out right all carry 0.56 to 0.83 in one category. So a side under that
+is not painted, and because a board wearing one real kit and one from its own palette is
+harder to read than one wearing two of its own, neither side is.
+
+That leaves the coach's own clip unpainted, which is the honest answer and not a satisfying
+one: a green-and-white team on green grass is the case this method cannot do. The board's
+palette remains the fallback, and its defaults -- home red, away blue -- are worth choosing
+more carefully than this can.
+
+Tracks, recall, precision, error, purity and teams are identical across the benchmark: this
+writes a field and decides nothing.

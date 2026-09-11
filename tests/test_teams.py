@@ -66,36 +66,74 @@ def test_a_track_with_no_kit_at_all_is_still_unknown() -> None:
     assert assign(tracks, mean_x)[50] == "unknown"
 
 
-def toned(track_id: int, bgr: tuple[float, float, float]) -> Track:
-    t = kitted(track_id, RED)
+def worn(track_id: int, hue: int | None, share: float, bgr: tuple[float, float, float]) -> Track:
+    """A track whose signature puts `share` of itself in one hue, and the rest colourless.
+
+    `hue` is a bin of the twelve the signature keeps, each thirty real degrees wide: 0 is
+    red, 2 is green, 7 is blue. None puts everything in the colourless bin, which is what
+    a white, grey or black kit looks like. Bins 2 to 5 are the PITCH's, struck out before
+    anything is painted, so a kit cannot be written in them.
+    """
+    t = Track(id=track_id)
+    sig = np.zeros(49, dtype=np.float64)
+    if hue is None:
+        sig[48] = 1.0
+    else:
+        sig[hue * 4 + 2] = share
+        sig[48] = 1.0 - share
+    t.side_sum, t.side_seen, t.side_weight = sig, 1, 1.0
+    t.kit_sum, t.kit_seen = sig, 1
     t.tone_sum = np.array(bgr, dtype=np.float64)
     return t
 
 
-def test_a_kit_colour_is_offered_only_when_the_two_sides_look_apart() -> None:
-    # A board painting both sides the same colour is worse than one painting them its own
-    # two: the average of a torso crop is blunt -- floodlights, blur and a white sleeve all
-    # pull it towards grey -- so where it cannot separate the kits, say nothing.
+def test_a_kit_is_painted_from_its_biggest_hue_and_not_from_an_average() -> None:
+    # The average of a torso crop is blunt: floodlights, blur, grass and a white sleeve all
+    # pull it towards grey, so a red shirt and a green one average to much the same olive.
+    # The histogram never mixed them -- which is why it can name the sides at all (D92).
     teams: dict[int, TeamLabel] = {1: "home", 2: "away"}
-    red, blue = (40.0, 40.0, 200.0), (200.0, 40.0, 40.0)
-    got = kit_colours([toned(1, red), toned(2, blue)], teams)
-    assert got == {"home": "#d12a2a", "away": "#2a2ad1"}
-    assert kit_colours([toned(1, red), toned(2, (45.0, 45.0, 195.0))], teams) is None
+    olive = (73.0, 101.0, 109.0)
+    got = kit_colours([worn(1, 0, 0.6, olive), worn(2, 7, 0.6, olive)], teams)
+
+    assert got is not None
+    # Both sides measure the SAME mean colour, and are still painted apart.
+    assert got["home"] != got["away"]
+
+
+def test_a_trim_does_not_decide_the_kit() -> None:
+    # A white shirt with a coloured collar puts a few percent in that hue. Painting the
+    # side by it is worse than painting it white.
+    teams: dict[int, TeamLabel] = {1: "home", 2: "away"}
+    got = kit_colours(
+        [worn(1, 2, 0.05, (215.0, 215.0, 215.0)), worn(2, 0, 0.6, (40.0, 40.0, 190.0))], teams
+    )
+    assert got is not None
+    assert got["home"] == "#e6e6e6"
+
+
+def test_two_sides_painted_the_same_are_not_offered_at_all() -> None:
+    # A board painting both sides one colour is worse than one painting them its own two.
+    teams: dict[int, TeamLabel] = {1: "home", 2: "away"}
+    red = (40.0, 40.0, 200.0)
+    assert kit_colours([worn(1, 0, 0.6, red), worn(2, 0, 0.6, red)], teams) is None
 
 
 def test_a_side_with_no_shirt_read_offers_no_colour() -> None:
     teams: dict[int, TeamLabel] = {1: "home", 2: "away"}
-    assert kit_colours([toned(1, (40.0, 40.0, 200.0)), kitted(2, BLUE)], teams) is None
+    assert kit_colours([worn(1, 0, 0.6, (40.0, 40.0, 200.0)), kitted(2, BLUE)], teams) is None
 
 
 def test_a_shirt_with_no_colour_is_not_given_one() -> None:
-    # White, grey and black kits measure a hue made of noise, and lifting its saturation
-    # paints the team a colour nobody is wearing.
+    # White, grey and black kits have no hue to read -- the signature gathers every one of
+    # their pixels into the colourless bin -- so brightness decides, which an average is
+    # perfectly good at.
     teams: dict[int, TeamLabel] = {1: "home", 2: "away"}
-    got = kit_colours([toned(1, (215.0, 215.0, 215.0)), toned(2, (40.0, 40.0, 190.0))], teams)
+    got = kit_colours(
+        [worn(1, None, 0.0, (215.0, 215.0, 215.0)), worn(2, None, 0.0, (35.0, 35.0, 35.0))], teams
+    )
     assert got is not None
     assert got["home"] == "#e6e6e6"
-    assert got["away"].startswith("#")
+    assert got["away"] == "#2b2b2b"
 
 
 def logged(track_id: int, kits: list[tuple[int, tuple[float, float]]]) -> Track:
@@ -190,3 +228,28 @@ def test_the_exemption_is_one_track_and_not_a_looser_threshold() -> None:
 
     assert assign(tracks, mean_x, carried={0})[99] == "unknown"
     assert assign(tracks, mean_x, carried={99})[99] == "home"
+
+
+def test_a_kit_the_pitch_is_wearing_is_not_a_kit() -> None:
+    # Every torso crop is part shirt and part grass, and for a dark kit the grass is the
+    # larger share: read without striking the pitch out, SNGS-147's red-and-black team came
+    # out green (D92). A side whose only colour is the pitch's has none.
+    teams: dict[int, TeamLabel] = {1: "home", 2: "away"}
+    assert kit_colours([worn(1, 3, 0.8, (60.0, 120.0, 40.0)), worn(2, 0, 0.6, RED)], teams) is None
+
+
+def test_a_side_its_own_signature_cannot_settle_is_not_painted() -> None:
+    # 41% colourless against 25% of everything else is Sporting's green-and-white hoops,
+    # whose green IS the pitch's. Painted anyway they came out yellow; the board's palette
+    # is the better answer (D92).
+    teams: dict[int, TeamLabel] = {1: "home", 2: "away"}
+    undecided = Track(id=1)
+    sig = np.zeros(49, dtype=np.float64)
+    sig[0 * 4 + 2] = 0.06
+    sig[1 * 4 + 2] = 0.19
+    sig[2 * 4 + 2] = 0.34
+    sig[48] = 0.41
+    undecided.side_sum, undecided.side_seen, undecided.side_weight = sig, 1, 1.0
+    undecided.tone_sum = np.array((73.0, 101.0, 109.0), dtype=np.float64)
+
+    assert kit_colours([undecided, worn(2, 0, 0.6, RED)], teams) is None
