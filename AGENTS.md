@@ -250,6 +250,13 @@ Each of these cost a day. Where one names a decision, the full account is in
 - **`ft truth` drops referees unless asked.** Any accuracy measured without `--referees` cannot
   see an official fielded as a player (D64).
 
+### The CLI
+
+- **A decorator separated from its function binds to whatever follows it.** Inserting a helper
+  or a new command between `@app.command()` and its `def` silently moves the command: `ft seed`
+  disappeared that way, the pipeline still ran, and all 220 tests passed. `tests/test_auto.py`
+  asserts every stage has its command, because nothing else does.
+
 ### Environment and video
 
 - **A seed only fits the picture it was clicked on** (D34). A frame NUMBER is not an identity:

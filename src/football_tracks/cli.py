@@ -923,7 +923,6 @@ def frames(
 
 
 @app.command()
-@app.command()
 def pitch(
     clip: str,
     length: float = typer.Option(0.0, help="Goal line to goal line, in metres."),
@@ -988,6 +987,7 @@ def _settled_handedness(work: Path, frames_dir: Path, *, skip: str) -> float:
     return seen.pop() if len(seen) == 1 else 0.0
 
 
+@app.command()
 def seed(
     clip: Annotated[str, typer.Argument(help="A clip in data/clips/.")],
     frame: Annotated[int, typer.Option(help="Which frame to seed.")] = 1,

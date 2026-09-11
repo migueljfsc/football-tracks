@@ -29,3 +29,31 @@ def test_no_ball_means_nobody_was_on_it() -> None:
     from football_tracks.auto import on_the_ball
 
     assert on_the_ball([], {1: [Sample(f=1, x=0.0, y=0.0, conf=0.9)]}, 25.0) == set()
+
+
+def test_every_stage_has_its_command() -> None:
+    """One command per stage, and the CLI is the only way in.
+
+    Worth asserting because nothing else does: a command is registered by a decorator, and
+    a decorator separated from its function by an edit binds to whatever follows instead.
+    `ft seed` vanished that way -- the pipeline still ran, every test still passed, and the
+    one step that needs a human was simply not there.
+    """
+    from football_tracks.cli import app
+
+    registered = {c.callback.__name__ for c in app.registered_commands if c.callback}
+    for name in (
+        "auto",
+        "bench",
+        "calibrate",
+        "detect",
+        "frames",
+        "pitch",
+        "reg-eval".replace("-", "_"),
+        "render",
+        "score",
+        "seed",
+        "segment",
+        "truth",
+    ):
+        assert name in registered, f"`ft {name.replace('_', '-')}` is not registered"
