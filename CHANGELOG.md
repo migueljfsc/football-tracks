@@ -1,3 +1,9 @@
+## v0.25.0 (2026-09-11)
+
+### Feat
+
+- six faults a coach found in one Sporting-Galatasaray clip
+
 ## v0.24.0 (2026-09-10)
 
 ### Feat
