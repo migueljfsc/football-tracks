@@ -39,9 +39,10 @@ from typing import Any
 
 import numpy as np
 
+from .config import DEFAULT_PITCH, Pitch
 from .stage2_track import MAX_SPEED
 from .stage2_track import color_distance as kit_distance
-from .tracks import Sample
+from .tracks import Sample, TeamLabel
 
 # How long a gap may be and still be bridged.
 #
@@ -267,6 +268,72 @@ def merge(positions: dict[int, list[Sample]], same: dict[int, int]) -> dict[int,
     return out
 
 
+def _standing_on(samples: list[Sample], pitch: Pitch) -> bool:
+    """Whether a track's median position is on the field, allowing the camera model's slack."""
+    x = float(np.median([s.x for s in samples]))
+    y = float(np.median([s.y for s in samples]))
+    slack = POSITION_SLACK_M
+    return -slack <= x <= pitch.length + slack and -slack <= y <= pitch.width + slack
+
+
+def keepers(
+    positions: dict[int, list[Sample]],
+    teams: dict[int, TeamLabel],
+    fps: float,
+    pitch: Pitch = DEFAULT_PITCH,
+) -> dict[int, int]:
+    """Absorbed track id -> the keeper track it belongs to.
+
+    A keeper is a ROLE, one man per goal, and `assign` has already said which tracks hold
+    it. What it cannot say is that several of them are one man. A keeper goes to ground to
+    save, the tracker loses a man lying down as surely as one behind a defender, and
+    `stitch` refuses the join on a prediction read off the dive -- so the save is exactly
+    where his track breaks. Pitchboard fields one keeper track per side, so the board keeps
+    the half before the save and hands the ball he caught to whoever stands nearest (D94).
+
+    The chain is the best-supported run of keeper fragments that never overlap, each within
+    a footballer's reach of the last, and each standing on the field: somebody behind the
+    goal in an odd kit is labelled a keeper too, and folding him in would hide him from the
+    importer's pitch test rather than let it drop him.
+    """
+    same: dict[int, int] = {}
+    for role in ("gkHome", "gkAway"):
+        frags = sorted(
+            (
+                i
+                for i, ss in positions.items()
+                if ss and teams.get(i) == role and _standing_on(ss, pitch)
+            ),
+            key=lambda i: positions[i][0].f,
+        )
+        best: dict[int, tuple[int, int | None]] = {}
+        for i in frags:
+            here = positions[i]
+            support, prev = len(here), None
+            for j, (held, _) in best.items():
+                there = positions[j]
+                gap = here[0].f - there[-1].f
+                if gap <= 0:
+                    continue
+                apart = float(np.hypot(here[0].x - there[-1].x, here[0].y - there[-1].y))
+                if apart > POSITION_SLACK_M + MAX_SPEED * gap / fps:
+                    continue
+                if held + len(here) > support:
+                    support, prev = held + len(here), j
+            best[i] = (support, prev)
+        if not best:
+            continue
+        node: int | None = max(best, key=lambda i: best[i][0])
+        chain: list[int] = []
+        while node is not None:
+            chain.append(node)
+            node = best[node][1]
+        head = chain[-1]
+        for gone in chain[:-1]:
+            same[gone] = head
+    return same
+
+
 def _cost(a: Fragment, b: Fragment, fps: float) -> float | None:
     """What it costs to call `b` the continuation of `a`, or None if it cannot be.
 
@@ -296,6 +363,13 @@ def _cost(a: Fragment, b: Fragment, fps: float) -> float | None:
     return worst / tolerance + COLOR_WEIGHT * _color_distance(a.color, b.color)
 
 
+def _head(i: int, predecessor: dict[int, int]) -> int:
+    """The first fragment of the chain `i` is in."""
+    while i in predecessor:
+        i = predecessor[i]
+    return i
+
+
 def stitch(
     positions: dict[int, list[Sample]], colors: dict[int, Any], fps: float
 ) -> dict[int, list[Sample]]:
@@ -305,6 +379,12 @@ def stitch(
     plausible successors and picking the cheapest is how one player's run lands on
     another's shirt. Requiring the choice to be returned makes an ambiguous join fail
     into two honest fragments, which is the outcome the importer can survive.
+
+    And repeated until nothing more joins, over the ends still free. A player broken twice
+    has a first fragment whose best continuation is his THIRD, which prefers the
+    second; one pass joins the second and third and leaves the first out, because its
+    choice was taken. Once those two are one chain the first can only choose its head, and
+    that join is still mutual best among what is left (D94).
     """
     frags = {
         i: Fragment(id=i, samples=sorted(ss, key=lambda s: s.f), color=colors.get(i))
@@ -315,21 +395,28 @@ def stitch(
         return positions
 
     order = sorted(frags.values(), key=lambda f: f.first.f)
-    best_next: dict[int, tuple[float, int]] = {}
-    best_prev: dict[int, tuple[float, int]] = {}
-    for a in order:
-        for b in order:
-            if a.id == b.id:
+    successor: dict[int, int] = {}
+    while True:
+        predecessor = {b: a for a, b in successor.items()}
+        best_next: dict[int, tuple[float, int]] = {}
+        best_prev: dict[int, tuple[float, int]] = {}
+        for a in order:
+            if a.id in successor:
                 continue
-            c = _cost(a, b, fps)
-            if c is None:
-                continue
-            if a.id not in best_next or c < best_next[a.id][0]:
-                best_next[a.id] = (c, b.id)
-            if b.id not in best_prev or c < best_prev[b.id][0]:
-                best_prev[b.id] = (c, a.id)
-
-    successor = {a: b for a, (_c, b) in best_next.items() if best_prev.get(b, (0.0, -1))[1] == a}
+            for b in order:
+                if b.id == a.id or b.id in predecessor or _head(a.id, predecessor) == b.id:
+                    continue
+                c = _cost(a, b, fps)
+                if c is None:
+                    continue
+                if a.id not in best_next or c < best_next[a.id][0]:
+                    best_next[a.id] = (c, b.id)
+                if b.id not in best_prev or c < best_prev[b.id][0]:
+                    best_prev[b.id] = (c, a.id)
+        joins = {a: b for a, (_c, b) in best_next.items() if best_prev.get(b, (0.0, -1))[1] == a}
+        if not joins:
+            break
+        successor.update(joins)
 
     # Walk each chain from its head, so a run of fragments collapses into one track and
     # keeps the id it started with -- the id a caller may already have written down.

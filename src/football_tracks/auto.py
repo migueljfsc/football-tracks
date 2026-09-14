@@ -921,7 +921,11 @@ def build(
         # After registration, because whether two fragments are one player is a question
         # about metres per second, and before team assignment, because a joined track
         # should be assigned once rather than voted on by its halves.
-        positions = stage2_stitch.stitch(positions, {t.id: t.color for t in raw}, fps)
+        #
+        # On the whole track's kit rather than the rolling `color`: a fragment usually ends
+        # because its player was lost in contact, so its last frames read two shirts, and
+        # the rolling average is mostly those frames (D94).
+        positions = stage2_stitch.stitch(positions, {t.id: t.kit_mean for t in raw}, fps)
 
     mean_x = {tid: float(np.mean([s.x for s in ss])) for tid, ss in positions.items()}
     kept = [t for t in raw if t.id in positions]
@@ -936,6 +940,8 @@ def build(
         on_the_ball(ball, positions, fps),
     )
     positions, teams = _split_two_shirts(kept, positions, teams)
+    # After the sides are named, because only `assign` knows which tracks hold a keeper.
+    positions = stage2_stitch.merge(positions, stage2_stitch.keepers(positions, teams, fps, pitch))
 
     return Result(
         ball=ball,

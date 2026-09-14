@@ -457,3 +457,78 @@ in 41% of frames and its errors are not scattered -- they are on the people. Wha
 a ball-specific detector, which is a model rather than a rule.
 
 Nothing shipped. The measurement is the result.
+
+**D94 — a track breaks where players touch, and of four ways to rejoin it three ship.** A
+coach's clip, Benfica against Gil Vicente, ten seconds that end in a save. Two complaints: two
+Benfica defenders stand in their own box for the first four seconds while the play comes at
+them, and the board ends with a Gil Vicente attacker on the ball the Benfica keeper caught.
+
+Both are fragmentation, and every break is a contact. The defenders' tracks end in a tackle,
+where the detector draws one box over tackler and carrier; the keeper's end in his dive and
+again on the ground. Looked at on the frames, each pair below is one man:
+
+    join       refused by
+    10 -> 27   prediction 3.93 m against a tolerance of 3.01
+    19 -> 28   prediction 2.78 m against 2.59, and kit 0.67 against the 0.6 veto
+    20 -> 34   nothing -- 20's best continuation was 35, the second half of 34's own chain
+    35 -> 41   prediction 3.62 m against 3.31
+
+The importer did the rest. It holds a player at his first sighting until his track begins, so
+a defender first tracked at frame 97 stands in the box from frame 1; and it fields ONE keeper
+track per side, so it kept the one that ended before the save and gave the ball to whoever
+stood nearest.
+
+Four changes, measured one at a time on the eleven benchmark clips and three coach clips.
+
+**The keeper is a role, and his fragments are joined once `assign` has named them**
+(`stage2_stitch.keepers`): the best-supported run of keeper tracks that never overlap, each
+within reach of the last and each on the field, so a man behind the goal in an odd kit is not
+folded in. It fires on five clips of fourteen, moves purity on two (SNGS-075 59.1% -> 60.3%,
+SNGS-100 64.3% -> 65.6%) and nothing else scored, and adds 35 observed player-seconds across
+the boards, 17 of them on 075. On the coach's clip the ball is now the keeper's.
+
+**Mutual best is repeated until nothing more joins.** A player broken twice has a first
+fragment whose best continuation is his third, which prefers his second, so one round joins
+those two and strands the first. Alone it lifts purity on five clips and SNGS-110's board by 20
+player-seconds -- and costs the team split: SNGS-075 moves 886 correctly-sided samples to
+declined or wrong, and SNGS-066 gains 331 on the wrong side. The joins a second round makes are
+the marginal ones, and the veto was judging them on a colour that did not describe the track.
+
+**So the stitcher's kit veto reads `kit_mean`, the whole track, rather than the rolling
+`color`.** A fragment ends in contact, its last frames read two shirts, and the rolling average
+is mostly those frames. On the coach's clip:
+
+                                  rolling color   whole track
+    10 -> 27, one player              0.48           0.29
+    19 -> 28, one player              0.67           0.37
+    between the two sides           0.90-1.00      0.81-0.93
+
+On top of the second change it puts 1,460 samples on the right side and takes 1,431 off the
+wrong one. The three together, against the baseline:
+
+    eleven clips      right +638   wrong -998   declined +360   recall, precision, error identical
+    fourteen boards   +107 observed player-seconds
+
+What they cost is recorded rather than averaged away: SNGS-066's board loses 16
+player-seconds and declines 428 more samples, SNGS-151 fields 19 players rather than 20, and
+SNGS-060's worst scene falls from 36% witnessed to 23%.
+
+**The fourth was built and refused: more position slack where a box holds two men.** It is the
+only one of the four that rejoins the defenders. Each join the prediction gate refused ends or
+begins on a box another covers by 0.30-0.43 of its area, and a metre of slack at such an end
+admits all three. On ground truth it admits sixteen joins, judged by which real player holds
+each whole fragment:
+
+    same player   team-mate   other side   cannot judge
+         3            6            6            1
+
+Team split +914 wrong for 45 player-seconds of board. Nothing available separates the three
+from the twelve. The cross-kit joins sit at 0.30-0.59 on the whole-track kit, under the veto,
+and a bound tight enough to refuse them refuses both of the coach's joins as well (0.29, 0.37).
+A join with no rival candidate is not safer either: of the six judged, none was the same man --
+what `PREDICT_DRIFT_MS` already records for the ordinary gate, that the wrong joins are
+confident. The confident continuation of a tackle is the other man.
+
+So the two defenders are still two fragments each. What would rejoin them is knowing which of
+two men a merged box belongs to, which a position cannot say: the other man's track running on
+through the contact might, or appearance.

@@ -236,6 +236,15 @@ that is how long the tracker holds a roster, and it fields 12 to 21 fragments of
 game. Board length is now an upstream problem: it is the fragmentation number in the table
 above, and nothing in the importer can buy it back.
 
+**A fifth complaint was fragmentation at the moment of contact (D94).** *"Players 9 and 5 are
+static in the penalty area"* and *"it shows a blue player still playing the ball while the GK
+gets it"*. Every break was a tackle or the keeper's dive. Keeper fragments are now joined as one
+role, mutual best is repeated, and the stitcher's kit veto reads the whole track: 998 fewer
+wrong-coloured samples on the eleven clips and 107 more observed player-seconds on fourteen
+boards, recall and error unchanged. The defenders are not fixed. Loosening the gate where boxes
+overlap joins somebody else 12 times in the 15 it can be judged on, and knowing which of two
+men a merged box belongs to is the open question.
+
 ## Milestones
 
 | # | done when | est. |

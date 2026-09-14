@@ -171,6 +171,17 @@ Each of these cost a day. Where one names a decision, the full account is in
   (D90). Sixty pixels of a player is mostly grass and reads like neither kit, so counting
   sightings equally makes a track LESS certain the more of it there is. `side_mean` is weighted
   by detection height; `kit` (association) and `tone` (painting) are not.
+- **A track breaks where players TOUCH, and loosening the gate there joins the other man** (D94).
+  A tackle's box holds tackler and carrier, so its foot point sits between them and the
+  prediction gate refuses the real join. A metre of slack wherever boxes overlap admitted 16
+  joins on ground truth and 3 were the same man; neither the kit nor a no-rival rule tells
+  them apart. The two defenders on the coach's clip that found it are still split.
+- **A keeper is one ROLE and often several tracks** (D94). The save is where his track breaks,
+  and Pitchboard fields ONE keeper track per side, so the board kept the half before the save
+  and gave the ball he caught to an attacker. `stage2_stitch.keepers` joins them after `assign`.
+- **The stitcher's kit veto reads `kit_mean`, not the rolling `color`** (D94). A fragment ends
+  in contact, so its last frames read two shirts; repeating mutual best without it moved 886
+  correctly-sided samples off SNGS-075.
 - **A raw track count overstates fragmentation.** What matters is how much of a player's time
   a track covers, which is what the importer asks.
 - **A bad camera frame throws every player at once**, so registration failures look like

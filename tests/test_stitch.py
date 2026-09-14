@@ -6,7 +6,7 @@ import numpy as np
 import pytest
 
 from football_tracks import stage2_stitch
-from football_tracks.tracks import Sample
+from football_tracks.tracks import Sample, TeamLabel
 
 
 def _frag(start: int, n: int, x: float, y: float, step: float = 0.1) -> list[Sample]:
@@ -202,3 +202,62 @@ def test_merging_keeps_one_sample_a_frame_and_fills_the_gaps() -> None:
     frames = [s.f for s in merged[1]]
     assert frames == sorted(frames)
     assert len(frames) == len(set(frames)) == 60
+
+
+def test_a_keeper_broken_by_his_own_save_is_one_keeper() -> None:
+    # The dive is where the tracker loses him, twice: before the save, on the ground, and
+    # getting up with the ball. Three fragments, one role, never live at once (D94).
+    positions = {
+        20: _frag(17, 200, 5.0, 36.0, 0.0),
+        34: _frag(239, 25, 7.5, 39.5, 0.0),
+        41: _frag(283, 50, 8.8, 41.8, 0.0),
+    }
+    teams: dict[int, TeamLabel] = {20: "gkHome", 34: "gkHome", 41: "gkHome"}
+    assert stage2_stitch.keepers(positions, teams, 35.0) == {34: 20, 41: 20}
+
+
+def test_two_keeper_tracks_live_at_once_are_not_one_keeper() -> None:
+    # The shorter one overlaps the longer and loses; the one after both still joins.
+    positions = {
+        1: _frag(0, 200, 5.0, 34.0, 0.0),
+        2: _frag(90, 20, 13.0, 30.0, 0.0),
+        3: _frag(230, 40, 6.0, 35.0, 0.0),
+    }
+    teams: dict[int, TeamLabel] = {1: "gkHome", 2: "gkHome", 3: "gkHome"}
+    assert stage2_stitch.keepers(positions, teams, 25.0) == {3: 1}
+
+
+def test_somebody_behind_the_goal_is_not_folded_into_the_keeper() -> None:
+    positions = {1: _frag(0, 100, 5.0, 34.0, 0.0), 2: _frag(300, 20, 3.0, -4.0, 0.0)}
+    teams: dict[int, TeamLabel] = {1: "gkHome", 2: "gkHome"}
+    assert stage2_stitch.keepers(positions, teams, 25.0) == {}
+
+
+def test_a_keeper_fragment_out_of_reach_is_not_his() -> None:
+    positions = {1: _frag(0, 50, 2.0, 34.0, 0.0), 2: _frag(52, 50, 16.0, 50.0, 0.0)}
+    teams: dict[int, TeamLabel] = {1: "gkHome", 2: "gkHome"}
+    assert stage2_stitch.keepers(positions, teams, 25.0) == {}
+
+
+def test_only_the_same_keeper_role_is_joined() -> None:
+    positions = {
+        1: _frag(0, 50, 30.0, 30.0, 0.0),
+        2: _frag(60, 50, 30.5, 30.0, 0.0),
+        3: _frag(0, 50, 100.0, 34.0, 0.0),
+        4: _frag(60, 50, 5.0, 34.0, 0.0),
+    }
+    teams: dict[int, TeamLabel] = {1: "home", 2: "home", 3: "gkAway", 4: "gkHome"}
+    assert stage2_stitch.keepers(positions, teams, 25.0) == {}
+
+
+def test_a_player_broken_twice_is_joined_across_both_breaks() -> None:
+    # The first fragment's best continuation is the third, which prefers the second. One
+    # round of mutual best joins the second and third and strands the first (D94).
+    positions = {
+        1: _frag(0, 100, 10.0, 30.0, 0.0),
+        2: _frag(110, 6, 12.8, 30.0, 0.0),
+        3: _frag(120, 80, 12.5, 30.0, 0.0),
+    }
+    out = stage2_stitch.stitch(positions, {}, 25.0)
+    assert list(out) == [1]
+    assert len(out[1]) == 186
