@@ -1,3 +1,9 @@
+## v0.27.0 (2026-09-14)
+
+### Feat
+
+- **tracking**: join a keeper's fragments and a player broken twice
+
 ## v0.26.0 (2026-09-11)
 
 ### Feat
