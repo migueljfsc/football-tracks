@@ -1,3 +1,9 @@
+## v0.28.0 (2026-09-15)
+
+### Feat
+
+- **tracking**: rejoin a player lost in a tackle by how he looks
+
 ## v0.27.0 (2026-09-14)
 
 ### Feat
