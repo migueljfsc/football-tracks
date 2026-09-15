@@ -33,6 +33,7 @@ import numpy as np
 from . import (
     calibration,
     detect,
+    reid,
     stage1_propagate,
     stage1_register,
     stage2_stitch,
@@ -852,6 +853,7 @@ def build(
     fps: float,
     motions: dict[int, Any] | None = None,
     balls: list[detect.Sighting] | None = None,
+    appearance: dict[reid.Key, Any] | None = None,
     stitch: bool = True,
     pitch: Pitch = DEFAULT_PITCH,
 ) -> Result:
@@ -861,6 +863,9 @@ def build(
     other order made stage 2 inherit every wobble in stage 1's homography, which is
     what breaks tracks all at once (D19). This way a drifting homography moves the
     positions and leaves the identities intact.
+
+    `appearance` is `reid`'s embeddings by detection. Without it the stitcher never spends its
+    contact slack, and the tracks are what they were before appearance existed (D95).
     """
     cache: dict[int, Any] = {}
 
@@ -925,7 +930,20 @@ def build(
         # On the whole track's kit rather than the rolling `color`: a fragment usually ends
         # because its player was lost in contact, so its last frames read two shirts, and
         # the rolling average is mostly those frames (D94).
-        positions = stage2_stitch.stitch(positions, {t.id: t.kit_mean for t in raw}, fps)
+        joined = stage2_stitch.joins(
+            positions,
+            {t.id: t.kit_mean for t in raw},
+            fps,
+            _ends(observations, raw, positions, same, appearance),
+        )
+        # And the shirt readings move with the samples, as they do for a duplicate. A fragment
+        # folded into a track leaves the side clustering, and with its readings left behind
+        # the cut moves for everybody else: one correct join on SNGS-066 flipped a 600-sample
+        # track to the other side (D95).
+        for gone, keep in joined.items():
+            if gone in held and keep in held:
+                held[keep].absorb(held[gone])
+        positions = stage2_stitch.merge(positions, joined)
 
     mean_x = {tid: float(np.mean([s.x for s in ss])) for tid, ss in positions.items()}
     kept = [t for t in raw if t.id in positions]
@@ -989,6 +1007,59 @@ def on_the_ball(ball: list[Sample], positions: dict[int, list[Sample]], fps: flo
             held[best] = held.get(best, 0) + 1
     floor = max(1, round(ON_THE_BALL_S * fps))
     return {tid for tid, n in held.items() if n >= floor}
+
+
+def _ends(
+    observations: dict[int, list[stage2_track.Observation]],
+    raw: list[stage2_track.Track],
+    positions: dict[int, list[Sample]],
+    same: dict[int, int],
+    appearance: dict[reid.Key, Any] | None,
+) -> dict[int, stage2_stitch.Ends]:
+    """Each track's contact and look at either end, for the stitcher.
+
+    Looked up after duplicates are merged, so an end sample may belong to an absorbed track; a
+    survivor's own box is preferred, as `stage2_stitch.merge` prefers its sample. A look is only
+    taken from crops nobody else covers: the crop of a box holding two men is both of them.
+    """
+    boxes: dict[tuple[int, int], detect.Detection] = {}
+    for t in sorted(raw, key=lambda t: t.id in same):
+        owner = t.id
+        while owner in same:
+            owner = same[owner]
+        for o in t.observations:
+            boxes.setdefault((owner, o.f), o.det)
+
+    def covered(tid: int, f: int) -> float | None:
+        det = boxes.get((tid, f))
+        if det is None:
+            return None
+        return stage2_track.covered(det, [o.det for o in observations.get(f, [])])
+
+    def look(tid: int, samples: list[Sample]) -> Any:
+        if appearance is None:
+            return None
+        seen = []
+        for s in samples:
+            cover = covered(tid, s.f)
+            if cover is None or cover >= stage2_stitch.CONTACT_COVER:
+                continue
+            v = appearance.get(reid.key(boxes[(tid, s.f)]))
+            if v is not None:
+                seen.append(v)
+                if len(seen) == reid.GALLERY:
+                    break
+        return reid.look(seen)
+
+    return {
+        tid: stage2_stitch.Ends(
+            found_in_contact=(covered(tid, ss[0].f) or 0.0) >= stage2_stitch.CONTACT_COVER,
+            lost_in_contact=(covered(tid, ss[-1].f) or 0.0) >= stage2_stitch.CONTACT_COVER,
+            look_first=look(tid, ss),
+            look_last=look(tid, ss[::-1]),
+        )
+        for tid, ss in positions.items()
+    }
 
 
 def _split_two_shirts(

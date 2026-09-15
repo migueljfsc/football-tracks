@@ -532,3 +532,56 @@ confident. The confident continuation of a tackle is the other man.
 So the two defenders are still two fragments each. What would rejoin them is knowing which of
 two men a merged box belongs to, which a position cannot say: the other man's track running on
 through the contact might, or appearance.
+
+**D95 — which of two men a merged box belongs to is a question about how they look, and
+answering it exposed a fault in every join.** D94 left the coach's two defenders split: their
+tracks break in a tackle, the break's box holds both men, and a metre of slack there joined the
+other man twelve times in fifteen. So the slack is now spent only where the two ends LOOK like
+one man.
+
+**The look is OSNet-AIN**, a person re-identification network (`reid.py`; the architecture
+vendored from Torchreid in `osnet.py`, MIT; the MSMT17 weights downloaded on first use, checked
+against a pinned SHA-256 before every load, loaded `weights_only`, never committed). `ft reid`
+embeds every detection; a fragment end's look is the mean of up to eight crops nobody else's box
+covers. Measured before any of it was built, on 306 ground-truth candidate joins with clean crops
+at both ends:
+
+    separation (AUC)          same v team-mate   same v opponent   same v either
+    kit signature                   0.74               0.90              0.83
+    OSNet x1.0                      0.81               0.88              0.84
+    OSNet-AIN x1.0                  0.88               0.92              0.90
+
+On the joins only contact slack would make, the ones D94 refused, AIN separates the same man
+from an opponent perfectly (1.00) and from a team-mate at 0.87. `LOOK_APART` is the 95th
+percentile of the same-player distances over ALL those joins, not the contact ones it is judged
+on; the pipeline reproduces the measured distances to the third decimal.
+
+**Gated like that, it still cost the team split, and the joins were not why.**
+
+    appearance alone, against D94      right    wrong   declined   observed p·s
+    LOOK_APART 0.172                   -511     +843     -332         +20
+    LOOK_APART 0.219                   -511     +391     +120         +21
+
+On SNGS-066 both new joins were the same player and kept his side, and a 604-sample track that
+is 65% one player flipped from declined to the wrong side. On SNGS-075 the join matched the end
+of a track the TRACKER had already switched from a home player to an away one. The second is
+D61's; the first is a fault older than any of this. `stitch` folded a fragment's samples into a
+track and left its shirt readings behind, so every join took evidence out of the side clustering
+and moved the cut for everybody else -- the thing `duplicates` has absorbed readings to avoid
+since D90.
+
+**So the readings move with the samples, on every join**, and that is the bigger change:
+
+    against D94                        right    wrong   declined   observed p·s
+    readings absorbed                  +4538    -2295    -2243         +47
+    ... and appearance at 0.219        +4775    -2379    -2396         +65
+
+Recall, precision and position error identical on all eleven clips. SNGS-151 fields 22 players
+again, where D94 had cost it one. Appearance on top of the absorb is +237 right, -84 wrong, purity
+up on six clips and switches down on eight; 0.172 and 0.219 make identical joins on every
+benchmark clip, and 0.219 is the one that also joins the coach's second defender (0.191). What
+it costs: SNGS-069's board 18 player-seconds, nottingham's 13, and SNGS-067 three more switches,
+all from the absorb.
+
+On the coach's clip both defenders now run with the play from their first sighting, and the
+keeper still takes the ball at the end.

@@ -245,6 +245,15 @@ boards, recall and error unchanged. The defenders are not fixed. Loosening the g
 overlap joins somebody else 12 times in the 15 it can be judged on, and knowing which of two
 men a merged box belongs to is the open question.
 
+**Appearance answered it, and exposed an older fault on the way (D95).** `ft reid` embeds every
+detection with OSNet-AIN, and the stitcher spends its contact slack only where the clean crops
+either side of a tackle look like one man. Benched, it still cost the team split -- not through
+wrong joins, but because a joined fragment's shirt readings had always been left out of the side
+clustering, so every correct join moved the cut for everybody. Absorbing them is the bigger win:
+with appearance on top, 4,775 more correctly-sided samples and 2,379 fewer wrong ones across
+eleven clips, 65 more observed player-seconds on fourteen boards, recall and error unchanged, and
+both of the coach's defenders run with the play.
+
 ## Milestones
 
 | # | done when | est. |

@@ -80,5 +80,12 @@ module = [
 ]
 ignore_missing_imports = true
 
+# Vendored from Torchreid. Its layers subclass nn.Module, which is Any where torch is not
+# installed, and return what nn.Module.__call__ types as Any where it is.
+[[tool.mypy.overrides]]
+module = ["football_tracks.osnet"]
+disallow_subclassing_any = false
+warn_return_any = false
+
 [tool.pytest.ini_options]
 testpaths = ["tests"]

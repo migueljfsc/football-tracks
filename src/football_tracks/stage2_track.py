@@ -126,6 +126,22 @@ MIN_TRACK_LENGTH = 5
 UNREACHABLE = 1e6
 
 
+def covered(det: Detection, others: list[Detection]) -> float:
+    """The largest share of the smaller of two boxes that any other box overlaps."""
+    area = (det.x2 - det.x1) * (det.y2 - det.y1)
+    best = 0.0
+    for o in others:
+        if o is det:
+            continue
+        w = min(det.x2, o.x2) - max(det.x1, o.x1)
+        h = min(det.y2, o.y2) - max(det.y1, o.y1)
+        smaller = min(area, (o.x2 - o.x1) * (o.y2 - o.y1))
+        if w <= 0 or h <= 0 or smaller <= 0:
+            continue
+        best = max(best, w * h / smaller)
+    return best
+
+
 def warp(x: float, y: float, motion: np.ndarray | None) -> tuple[float, float]:
     """Where a point on the grass lands in the next frame if nobody moves but the camera."""
     if motion is None:

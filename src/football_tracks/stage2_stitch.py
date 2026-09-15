@@ -34,12 +34,13 @@ gate, the mutual-best rule, and no chaining beyond what each link earns on its o
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any
 
 import numpy as np
 
 from .config import DEFAULT_PITCH, Pitch
+from .reid import distance as look_distance
 from .stage2_track import MAX_SPEED
 from .stage2_track import color_distance as kit_distance
 from .tracks import Sample, TeamLabel
@@ -130,12 +131,50 @@ COLOR_WEIGHT = 0.6
 # thing on both sides of the gap.
 KIT_VETO = 0.6
 
+# How much of a box another box must cover before its foot point is not one player's.
+#
+# A track is most often lost in CONTACT -- a tackle, a keeper under a striker -- and the box
+# drawn there holds two men, so its position is somewhere between them. Every join D94 found
+# the position gate refusing ends or begins on such a box, covered 0.30-0.43 by another.
+CONTACT_COVER = 0.25
+
+# What such a box costs the position gate, in metres, on top of POSITION_SLACK_M -- and only
+# where the two ends LOOK like one man (LOOK_APART).
+#
+# Without the look this is the change D94 refused: of sixteen joins it added on ground truth,
+# three were the same player, and the kit could not tell the rest apart. A merged box is the
+# one case where position cannot say which fragment is whose, so the slack is only ever spent
+# on a question appearance has already answered.
+CONTACT_SLACK_M = 1.0
+
+# Most cosine distance between two fragment ends' appearance (`reid.look`) for them to count
+# as one man: the 95th percentile of that distance over every same-player candidate join on the
+# benchmark -- set on those, not on the contact joins it is judged on (D95). On the eleven
+# benchmark clips it makes exactly the joins the 90th percentile (0.172) does; what the extra
+# reach buys is the coach's defender, whose two ends sit at 0.191.
+LOOK_APART = 0.219
+
+
+@dataclass(slots=True)
+class Ends:
+    """What a fragment's first and last boxes say beyond position.
+
+    Whether each was covered by somebody else's (`CONTACT_COVER`), and the player's look over
+    the clean crops nearest each end -- None where there were none, or no embeddings at all.
+    """
+
+    found_in_contact: bool = False
+    lost_in_contact: bool = False
+    look_first: np.ndarray | None = None
+    look_last: np.ndarray | None = None
+
 
 @dataclass(slots=True)
 class Fragment:
     id: int
     samples: list[Sample]
     color: np.ndarray | None = None
+    ends: Ends = field(default_factory=Ends)
 
     @property
     def first(self) -> Sample:
@@ -257,7 +296,7 @@ def duplicates(positions: dict[int, list[Sample]], fps: float) -> dict[int, int]
 
 
 def merge(positions: dict[int, list[Sample]], same: dict[int, int]) -> dict[int, list[Sample]]:
-    """Fold every duplicate into the track it duplicates, keeping one sample per frame."""
+    """Fold every absorbed track into the one it belongs to, keeping one sample per frame."""
     out = {i: list(ss) for i, ss in positions.items()}
     for gone, keep in same.items():
         if gone not in out or keep not in out:
@@ -334,6 +373,17 @@ def keepers(
     return same
 
 
+def _contact_slack(a: Fragment, b: Fragment) -> float:
+    """CONTACT_SLACK_M where either end was a box holding two men and both ends look like one."""
+    if not (a.ends.lost_in_contact or b.ends.found_in_contact):
+        return 0.0
+    if a.ends.look_last is None or b.ends.look_first is None:
+        return 0.0
+    if look_distance(a.ends.look_last, b.ends.look_first) > LOOK_APART:
+        return 0.0
+    return CONTACT_SLACK_M
+
+
 def _cost(a: Fragment, b: Fragment, fps: float) -> float | None:
     """What it costs to call `b` the continuation of `a`, or None if it cannot be.
 
@@ -348,7 +398,7 @@ def _cost(a: Fragment, b: Fragment, fps: float) -> float | None:
     gap_s = gap / fps
     ax, ay = _velocity(a.samples, fps, at_end=True)
     bx, by = _velocity(b.samples, fps, at_end=False)
-    tolerance = POSITION_SLACK_M + PREDICT_DRIFT_MS * gap_s
+    tolerance = POSITION_SLACK_M + _contact_slack(a, b) + PREDICT_DRIFT_MS * gap_s
     ahead = float(
         np.hypot(b.first.x - (a.last.x + ax * gap_s), b.first.y - (a.last.y + ay * gap_s))
     )
@@ -370,12 +420,16 @@ def _head(i: int, predecessor: dict[int, int]) -> int:
     return i
 
 
-def stitch(
-    positions: dict[int, list[Sample]], colors: dict[int, Any], fps: float
-) -> dict[int, list[Sample]]:
-    """Join fragments that are each other's best continuation, and nobody else's.
+def joins(
+    positions: dict[int, list[Sample]],
+    colors: dict[int, Any],
+    fps: float,
+    ends: dict[int, Ends] | None = None,
+) -> dict[int, int]:
+    """Absorbed fragment id -> the first fragment of the chain it joins.
 
-    Mutual best rather than greedy-global: a fragment that ends in a crowd has several
+    Fragments join where they are each other's best continuation, and nobody else's. Mutual
+    best rather than greedy-global: a fragment that ends in a crowd has several
     plausible successors and picking the cheapest is how one player's run lands on
     another's shirt. Requiring the choice to be returned makes an ambiguous join fail
     into two honest fragments, which is the outcome the importer can survive.
@@ -385,14 +439,23 @@ def stitch(
     second; one pass joins the second and third and leaves the first out, because its
     choice was taken. Once those two are one chain the first can only choose its head, and
     that join is still mutual best among what is left (D94).
+
+    `ends` is what each fragment's first and last boxes show beyond position, which is what
+    decides whether a join across a contact earns `CONTACT_SLACK_M`.
     """
+    known = ends or {}
     frags = {
-        i: Fragment(id=i, samples=sorted(ss, key=lambda s: s.f), color=colors.get(i))
+        i: Fragment(
+            id=i,
+            samples=sorted(ss, key=lambda s: s.f),
+            color=colors.get(i),
+            ends=known.get(i, Ends()),
+        )
         for i, ss in positions.items()
         if ss
     }
     if len(frags) < 2:
-        return positions
+        return {}
 
     order = sorted(frags.values(), key=lambda f: f.first.f)
     successor: dict[int, int] = {}
@@ -413,29 +476,32 @@ def stitch(
                     best_next[a.id] = (c, b.id)
                 if b.id not in best_prev or c < best_prev[b.id][0]:
                     best_prev[b.id] = (c, a.id)
-        joins = {a: b for a, (_c, b) in best_next.items() if best_prev.get(b, (0.0, -1))[1] == a}
-        if not joins:
+        mutual = {a: b for a, (_c, b) in best_next.items() if best_prev.get(b, (0.0, -1))[1] == a}
+        if not mutual:
             break
-        successor.update(joins)
+        successor.update(mutual)
 
     # Walk each chain from its head, so a run of fragments collapses into one track and
-    # keeps the id it started with -- the id a caller may already have written down.
+    # keeps the id it started with -- the id a caller may already have written down. A
+    # fragment inside a cycle has no head and stays its own track: there should be none, but
+    # losing a player silently is not an acceptable way to find that out.
     tails = set(successor.values())
-    out: dict[int, list[Sample]] = {}
-    joined: set[int] = set()
+    joined: dict[int, int] = {}
     for head in sorted(frags):
         if head in tails:
             continue
-        samples: list[Sample] = []
-        node: int | None = head
+        node = successor.get(head)
         while node is not None and node not in joined:
-            joined.add(node)
-            samples.extend(frags[node].samples)
+            joined[node] = head
             node = successor.get(node)
-        out[head] = sorted(samples, key=lambda s: s.f)
-    # A fragment inside a cycle would otherwise vanish; there should be none, but losing
-    # a player silently is not an acceptable way to find that out.
-    for i, f in frags.items():
-        if i not in joined:
-            out[i] = f.samples
-    return out
+    return joined
+
+
+def stitch(
+    positions: dict[int, list[Sample]],
+    colors: dict[int, Any],
+    fps: float,
+    ends: dict[int, Ends] | None = None,
+) -> dict[int, list[Sample]]:
+    """Every fragment folded into the chain it continues (`joins`)."""
+    return merge(positions, joins(positions, colors, fps, ends))

@@ -50,6 +50,8 @@ src/football_tracks/
   seedui.py                 the click tool. Disposable: the FILE is the interface (D23)
   detect.py                 stage 2a, RT-DETR (Apache) - see D28 for why not the others
   stage2_track.py           stage 2b, association in stabilised pixels
+  reid.py                   stage 2c, how each player looks - only the stitcher reads it (D95)
+  osnet.py                  the re-id network, vendored from Torchreid (MIT)
   stage3_teams.py           kit clustering, and which end each side plays at
   auto.py                   the whole automatic path, frames in and tracks.json out
   overlay.py                the markings reprojected onto a frame - stage 1's picture
@@ -175,13 +177,22 @@ Each of these cost a day. Where one names a decision, the full account is in
   A tackle's box holds tackler and carrier, so its foot point sits between them and the
   prediction gate refuses the real join. A metre of slack wherever boxes overlap admitted 16
   joins on ground truth and 3 were the same man; neither the kit nor a no-rival rule tells
-  them apart. The two defenders on the coach's clip that found it are still split.
+  them apart. How they LOOK does: the slack is spent only where `reid` says the two ends are
+  one man (D95).
 - **A keeper is one ROLE and often several tracks** (D94). The save is where his track breaks,
   and Pitchboard fields ONE keeper track per side, so the board kept the half before the save
   and gave the ball he caught to an attacker. `stage2_stitch.keepers` joins them after `assign`.
 - **The stitcher's kit veto reads `kit_mean`, not the rolling `color`** (D94). A fragment ends
   in contact, so its last frames read two shirts; repeating mutual best without it moved 886
   correctly-sided samples off SNGS-075.
+- **A joined fragment's shirt readings go WITH it** (D95). A fragment folded into a track leaves
+  the side clustering, and with its readings left behind one correct join moves the cut for
+  everybody -- SNGS-066's flipped a 600-sample track to the other side. `duplicates` absorbed
+  them since D90 and `joins` did not; absorbing them there was worth 4,538 correctly-sided
+  samples on its own.
+- **`appearance.npz` is keyed by detection** (D95). Re-running `ft detect` invalidates it and
+  `ft auto` says IGNORING; without it the stitcher spends no contact slack and nothing else
+  changes, so a missing cache is a quiet regression to D94, not an error.
 - **A raw track count overstates fragmentation.** What matters is how much of a player's time
   a track covers, which is what the importer asks.
 - **A bad camera frame throws every player at once**, so registration failures look like
@@ -317,6 +328,11 @@ assuming the credential is wrong.
 **Trained weights are never committed.** `work/` and `*.pt` are gitignored, which is what keeps
 a 42 MB checkpoint derived from licensed data out of a public MIT repo. That is a structural
 guard, not a habit — do not add a path that escapes it.
+
+**A downloaded checkpoint is a pickle, and a pickle runs code.** `reid.weights` pins the SHA-256
+of the re-id weights and checks it before every load, not only after a download, and
+`load_model` reads them `weights_only`. Neither is loosened to try another checkpoint: pin the
+new one's published hash instead.
 
 ## Definition of done
 

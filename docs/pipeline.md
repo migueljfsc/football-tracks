@@ -95,6 +95,20 @@ stage 5 exists.
 - *Check:* boxes and ids overlaid on the video. Count the switches over 10s by eye.
 - *Difficulty:* medium, and the risk is concentrated here.
 
+### Stage 2c — appearance `appearance.npz`
+
+`ft reid` embeds every detection with OSNet-AIN, a person re-identification network, into a
+512-d vector where one person lands near himself and far from everybody else. The tracker never
+reads it. The stitcher does, at one decision only: a join across a box that holds two men gets
+`CONTACT_SLACK_M` more position gate if, and only if, the clean crops at the two ends look like
+one man (`LOOK_APART`, D95). Without the file the pipeline is exactly what it was.
+
+The network is vendored (`osnet.py`, MIT); the weights download on first use, are checked
+against a pinned SHA-256 before every load and loaded `weights_only`, and are never committed.
+
+- *Check:* the clean crops each end of a join is judged on, side by side (D95).
+- *Difficulty:* the model is borrowed. The risk is team-mates, who share everything but the man.
+
 ### Stage 3 — teams `teams.json`
 
 Cluster torso crops by colour: two outfield kits, two keepers, referees. Referees are dropped;

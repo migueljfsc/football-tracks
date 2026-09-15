@@ -261,3 +261,35 @@ def test_a_player_broken_twice_is_joined_across_both_breaks() -> None:
     out = stage2_stitch.stitch(positions, {}, 25.0)
     assert list(out) == [1]
     assert len(out[1]) == 186
+
+
+def _look(*v: float) -> np.ndarray:
+    a = np.array(v, dtype=np.float32)
+    return a / np.linalg.norm(a)
+
+
+def test_a_box_holding_two_men_widens_the_gate_only_where_both_ends_look_like_one() -> None:
+    # A tackle: the last box covers both players, so its foot point lands between them and the
+    # player appears to jump. Position cannot say which fragment afterwards is his, so the
+    # slack is spent only where the two ends look alike (D95).
+    positions = {1: _frag(0, 100, 10.0, 30.0, 0.0), 2: _frag(102, 50, 13.0, 30.0, 0.0)}
+    him, other = _look(1.0, 0.0, 0.0), _look(0.0, 1.0, 0.0)
+    Ends = stage2_stitch.Ends
+    alike = {1: Ends(lost_in_contact=True, look_last=him), 2: Ends(look_first=him)}
+    unlike = {1: Ends(lost_in_contact=True, look_last=him), 2: Ends(look_first=other)}
+    unseen = {1: Ends(lost_in_contact=True), 2: Ends()}
+    no_contact = {1: Ends(look_last=him), 2: Ends(look_first=him)}
+    assert list(stage2_stitch.stitch(positions, {}, 25.0, alike)) == [1]
+    assert len(stage2_stitch.stitch(positions, {}, 25.0, unlike)) == 2
+    assert len(stage2_stitch.stitch(positions, {}, 25.0, unseen)) == 2
+    assert len(stage2_stitch.stitch(positions, {}, 25.0, no_contact)) == 2
+
+
+def test_looking_alike_never_rescues_a_jump_beyond_the_slack() -> None:
+    positions = {1: _frag(0, 100, 10.0, 30.0, 0.0), 2: _frag(102, 50, 14.0, 30.0, 0.0)}
+    him = _look(1.0, 0.0, 0.0)
+    ends = {
+        1: stage2_stitch.Ends(lost_in_contact=True, look_last=him),
+        2: stage2_stitch.Ends(found_in_contact=True, look_first=him),
+    }
+    assert len(stage2_stitch.stitch(positions, {}, 25.0, ends)) == 2

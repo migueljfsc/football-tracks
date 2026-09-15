@@ -25,6 +25,7 @@ from football_tracks.stage2_track import (
     Track,
     _cost,
     color_distance,
+    covered,
     kit,
     run,
     side,
@@ -535,3 +536,11 @@ def test_absorbing_a_duplicate_takes_its_shirt_readings_too() -> None:
     a.absorb(b)
     assert a.side_weight == pytest.approx(150.0)
     assert a.side_seen == 2
+
+
+def test_a_box_is_covered_by_the_share_of_the_smaller_box_another_overlaps() -> None:
+    tackler = Detection(f=1, x1=0.0, y1=0.0, x2=40.0, y2=100.0, score=0.9)
+    carrier = Detection(f=1, x1=20.0, y1=0.0, x2=60.0, y2=100.0, score=0.9)
+    apart = Detection(f=1, x1=200.0, y1=0.0, x2=240.0, y2=100.0, score=0.9)
+    assert covered(tackler, [tackler, carrier, apart]) == pytest.approx(0.5)
+    assert covered(apart, [tackler, carrier, apart]) == 0.0

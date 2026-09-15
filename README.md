@@ -31,6 +31,7 @@ uv run ft calibrate SNGS-147 --frame 288   # the overlay - do lines land on line
 uv run ft calibrate SNGS-147 --video
 
 uv run ft detect SNGS-147            # stage 2a: find people, cached
+uv run ft reid SNGS-147              # stage 2c: how each player looks, cached
 uv run ft auto SNGS-147 --mode seed  # the whole pipeline from ONE seeded frame
 uv run ft score work/SNGS-147/tracks.json
 
@@ -39,6 +40,7 @@ uv run ft frames my_goal.mov         # -> data/clips/my_goal/img1/, bars removed
 uv run ft seed my_goal               # click pitch landmarks on frame 1
 uv run ft calibrate my_goal --frame 1      # check: do lines land on lines?
 uv run ft detect my_goal
+uv run ft reid my_goal
 uv run ft auto my_goal --mode seed         # -> work/my_goal/tracks.json
 uv run ft render work/my_goal/tracks.json  # the top-down proof
 
@@ -81,6 +83,7 @@ uv sync --extra ocr      # shirt numbers
 | 0 | segment — find the tactical camera | built, unproven |
 | 1 | registration — pixels to metres | solver done; seed works. Learned detector at 0.67 m vs a 0.5 m bar (D36) |
 | 2 | detect and track | RT-DETR; purity 86% at 7s, but 60% in a crowded box |
+| 2c | appearance — two men in one tackle | OSNet-AIN; a join across a contact only where both ends look alike (D95) |
 | 3 | teams | 87% of samples on the right side; keepers found |
 | 4 | project — **the proof** | working |
 | 5 | shirt numbers | **tried; does not work** — 1 right, 4 wrong of 9 (D32) |

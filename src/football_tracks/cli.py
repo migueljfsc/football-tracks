@@ -14,11 +14,12 @@ from . import calibration, soccernet, stage0_segment, stage1_propagate, stage1_r
 from . import detect as detect_mod
 from . import overlay as overlay_mod
 from . import refine as refine_mod
+from . import reid as reid_mod
 from . import render as render_mod
 from . import score as score_mod
 from . import seed as seed_mod
 from . import video as video_mod
-from .config import CALIB_DATA, CLIPS, Pitch, read_pitch, work_dir, write_pitch
+from .config import CALIB_DATA, CLIPS, WORK, Pitch, read_pitch, work_dir, write_pitch
 
 app = typer.Typer(add_completion=False, help="Broadcast clip -> player tracks in pitch metres.")
 
@@ -700,6 +701,31 @@ def detect(
 
 
 @app.command()
+def reid(
+    clip: Annotated[str, typer.Argument(help="A clip already fetched into data/clips/.")],
+) -> None:
+    """Stage 2c - embed how every detected player looks, and cache it.
+
+    Needs `ft detect` first. The tracker never reads it; the stitcher does, to spend its contact
+    slack only on a join whose two ends look like one man (D95). The weights download to
+    work/reid/ on first use and are checked against a pinned hash before every load.
+    """
+    c = soccernet.Clip(name=clip, root=CLIPS / clip)
+    out = work_dir(Path(clip))
+    dets_path = out / "detections.json"
+    if not dets_path.exists():
+        raise typer.BadParameter(f"no {dets_path} - run `ft detect {clip}` first")
+    detections, _balls = detect_mod.read(dets_path)
+    frames = sorted({d.f for d in detections})
+    with typer.progressbar(frames, label="embedding") as bar:
+        features, valid = reid_mod.run(
+            c.frames_dir, detections, WORK / "reid", progress=lambda _f: bar.update(1)
+        )
+    path = reid_mod.write(out / "appearance.npz", detections, features, valid)
+    typer.echo(f"{int(valid.sum())} of {len(detections)} detections embedded")
+    typer.echo(f"wrote {path}")
+
+
 def _pipeline(
     clip: str,
     mode: str,
@@ -727,6 +753,13 @@ def _pipeline(
 
     frames = sorted(int(p.stem) for p in c.frames_dir.glob("*.jpg"))
     detections, balls = detect_mod.read(dets_path)
+    appearance_path = out / "appearance.npz"
+    appearance = reid_mod.read(appearance_path, detections)
+    if appearance is None and appearance_path.exists():
+        typer.echo(
+            f"IGNORING {appearance_path.name}: it was embedded from other detections"
+            f" - run `ft reid {clip}`"
+        )
     motions = stage1_propagate.motions(c.frames_dir, frames, cache=out / "motions.json")
 
     labels: dict[str, Any] | None = None
@@ -786,6 +819,7 @@ def _pipeline(
         fps=_fps(CLIPS / clip, labels),
         motions=motions,
         balls=balls,
+        appearance=appearance,
         stitch=stitch,
         pitch=pitch,
     )
@@ -899,7 +933,7 @@ def frames(
     # another camera fits nothing and says nothing about it.
     work = work_dir(Path(name or source.stem))
     if before:
-        for cached in ("motions.json", "detections.json"):
+        for cached in ("motions.json", "detections.json", "appearance.npz"):
             path = work / cached
             if path.exists():
                 path.unlink()

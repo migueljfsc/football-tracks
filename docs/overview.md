@@ -42,7 +42,10 @@ end up somewhere nobody is. The learned alternative is three to four times clean
 wherever the pitch markings are too few (D67).
 
 **Identity does not survive crowds.** Purity runs 57% to 86%, and seven attempts on it have
-failed (D61). The one thing that ever moved it was fixing stage 1, not the tracker.
+failed (D61). The one thing that ever moved it was fixing stage 1, not the tracker. A person
+re-identification network now decides one narrow case -- which fragment continues a player
+lost in a tackle -- and moves purity by a point at most; association itself still has no
+appearance (D95).
 
 ## How to read the docs
 

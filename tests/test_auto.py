@@ -50,6 +50,7 @@ def test_every_stage_has_its_command() -> None:
         "frames",
         "pitch",
         "reg-eval".replace("-", "_"),
+        "reid",
         "render",
         "score",
         "seed",
@@ -57,3 +58,5 @@ def test_every_stage_has_its_command() -> None:
         "truth",
     ):
         assert name in registered, f"`ft {name.replace('_', '-')}` is not registered"
+    # And no helper: a function under a stray decorator is registered as a command nobody meant.
+    assert "_pipeline" not in registered, "`_pipeline` is a helper, not a command"
