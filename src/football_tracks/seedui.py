@@ -10,6 +10,8 @@ used once per clip and then forgotten.
 
 from __future__ import annotations
 
+import contextlib
+import time
 from pathlib import Path
 from typing import Any
 
@@ -511,7 +513,14 @@ def working(text: str, done: int = 0, total: int = 0) -> None:
     For the waits between one click and the next. The longest is optical flow over the
     whole clip, the slowest step in the pipeline, and to somebody watching the window
     rather than the terminal it would otherwise look like a hang.
+
+    Only into a window already on screen, never a new one. A wait is the caller blocking
+    the event loop for seconds, and a window put up just before that never gets to finish
+    coming forward (see `_open`) -- on a coach's machine every click on the scrubber after
+    it was lost, for a whole session, while 187 mouse moves reached it.
     """
+    if not _showing(SCRUB):
+        return
     canvas = np.full((900, 1600, 3), GROUND, dtype=np.uint8)
     cv2.putText(canvas, text, (80, 420), cv2.FONT_HERSHEY_SIMPLEX, 1.4, TEXT, 2, cv2.LINE_AA)
     if total:
@@ -521,32 +530,47 @@ def working(text: str, done: int = 0, total: int = 0) -> None:
         cv2.putText(
             canvas, f"{done / total:.0%}", (x0, 560), cv2.FONT_HERSHEY_SIMPLEX, 1.0, TEXT, 2
         )
-    _open(SCRUB)
     cv2.imshow(SCRUB, canvas)
     cv2.waitKey(1)
+
+
+def _showing(name: str) -> bool:
+    """Whether a window of this name is on screen. OpenCV raises for one it never made."""
+    try:
+        return cv2.getWindowProperty(name, cv2.WND_PROP_VISIBLE) >= 1
+    except cv2.error:
+        return False
+
+
+# How long a new window's events are serviced before anything else may run, in seconds.
+# Long enough for the activation macOS hands a new window to complete; measured on the
+# machine that found this, it takes under 0.2 s.
+SETTLE_S = 0.3
 
 
 def _open(name: str) -> None:
     """Put a window on screen, creating it only if it is not already there.
 
-    On macOS an OpenCV window ignores the first click it is given while it is not focused:
-    that click only focuses it, because OpenCV's view never claims first mouse. `ft run`
-    used to destroy the window and create a fresh one at every hand-over -- scrubber, click
-    tool, the wait between them -- and each fresh window arrived unfocused, so dragging the
-    scrubber and clicking the first landmark both took two clicks. One window for the whole
-    session is focused once.
+    On macOS an app is only brought forward while its event loop is running, and OpenCV's
+    loop runs only inside `waitKey`. A window put up and then left while the caller computed
+    for three seconds never became active at all -- and OpenCV's view does not accept a
+    click that has to activate its app, so from then on every click was discarded while the
+    mouse moves still arrived. Measured on a coach's machine, for a whole `ft run` session:
+    187 moves, no clicks, the app inactive throughout. So a new window's events are serviced
+    for `SETTLE_S` before anything else is allowed to run, and `working` never makes one.
 
     A window closed with its own button is still known to OpenCV and cannot be shown again,
     so that one is destroyed properly and made anew.
     """
-    try:
-        if cv2.getWindowProperty(name, cv2.WND_PROP_VISIBLE) >= 1:
-            return
+    if _showing(name):
+        return
+    with contextlib.suppress(cv2.error):
         cv2.destroyWindow(name)
-    except cv2.error:
-        pass
     cv2.namedWindow(name, cv2.WINDOW_NORMAL)
     cv2.resizeWindow(name, 1600, 900)
+    end = time.monotonic() + SETTLE_S
+    while time.monotonic() < end:
+        cv2.waitKey(10)
 
 
 def close() -> None:
