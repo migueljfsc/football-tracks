@@ -2,7 +2,11 @@
 
 from __future__ import annotations
 
-from dataclasses import replace
+import importlib.util
+import time
+from collections.abc import Callable, Iterator
+from contextlib import contextmanager
+from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import Annotated, Any, cast
 
@@ -12,6 +16,7 @@ import typer
 from . import auto as auto_mod
 from . import calibration, soccernet, stage0_segment, stage1_propagate, stage1_register, tracks
 from . import detect as detect_mod
+from . import guide as guide_mod
 from . import overlay as overlay_mod
 from . import refine as refine_mod
 from . import reid as reid_mod
@@ -663,11 +668,32 @@ def calibrate(
     if labels is None:
         solved = sum(1 for h in homs.values() if h is not None)
         typer.echo(f"frames solved     {solved}/{len(homs)}  ({solved / max(1, len(homs)):.1%})")
-        for line in _weakest(clip, chain, homs):
+        for line in guide_mod.weakest(clip, chain, homs):
             typer.echo(line)
         typer.echo("no ground truth here - check the overlay with --frame or --video")
         return
     typer.echo(stage1_register.report(stage1_register.evaluate(labels, homs)))
+
+
+def _detect(clip: str, conf: float, *, label: str = "detecting") -> tuple[str, Path]:
+    """`ft detect`'s work, shared with `ft run`: what it found, and where it wrote it."""
+    c = soccernet.Clip(name=clip, root=CLIPS / clip)
+    frames = sorted(int(p.stem) for p in c.frames_dir.glob("*.jpg"))
+    if not frames:
+        raise typer.BadParameter(f"no frames in {c.frames_dir} - run `ft fetch {clip}` first")
+
+    out = work_dir(Path(clip))
+    with typer.progressbar(frames, label=label) as bar:
+        found, balls = detect_mod.run(
+            c.frames_dir, frames, conf=conf, progress=lambda _f: bar.update(1)
+        )
+    path = detect_mod.write(out / "detections.json", found, balls, conf=conf)
+    said = (
+        f"{len(found)} people over {len(frames)} frames"
+        f" ({len(found) / max(1, len(frames)):.1f}/frame),"
+        f" {len(balls)} ball sightings"
+    )
+    return said, path
 
 
 @app.command()
@@ -681,23 +707,26 @@ def detect(
 
     Slow, and separate from tracking on purpose: tracking is the part that gets tuned.
     """
-    c = soccernet.Clip(name=clip, root=CLIPS / clip)
-    frames = sorted(int(p.stem) for p in c.frames_dir.glob("*.jpg"))
-    if not frames:
-        raise typer.BadParameter(f"no frames in {c.frames_dir} - run `ft fetch {clip}` first")
-
-    out = work_dir(Path(clip))
-    with typer.progressbar(frames, label="detecting") as bar:
-        found, balls = detect_mod.run(
-            c.frames_dir, frames, conf=conf, progress=lambda _f: bar.update(1)
-        )
-    path = detect_mod.write(out / "detections.json", found, balls, conf=conf)
-    typer.echo(
-        f"{len(found)} people over {len(frames)} frames"
-        f" ({len(found) / max(1, len(frames)):.1f}/frame),"
-        f" {len(balls)} ball sightings"
-    )
+    said, path = _detect(clip, conf)
+    typer.echo(said)
     typer.echo(f"wrote {path}")
+
+
+def _reid(clip: str, *, label: str = "embedding") -> tuple[str, Path]:
+    """`ft reid`'s work, shared with `ft run`: what it embedded, and where it wrote it."""
+    c = soccernet.Clip(name=clip, root=CLIPS / clip)
+    out = work_dir(Path(clip))
+    dets_path = out / "detections.json"
+    if not dets_path.exists():
+        raise typer.BadParameter(f"no {dets_path} - run `ft detect {clip}` first")
+    detections, _balls = detect_mod.read(dets_path)
+    frames = sorted({d.f for d in detections})
+    with typer.progressbar(frames, label=label) as bar:
+        features, valid = reid_mod.run(
+            c.frames_dir, detections, WORK / "reid", progress=lambda _f: bar.update(1)
+        )
+    path = reid_mod.write(out / "appearance.npz", detections, features, valid)
+    return f"{int(valid.sum())} of {len(detections)} detections embedded", path
 
 
 @app.command()
@@ -710,19 +739,8 @@ def reid(
     slack only on a join whose two ends look like one man (D95). The weights download to
     work/reid/ on first use and are checked against a pinned hash before every load.
     """
-    c = soccernet.Clip(name=clip, root=CLIPS / clip)
-    out = work_dir(Path(clip))
-    dets_path = out / "detections.json"
-    if not dets_path.exists():
-        raise typer.BadParameter(f"no {dets_path} - run `ft detect {clip}` first")
-    detections, _balls = detect_mod.read(dets_path)
-    frames = sorted({d.f for d in detections})
-    with typer.progressbar(frames, label="embedding") as bar:
-        features, valid = reid_mod.run(
-            c.frames_dir, detections, WORK / "reid", progress=lambda _f: bar.update(1)
-        )
-    path = reid_mod.write(out / "appearance.npz", detections, features, valid)
-    typer.echo(f"{int(valid.sum())} of {len(detections)} detections embedded")
+    said, path = _reid(clip)
+    typer.echo(said)
     typer.echo(f"wrote {path}")
 
 
@@ -903,21 +921,540 @@ def auto(
     typer.echo(f"wrote {path}")
 
 
-@app.command()
-def frames(
-    source: Annotated[Path, typer.Argument(exists=True, dir_okay=False, help="A video file.")],
-    name: Annotated[str | None, typer.Option(help="Clip name. Defaults to the file stem.")] = None,
-) -> None:
-    """Turn a broadcast video into the numbered-JPEG layout the pipeline speaks.
+# `ft run` speaks at two levels: headings at the margin, and everything a step says under
+# them, indented to line up with the heading's text.
+INDENT = " " * 6
 
-    Detects and removes pillarbox and letterbox bars, and records the REAL frame rate
-    rather than the one the container claims - a screen recording routinely lies.
+# What `ft detect` and `ft reid` import when they run, and nothing imports at the top of a
+# module, so a missing extra surfaces only when they start -- by which time somebody has
+# spent ten minutes clicking. The whole `vision` extra rather than torch alone: D77 is the
+# account of how pillow and torchvision came to be listed at all.
+VISION_MODULES = ("torch", "torchvision", "transformers", "PIL")
+
+RUN_STEPS = (
+    "extract frames",
+    "pitch size",
+    "place the camera",
+    "detect people",
+    "embed appearance",
+    "track",
+    "render",
+)
+
+
+def _say(text: str) -> None:
+    typer.echo(f"{INDENT}{text}")
+
+
+def _warn(text: str) -> None:
+    typer.secho(f"{INDENT}{text}", fg=typer.colors.YELLOW)
+
+
+def _duration(seconds: float) -> str:
+    """How long, in the fewest units that still say it."""
+    if seconds < 10:
+        return f"{seconds:.1f}s"
+    if seconds < 60:
+        return f"{seconds:.0f}s"
+    minutes, secs = divmod(round(seconds), 60)
+    if minutes < 60:
+        return f"{minutes}m {secs:02d}s"
+    hours, minutes = divmod(minutes, 60)
+    return f"{hours}h {minutes:02d}m"
+
+
+def _shown(path: Path) -> str:
+    """A path as it is typed from the repo root, which is where `ft` runs."""
+    try:
+        return str(path.relative_to(WORK.parent))
+    except ValueError:
+        return str(path)
+
+
+@dataclass(slots=True)
+class _Outcome:
+    """What a step came to, set by the step itself, for the heading's last line and the table."""
+
+    text: str = "done"
+
+
+class _Steps:
+    """`ft run`'s steps as numbered headings, and a table of what each came to.
+
+    The terminal is the operator's record -- what ran, what was skipped because it was already
+    cached, how long the slow parts took -- while the window speaks to whoever is clicking. A
+    step that raises is marked before the error reaches typer, so the last heading above a
+    traceback says which step it came from.
     """
-    dest = CLIPS / (name or source.stem)
+
+    def __init__(self, names: tuple[str, ...]) -> None:
+        self.names = names
+        self.rows: list[tuple[str, str, float | None]] = []
+        self.began = time.monotonic()
+
+    def _heading(self, name: str) -> None:
+        typer.echo("")
+        typer.secho(
+            f"[{self.names.index(name) + 1}/{len(self.names)}] {name}",
+            bold=True,
+            fg=typer.colors.CYAN,
+        )
+
+    @contextmanager
+    def step(self, name: str) -> Iterator[_Outcome]:
+        self._heading(name)
+        began = time.monotonic()
+        outcome = _Outcome()
+        try:
+            yield outcome
+        except (KeyboardInterrupt, typer.Exit, typer.Abort):
+            typer.secho(f"{INDENT}stopped after {_duration(time.monotonic() - began)}", dim=True)
+            raise
+        except Exception:
+            typer.secho(
+                f"{INDENT}failed after {_duration(time.monotonic() - began)}", fg=typer.colors.RED
+            )
+            raise
+        took = time.monotonic() - began
+        typer.secho(f"{INDENT}{outcome.text}  ({_duration(took)})", fg=typer.colors.GREEN)
+        self.rows.append((name, outcome.text, took))
+
+    def skip(self, name: str, why: str, tag: str) -> None:
+        """A step that did not need to run: `why` under its heading, `tag` in the table."""
+        self._heading(name)
+        typer.secho(f"{INDENT}skipped - {why}", dim=True)
+        self.rows.append((name, f"skipped - {tag}", None))
+
+    def summary(self, artefacts: list[tuple[str, str]]) -> None:
+        width = max(len(n) for n in self.names)
+        wide = 52
+        rule = typer.style("-" * (width + wide + 14), dim=True)
+        typer.echo(f"\n  {rule}")
+        for name, text, took in self.rows:
+            shown = text if len(text) <= wide else text[: wide - 3] + "..."
+            timing = _duration(took) if took is not None else "-"
+            typer.echo(
+                f"  {name:<{width}}  {typer.style(f'{shown:<{wide}}', dim=took is None)}"
+                f"  {timing:>8}"
+            )
+        typer.echo(f"  {rule}")
+        total = _duration(time.monotonic() - self.began)
+        typer.secho(f"  {'total':<{width}}  {'':<{wide}}  {total:>8}", bold=True)
+        typer.echo("")
+        for label, value in artefacts:
+            typer.echo(f"  {typer.style(f'{label:<{width}}', bold=True)}  {value}")
+
+
+def _missing_vision(work: Path, fresh: bool) -> list[str]:
+    """The `vision` extra's modules this run will need and cannot import.
+
+    None needed when both caches are here and agree with each other, because then neither
+    stage that imports them runs.
+    """
+    dets = work / "detections.json"
+    if not fresh and dets.exists():
+        detections, _balls = detect_mod.read(dets)
+        if reid_mod.read(work / "appearance.npz", detections) is not None:
+            return []
+    return [m for m in VISION_MODULES if importlib.util.find_spec(m) is None]
+
+
+def _ask_pitch(work: Path) -> Pitch:
+    """How big this pitch is, asked before anything is clicked.
+
+    Before, and not after: the seed's landmarks are WRITTEN in these dimensions, so a
+    pitch set afterwards describes a different pitch from the one that was clicked. The
+    wrong answer here is the quietest failure in the repo - every player moves a metre or
+    two across the pitch, the residuals stay small, and the overlay still lands on the
+    real paint (D89).
+    """
+    here = read_pitch(work)
+    _say("the Laws fix the markings and leave the field variable - only elite competition")
+    _say("pins it at 105 x 68, and the wrong size moves every player (D89)")
+    return Pitch(
+        length=float(
+            typer.prompt(f"{INDENT}length, goal line to goal line (m)", default=here.length)
+        ),
+        width=float(typer.prompt(f"{INDENT}width, touchline to touchline (m)", default=here.width)),
+    )
+
+
+def _motions(
+    frames_dir: Path, numbers: list[int], work: Path, *, window: bool = False
+) -> dict[int, Any]:
+    """How the camera moves between frames, with progress the one time it is measured.
+
+    The slowest step in the pipeline and cached after, so the bar appears once per clip.
+    `window` draws it in the scrubber as well, for the wait that falls between two clicks,
+    where whoever is clicking is watching the window and not the terminal.
+    """
+    cache = work / "motions.json"
+    if cache.exists():
+        return stage1_propagate.motions(frames_dir, numbers, cache=cache)
+    from . import seedui
+
+    total = len(numbers)
+    done = 0
+    with typer.progressbar(length=total, label=f"{INDENT}following the camera") as bar:
+
+        def tick(_f: int) -> None:
+            nonlocal done
+            done += 1
+            bar.update(1)
+            if window and (done % 10 == 0 or done == total):
+                seedui.working("Following the camera through the clip...", done, total)
+
+        return stage1_propagate.motions(frames_dir, numbers, cache=cache, progress=tick)
+
+
+def _click(
+    clip: str,
+    frame: int,
+    *,
+    check: bool,
+    work: Path,
+    frames_dir: Path,
+    start: Any = None,
+) -> tuple[str, bool]:
+    """Click one frame until the pipeline will use it, or whoever is clicking gives up.
+
+    `ft seed` writes whatever was clicked and leaves the checking to `ft calibrate`. Here
+    the person is still at the window, so a seed `usable_seeds` refuses is moved aside --
+    named rather than deleted, because it is human work -- and the click tool reopens on the
+    same frame saying why, in words that need no knowledge of the pipeline. The refusal in
+    the pipeline's own words goes to the terminal.
+
+    Some camera angles offer nothing more to click, so every refusal ends in a way out:
+    `q` in the click tool skips the frame. `start` is the camera the chain carries here,
+    which a fit through traced curves is refined from.
+
+    Returns what the scrubber should say next, and whether the frame was given up on
+    after a refusal -- which is what stops the scrubber suggesting that stretch again.
+    """
+    from . import seedui
+
+    message: str | None = None
+    while True:
+        written = _seed_one(
+            clip, frame, check=check, message=message, say=_say, start=start, window=seedui.SCRUB
+        )
+        if written is None:
+            if message is not None:
+                return (
+                    f"Skipped frame {frame} - the camera there stays as it was followed,"
+                    " and that stretch won't be suggested again.",
+                    True,
+                )
+            return f"Nothing saved on frame {frame}.", False
+        path, notes = written
+        _usable, refused = auto_mod.usable_seeds(work, frames_dir)
+        why = next((reason for p, reason in refused if p == path), None)
+        if why is None:
+            more = f" ({len(notes)} note{'' if len(notes) == 1 else 's'} in the terminal)"
+            return f"Saved your clicks on frame {frame}.{more if notes else ''}", False
+        # Out of the `seed.*.json` glob, or it would go on anchoring the clip regardless.
+        aside = path.with_name(f"refused.{path.name}")
+        path.replace(aside)
+        _warn(f"REFUSED {path.name}, moved to {aside.name}: {why}")
+        img = video_mod.read_frame(frames_dir, frame)
+        message = (
+            guide_mod.refusal(seed_mod.read(aside), img.shape[1], img.shape[0])
+            if img is not None
+            else f"{why}\nQ: skip this frame."
+        )
+
+
+def _seed_until_happy(clip: str, frames_dir: Path, numbers: list[int], work: Path) -> str:
+    """Click, look, click again - until whoever is here says the camera is right.
+
+    Where to click next is not a judgement a person can make from the footage. Drift is
+    invisible until the markings are drawn back onto the frame, and the frame where two
+    anchors disagree most is arithmetic nobody does by eye (D83). So the loop proposes the
+    frame, opens the window already there, and shows the reprojection over every frame on
+    the way; `q` ends it.
+
+    One seed cannot cross a pan (D34), and anchors reach BOTH ways (D80), so a second
+    click is the normal case rather than a repair.
+
+    The motion between frames is measured only once a first seed exists: picking and
+    clicking a frame needs none of it, and it is the slowest thing in the pipeline.
+
+    Nothing here can trap anybody. A frame given up on after a refusal takes its whole
+    stretch out of the suggestions, `q` in the scrubber always finishes, and whatever is
+    still weak at that point is named in the terminal rather than left for the board to
+    reveal.
+
+    Returns what the camera came to, short enough for the run's summary table.
+    """
+    from . import seedui
+
+    motions: dict[int, Any] | None = None
+    notice: str | None = None
+    warned: set[Path] = set()
+    skipped: set[int] = set()
+    try:
+        while True:
+            usable, refused = auto_mod.usable_seeds(work, frames_dir)
+            for path, why in refused:
+                if path not in warned:
+                    _warn(f"IGNORING {path.name}: {why}")
+                    warned.add(path)
+
+            if not usable:
+                picked = seedui.scrub(frames_dir, numbers, notice=notice)
+                if picked is None:
+                    _warn("nothing clicked, so there is no camera and nothing after this can run")
+                    _warn(f"pick it up again with: ft run {clip}")
+                    raise typer.Exit(1)
+                _say(f"clicking frame {picked}")
+                notice, _gave_up = _click(
+                    clip, picked, check=False, work=work, frames_dir=frames_dir
+                )
+                continue
+
+            if motions is None:
+                motions = _motions(frames_dir, numbers, work, window=True)
+            seedui.working("Placing the pitch on every frame...")
+            chain = auto_mod.chain_from_seeds(
+                usable, numbers, frames_dir, max_carry=None, motions=motions
+            )
+            _say(guide_mod.overview(chain))
+            for line in guide_mod.weakest(clip, chain, chain.homographies):
+                _say(line)
+
+            nxt = guide_mod.next_seed(chain, avoid=skipped)
+            picked = seedui.scrub(
+                frames_dir,
+                numbers,
+                chain=chain,
+                start=nxt[0] if nxt else None,
+                notice=notice,
+            )
+            if picked is None:
+                return _still_weak(chain, skipped)
+            _say(f"clicking frame {picked}")
+            notice, gave_up = _click(
+                clip,
+                picked,
+                check=True,
+                work=work,
+                frames_dir=frames_dir,
+                start=chain.homographies.get(picked),
+            )
+            if gave_up:
+                skipped.add(picked)
+    finally:
+        seedui.close()
+
+
+def _still_weak(chain: stage1_propagate.Chain, skipped: set[int]) -> str:
+    """Name every stretch still poor or lost when the clicking stops, and sum them up.
+
+    Finishing with a weak stretch is allowed -- some angles offer nothing to click -- but
+    it is never silent: those are the frames where the board's players may be metres out.
+    """
+    weak = [s for s in guide_mod.stretches(chain) if s[2] in ("poor", "lost")]
+    for first, last, kind in weak:
+        span = f"frames {first}-{last}" if last > first else f"frame {first}"
+        gave_up = any(first <= f <= last for f in skipped)
+        _warn(f"{span} still {kind}{' - skipped, nothing more to click there' if gave_up else ''}")
+    clicked = sum(1 for r in chain.carried_from.values() if r == 0)
+    frames = sum(last - first + 1 for first, last, _kind in weak)
+    said = f"{clicked} frame{'' if clicked == 1 else 's'} clicked"
+    return f"{said}, {frames} still weak" if frames else f"{said}, none weak"
+
+
+@app.command()
+def run(
+    source: Annotated[
+        str,
+        typer.Argument(
+            help="A video file to extract, or the name of a clip already in data/clips/."
+        ),
+    ],
+    name: Annotated[str | None, typer.Option(help="Clip name. Defaults to the file stem.")] = None,
+    mode: Annotated[
+        str,
+        typer.Option(
+            help="'seed' carries the clicked frames; 'segmenter' uses the learned lines and"
+            " no clicks; 'hybrid' anchors on the learned ones and carries the seed between."
+        ),
+    ] = "seed",
+    carry: Annotated[int, typer.Option(help="Frames a homography may be carried.")] = -1,
+    interval_s: Annotated[
+        float,
+        typer.Option(
+            "--interval-s", help="Seconds between stored positions. 0 writes every frame."
+        ),
+    ] = tracks.DEFAULT_INTERVAL_S,
+    length: Annotated[
+        float, typer.Option(help="Pitch length in metres. Given, the question is not asked.")
+    ] = 0.0,
+    width: Annotated[
+        float, typer.Option(help="Pitch width in metres. Given, the question is not asked.")
+    ] = 0.0,
+) -> None:
+    """A recording in, tracks.json out - asking only for what a person has to supply.
+
+    The stage commands remain, and this runs the same code they do. What it adds is the
+    ORDER, which is not obvious and where every trap in this pipeline lives: the pitch
+    dimensions must be set before a landmark is clicked (D89), a re-detect invalidates the
+    appearance cache and the stitcher then silently loses its contact slack (D95), and one
+    seed is rarely enough because a chain drifts without announcing it (D18, D34).
+
+    `source` is inferred: a file is extracted, anything else is a clip already extracted,
+    which is how a clip whose detections are already cached is picked up again.
+    """
+    src = Path(source)
+    fresh = src.is_file()
+    clip = name or (src.stem if fresh else source)
+    if not fresh and not (CLIPS / clip / "img1").exists():
+        raise typer.BadParameter(
+            f"{source} is neither a video file nor a clip in {CLIPS} - pass a recording"
+            " to extract, or the name of one already extracted"
+        )
+    # Checked here and not where `_pipeline` checks it, which is after the clicking.
+    if mode not in ("truth", "seed", "segmenter", "hybrid"):
+        raise typer.BadParameter("mode must be 'truth', 'seed', 'segmenter' or 'hybrid'")
+
+    work = work_dir(Path(clip))
+    missing = _missing_vision(work, fresh)
+    if missing:
+        typer.secho(
+            f"the vision extra is not installed (no {', '.join(missing)}). Detecting and"
+            " embedding need it, and that is better found out now than after the clicking:",
+            fg=typer.colors.RED,
+            err=True,
+        )
+        typer.echo("    uv sync --extra vision", err=True)
+        raise typer.Exit(1)
+
+    steps = _Steps(RUN_STEPS)
+    typer.secho(f"ft run {clip}", bold=True)
+
+    if fresh:
+        with steps.step("extract frames") as out:
+            got = _extract(src, name, say=_warn)
+            out.text = f"{got.frames} frames at {got.fps:.2f} fps, {got.width}x{got.height}"
+    else:
+        steps.skip("extract frames", "already extracted", "already extracted")
+
+    frames_dir = CLIPS / clip / "img1"
+    numbers = sorted(int(p.stem) for p in frames_dir.glob("*.jpg"))
+    if not numbers:
+        raise typer.BadParameter(f"no frames in {frames_dir}")
+    annotated = soccernet.Clip(name=clip, root=CLIPS / clip).labels_path.exists()
+
+    # An annotated clip is on SoccerNet's 105 x 68 by their convention, which is what its
+    # own pitch lines are named against (`calibration.PITCH_LINES`), so there is nothing to
+    # ask -- and a size written here would move every player off the lines it came with.
+    if annotated:
+        steps.skip(
+            "pitch size", "annotated clips are 105 x 68 by SoccerNet's convention", "annotated"
+        )
+    else:
+        with steps.step("pitch size") as out:
+            here = read_pitch(work)
+            want = (
+                Pitch(length=length or here.length, width=width or here.width)
+                if (length or width)
+                else _ask_pitch(work)
+            )
+            if not (90.0 <= want.length <= 120.0 and 45.0 <= want.width <= 90.0):
+                raise typer.BadParameter(
+                    f"{want.length:g} x {want.width:g} m is not a football pitch -"
+                    " the Laws allow 90-120 by 45-90"
+                )
+            if auto_mod.seed_paths(work) and (want.length, want.width) != (
+                here.length,
+                here.width,
+            ):
+                _warn(
+                    "this clip is already seeded, and those clicks were written against"
+                    f" {here.length:g} x {here.width:g} m - re-seed, or they describe a"
+                    " different pitch"
+                )
+            write_pitch(work, want)
+            out.text = f"{want.length:g} x {want.width:g} m"
+
+    # The segmenter reads the picture and needs no clicks; `hybrid` carries a seed ACROSS the
+    # frames the segmenter refuses, so that one does want the loop.
+    if annotated:
+        steps.skip(
+            "place the camera", "annotated: its own pitch lines register every frame", "annotated"
+        )
+    elif mode == "segmenter":
+        steps.skip(
+            "place the camera", "the segmenter reads the lines from the picture", "segmenter"
+        )
+    else:
+        with steps.step("place the camera") as out:
+            out.text = _seed_until_happy(clip, frames_dir, numbers, work)
+
+    dets = work / "detections.json"
+    if dets.exists():
+        steps.skip(
+            "detect people", "detections.json is cached - delete it to detect again", "cached"
+        )
+    else:
+        with steps.step("detect people") as out:
+            out.text, _written = _detect(clip, detect_mod.DEFAULT_CONF, label=f"{INDENT}detecting")
+
+    # Never detect without embedding after it. `appearance.npz` is keyed by detection, so a
+    # re-detect invalidates it -- and the pipeline's answer to a stale one is to carry on
+    # with no contact slack at all, which is a quiet regression to D94 rather than an error.
+    detections, _balls = detect_mod.read(dets)
+    if reid_mod.read(work / "appearance.npz", detections) is not None:
+        steps.skip("embed appearance", "appearance.npz matches these detections", "cached")
+    else:
+        with steps.step("embed appearance") as out:
+            out.text, _written = _reid(clip, label=f"{INDENT}embedding")
+
+    with steps.step("track") as out:
+        _motions(frames_dir, numbers, work)
+        path, result = _pipeline(clip, mode, carry, interval_s, False)
+        _say(
+            f"{result.detections} detections -> {result.raw_tracks} raw tracks"
+            f" -> {len(result.tracks)} kept"
+        )
+        _say(
+            f"dropped off pitch {result.dropped_off_pitch},"
+            f" frames with no homography {result.unsolved_frames}"
+        )
+        out.text = f"{len(result.tracks)} tracks, ball located on {len(result.ball)} frames"
+
+    # The picture invariant 3 asks for, and the first thing to look at: if the dots do not
+    # move like a football team, no number on the board will say so.
+    with steps.step("render") as out:
+        doc = render_mod.load(path)
+        sampled = len({s["f"] for t in doc["tracks"] for s in t["samples"]})
+        with typer.progressbar(length=sampled, label=f"{INDENT}drawing") as bar:
+            movie = render_mod.video(
+                doc, path.with_suffix(".mp4"), progress=lambda _f: bar.update(1)
+            )
+        out.text = f"{sampled} frames of dots"
+
+    # The board is the only judgement that counts, and seven per-frame wins have failed to
+    # reach it (D36) -- so the run ends by naming it rather than by reporting a metric.
+    steps.summary(
+        [
+            ("tracks", _shown(path)),
+            ("video", _shown(movie)),
+            ("board", f"pnpm board ../football-tracks/{_shown(path)}"),
+        ]
+    )
+
+
+def _extract(
+    source: Path, name: str | None, *, say: Callable[[str], None] = typer.echo
+) -> video_mod.Clip:
+    """`ft frames`' work, shared with `ft run`. `say` hears what was thrown away to do it."""
+    clip_name = name or source.stem
+    dest = CLIPS / clip_name
     before = len(list((dest / "img1").glob("*.jpg")))
     clip = video_mod.extract(source, dest)
     if before > clip.frames:
-        typer.echo(
+        say(
             f"replaced {before} frames already under this name - a shorter recording used to"
             " leave the tail of the longer one behind, and everything downstream read the two"
             " as one clip"
@@ -931,13 +1468,13 @@ def frames(
     # The seed does not: it is the only human work in the pipeline, and a coach who
     # reframed the same match may well want it. It is named instead, because a seed from
     # another camera fits nothing and says nothing about it.
-    work = work_dir(Path(name or source.stem))
+    work = work_dir(Path(clip_name))
     if before:
         for cached in ("motions.json", "detections.json", "appearance.npz"):
             path = work / cached
             if path.exists():
                 path.unlink()
-                typer.echo(f"dropped {cached}: it was measured from the frames just replaced")
+                say(f"dropped {cached}: it was measured from the frames just replaced")
         # Every seed, not just the primary one: the extras are anchors too, and one left
         # behind by the previous clip is the worst kind of stale cache -- it is human work,
         # it looks deliberate, and it puts the football in the wrong half. Moved rather
@@ -945,15 +1482,29 @@ def frames(
         for stale in auto_mod.seed_paths(work):
             aside = stale.with_name(f"stale.{stale.name}")
             stale.rename(aside)
-            typer.echo(
+            say(
                 f"moved {stale.name} to {aside.name}: it was clicked on the clip that was"
                 " here before, and a seed only fits the picture it was clicked on"
             )
+    return clip
+
+
+@app.command()
+def frames(
+    source: Annotated[Path, typer.Argument(exists=True, dir_okay=False, help="A video file.")],
+    name: Annotated[str | None, typer.Option(help="Clip name. Defaults to the file stem.")] = None,
+) -> None:
+    """Turn a broadcast video into the numbered-JPEG layout the pipeline speaks.
+
+    Detects and removes pillarbox and letterbox bars, and records the REAL frame rate
+    rather than the one the container claims - a screen recording routinely lies.
+    """
+    clip = _extract(source, name)
     typer.echo(
         f"{clip.frames} frames at {clip.fps:.2f} fps, {clip.width}x{clip.height}"
         f" (cropped from {clip.crop})"
     )
-    typer.echo(f"wrote {dest}")
+    typer.echo(f"wrote {CLIPS / clip.name}")
 
 
 @app.command()
@@ -999,26 +1550,76 @@ def name_of(frame: int, check: bool) -> str:
     return f"seed.{frame}.json" if check else "seed.json"
 
 
-def _settled_handedness(work: Path, frames_dir: Path, *, skip: str) -> float:
-    """Which way round this clip's existing seeds see the pitch, if they agree.
+def _carried(clip: str, frame: int) -> Any:
+    """The camera this clip's other seeds carry to `frame`, or None when there are none.
 
-    Zero when there are none, when none has an opinion, or when they disagree among
-    themselves -- in the last case there is already a mislabelled seed in the folder and
-    guessing which one from a new arrival would be picking a side.
+    What a fit through traced curves starts from when `ft seed` runs on its own; `ft run`
+    already has the chain and passes its camera straight in.
     """
-    seen = set()
-    for path in auto_mod.seed_paths(work):
-        if path.name == skip:
-            continue
-        seeded = seed_mod.read(path)
-        img = video_mod.read_frame(frames_dir, seeded.frame)
-        h = seed_mod.homography(seeded)
-        if img is None or h is None:
-            continue
-        hand = seed_mod.handedness(h, img.shape[1], img.shape[0])
-        if hand:
-            seen.add(hand)
-    return seen.pop() if len(seen) == 1 else 0.0
+    frames_dir = CLIPS / clip / "img1"
+    work = work_dir(Path(clip))
+    usable, _refused = auto_mod.usable_seeds(work, frames_dir)
+    if not usable:
+        return None
+    numbers = sorted(int(p.stem) for p in frames_dir.glob("*.jpg"))
+    chain = auto_mod.chain_from_seeds(
+        usable, numbers, frames_dir, max_carry=None, motions=_motions(frames_dir, numbers, work)
+    )
+    return chain.homographies.get(frame)
+
+
+def _seed_one(
+    clip: str,
+    frame: int,
+    *,
+    check: bool,
+    message: str | None = None,
+    say: Callable[[str], None] = typer.echo,
+    start: Any = None,
+    window: str | None = None,
+) -> tuple[Path, list[str]] | None:
+    """Click one frame and write it: where it went, and what `settle` had to say about it.
+
+    None if it was abandoned. Shared by `ft seed` and `ft run` so the checks a seed cannot
+    make for itself run identically whichever way a person got here: the two mirror
+    symmetries, which the reprojection overlay is blind to, and the contradictory labels,
+    which no fit can absorb (D88).
+
+    A seed with traced curves is stamped with the camera its fit starts from -- `start`
+    when the caller has one, otherwise wherever the other seeds carry this frame. `window`
+    is a window already open to click in, which `ft run` passes so the session keeps one.
+    """
+    from . import seedui
+
+    root = CLIPS / clip
+    img = video_mod.read_frame(root / "img1", frame)
+    if img is None:
+        raise typer.BadParameter(f"no frame {frame} in {root / 'img1'}")
+
+    work = work_dir(Path(clip))
+    pitch = read_pitch(work)
+    got = seedui.collect(img, frame, pitch, message=message, window=window)
+    if got is None:
+        say("abandoned; nothing written")
+        return None
+    if got.arcs:
+        got = replace(got, start=start if start is not None else _carried(clip, frame))
+
+    mine = name_of(frame, check)
+    others = [p for p in auto_mod.seed_paths(work) if p.name != mine]
+    got, notes = seed_mod.settle(got, img, others, root / "img1", pitch=pitch)
+    for note in notes:
+        say(note)
+
+    path = seed_mod.write(work / mine, got)
+    h = seed_mod.homography(got)
+    say(
+        f"{len(got.points)} points + {len(got.lines)} traced"
+        f"{f' + {len(got.arcs)} on curves' if got.arcs else ''}"
+        f" -> {'a homography' if h is not None else 'NO homography'}"
+    )
+    say(f"wrote {path}")
+    return path, notes
 
 
 @app.command()
@@ -1041,125 +1642,10 @@ def seed(
     choose. Four is the minimum and is exactly determined, which means it fits whatever
     was misclicked and cannot be checked (D17); six or more is much safer.
     """
-    from . import seedui
-
-    root = CLIPS / clip
-    img = video_mod.read_frame(root / "img1", frame)
-    if img is None:
-        raise typer.BadParameter(f"no frame {frame} in {root / 'img1'}")
-
-    pitch = read_pitch(work_dir(Path(clip)))
-    got = seedui.collect(img, frame, pitch)
-    if got is None:
-        typer.echo("abandoned; nothing written")
+    if _seed_one(clip, frame, check=check) is None:
         raise typer.Exit(1)
-    # Stamped with the picture it was clicked on, so it can never anchor another clip.
-    got = replace(got, image=seed_mod.fingerprint(img))
-
-    # The reprojection overlay CANNOT see a mirrored y axis: a pitch is symmetric about
-    # the halfway line, so a flipped model draws onto the real markings perfectly. So it
-    # is checked here, arithmetically, before anything is written.
-    agreement = seed_mod.orientation(got)
-    if agreement < -seed_mod.ORIENTATION_CONFIDENT:
-        typer.echo("far and near look swapped - flipping the pitch y axis to match the camera")
-        got = seed_mod.flip_y(got, pitch)
-    elif agreement < seed_mod.ORIENTATION_CONFIDENT:
-        typer.echo(
-            "WARNING: cannot tell which side the camera is on from these points."
-            " If the board comes out mirrored, far and near are swapped."
-        )
-
-    # And the END check, which needs the clip rather than the clicks: a pitch is
-    # symmetric end to end as well as side to side, so a seed clicked on the far goal
-    # while the tool offers the near one fits its own evidence perfectly and anchors the
-    # play 105 m away. The camera cannot get under the pitch, so every seed of one clip
-    # must see the ground plane the same way round (D88).
-    fitted = seed_mod.homography(got)
-    if fitted is not None:
-        mine = seed_mod.handedness(fitted, img.shape[1], img.shape[0])
-        theirs = _settled_handedness(
-            work_dir(Path(clip)), root / "img1", skip=name_of(frame, check)
-        )
-        if mine and theirs and mine != theirs:
-            typer.echo(
-                "the goal in shot is the other one - flipping the pitch end to match the"
-                " seeds already clicked for this clip"
-            )
-            got = seed_mod.flip_x(got, pitch)
-
-    clash = seed_mod.contradictions(got)
-    for a, b in clash:
-        typer.echo(
-            f"WARNING: {a} and {b} are labelled with the wrong side of the pitch -"
-            " nearer the camera is LOWER in the frame, and these two run the other way."
-        )
-
-    directions = {abs(a) > abs(b) for _, (a, b, _c) in got.lines}
-    if got.lines and len(directions) == 1:
-        typer.echo(
-            "NOTE: every traced line runs the same way. Lines parallel to each other pin"
-            " down nothing across them - the exact points are carrying the fit."
-        )
-
-    path = seed_mod.write(work_dir(Path(clip)) / name_of(frame, check), got)
-    h = seed_mod.homography(got)
-    typer.echo(
-        f"{len(got.points)} points + {len(got.lines)} traced"
-        f" -> {'a homography' if h is not None else 'NO homography'}"
-    )
-    typer.echo(f"wrote {path}")
     typer.echo(f"now check it: ft calibrate {clip} --frame {frame}")
 
 
 if __name__ == "__main__":
     app()
-
-
-def _runs(frames: list[int]) -> list[tuple[int, int]]:
-    """Consecutive frames, grouped."""
-    out: list[tuple[int, int]] = []
-    for f in sorted(frames):
-        if out and f == out[-1][1] + 1:
-            out[-1] = (out[-1][0], f)
-        else:
-            out.append((f, f))
-    return out
-
-
-def _weakest(clip: str, chain: stage1_propagate.Chain | None, homs: dict[int, Any]) -> list[str]:
-    """Where this clip's camera model is least supported, and what to do about it.
-
-    The one thing a coach can act on. A chain is right at its anchors and wrong a hundred
-    frames later (D18), and until now nothing said WHICH hundred frames -- so a second seed
-    was clicked where the drift happened to be noticed rather than where it is worst.
-
-    Two numbers, and they answer different questions. How far a frame is from an anchor is
-    available on any clip and is the only guide when there is one seed. Where two anchors
-    reach the same frame from opposite directions, their disagreement is drift MEASURED
-    rather than assumed, because the two chains accumulated it independently (D80).
-    """
-    lines: list[str] = []
-    missing = [f for f, h in homs.items() if h is None]
-    for start, end in _runs(missing):
-        span = f"{start}-{end}" if end > start else f"{start}"
-        lines.append(
-            f"no homography     {span} ({end - start + 1} frames)"
-            " - a cut, a whip pan, or too little texture to track"
-        )
-    if chain is None or not chain.carried_from:
-        return lines
-
-    frame = max(chain.carried_from, key=lambda f: chain.carried_from[f])
-    reach = chain.carried_from[frame]
-    if reach == 0:
-        return lines
-    lines.append(f"weakest           frame {frame}, carried {reach} frames from the nearest seed")
-    if chain.disagreement:
-        worst = max(chain.disagreement, key=lambda f: chain.disagreement[f])
-        lines.append(
-            f"anchors disagree  by {chain.disagreement[worst]:.1f} m at frame {worst},"
-            " which is the drift between them"
-        )
-        frame = worst
-    lines.append(f"seed it           ft seed {clip} --frame {frame} --check")
-    return lines

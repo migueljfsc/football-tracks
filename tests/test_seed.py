@@ -580,3 +580,125 @@ def test_a_seed_written_for_one_pitch_is_not_silently_read_as_another() -> None:
     as_narrow = seed.homography(labelled(small))
     assert as_wide is not None and as_narrow is not None
     assert not np.allclose(as_wide / as_wide[2, 2], as_narrow / as_narrow[2, 2], atol=1e-3)
+
+
+def on_circle(
+    name: str, degrees: tuple[float, float], n: int = 12
+) -> list[tuple[tuple[float, float], tuple[float, float, float]]]:
+    """Points traced along a named curve, projected through the synthetic camera."""
+    cx, cy, r = seed.curves()[name]
+    out = []
+    for a in np.radians(np.linspace(*degrees, n)):
+        spot = np.array([[cx + r * np.cos(a), cy + r * np.sin(a)]])
+        img = calibration.apply(PITCH_TO_IMAGE, spot)[0]
+        out.append(((float(img[0]), float(img[1])), (cx, cy, r)))
+    return out
+
+
+TRUTH = np.linalg.inv(PITCH_TO_IMAGE)
+
+
+def far_side_view() -> seed.Seed:
+    """What a camera aimed at the far half shows: a box corner, the far touchline, the box
+    front, and the centre circle lower down."""
+    return seed.Seed(
+        frame=1,
+        points=clicked(["corner far", "penalty box front far"]).points,
+        lines=traced("far touchline", 5) + traced("penalty box front", 4),
+        arcs=on_circle("centre circle", (100.0, 260.0)),
+    )
+
+
+def test_a_traced_circle_is_fitted_from_a_rough_start() -> None:
+    # The chain's camera at a weak frame is metres out; the curve fit refines it.
+    rough = np.array([[1.0, 0.02, 3.0], [-0.02, 1.0, -2.0], [0.0, 0.0, 1.0]]) @ TRUTH
+    s = far_side_view()
+    s.start = rough / rough[2, 2]
+    h = seed.homography(s)
+    assert h is not None
+    got = calibration.apply(h, calibration.apply(PITCH_TO_IMAGE, np.array([[52.5, 34.0]])))
+    assert got[0] == pytest.approx([52.5, 34.0], abs=0.05)
+
+
+def test_a_first_seed_with_curves_starts_from_its_own_straight_clicks() -> None:
+    s = seed.Seed(frame=1, points=clicked(SIX).points, arcs=on_circle("centre circle", (0, 180)))
+    h = seed.homography(s)
+    assert h is not None
+    got = calibration.apply(h, calibration.apply(PITCH_TO_IMAGE, np.array([[80.0, 10.0]])))
+    assert got[0] == pytest.approx([80.0, 10.0], abs=0.05)
+
+
+def test_a_circle_with_one_straight_marking_is_refused() -> None:
+    # A circle is the same from every angle round its centre, and beside one line it can
+    # still reflect across it -- a fit would come back, and it would mean nothing.
+    s = seed.Seed(
+        frame=1,
+        points=[],
+        lines=traced("far touchline"),
+        arcs=on_circle("centre circle", (0, 360), 20),
+        start=TRUTH,
+    )
+    assert seed.homography(s) is None
+
+
+def test_curves_and_their_start_survive_a_round_trip(tmp_path: Path) -> None:
+    s = far_side_view()
+    s.start = TRUTH
+    back = seed.read(seed.write(tmp_path / "seed.json", s))
+    assert [c for _, c in back.arcs] == [c for _, c in s.arcs]
+    assert back.start is not None and np.allclose(back.start, TRUTH)
+    # `usable_seeds` refits every seed from its file, so the same file must give the same
+    # camera every time -- and the file's rounding of the clicked pixels must not move it.
+    again = seed.read(tmp_path / "seed.json")
+    first, second, original = seed.homography(back), seed.homography(again), seed.homography(s)
+    assert first is not None and second is not None and original is not None
+    assert np.array_equal(first, second)
+    probe = calibration.apply(PITCH_TO_IMAGE, np.array([[52.5, 34.0]]))
+    assert calibration.apply(first, probe)[0] == pytest.approx(
+        calibration.apply(original, probe)[0], abs=0.02
+    )
+
+
+def test_flips_carry_the_curves_and_keep_the_stamp() -> None:
+    s = seed.Seed(
+        frame=1,
+        points=clicked(SIX).points,
+        arcs=on_circle("penalty arc", (-50, 50), 5),
+        image="abc",
+        start=TRUTH,
+    )
+    turned = seed.flip_x(s)
+    assert turned.arcs[0][1][0] == pytest.approx(PITCH_LENGTH - 11.0)
+    assert turned.image == "abc" and turned.start is TRUTH
+    mirrored = seed.flip_y(s)
+    assert mirrored.arcs[0][1][1] == pytest.approx(PITCH_WIDTH - s.arcs[0][1][1])
+    # `settle` stamps before it flips, and flip_y used to drop the stamp.
+    assert mirrored.image == "abc" and mirrored.start is TRUTH
+
+
+def test_a_curve_seed_clicked_on_the_wrong_goal_is_turned_round(tmp_path: Path) -> None:
+    # A fit refined from the chain's camera would rather call wrong-end clicks misclicks,
+    # or find the mirror-image camera that fits them all; only handedness against the
+    # start can tell (D88).
+    right = seed.Seed(
+        frame=1,
+        points=clicked(
+            [
+                "goal post far",
+                "goal post near",
+                "penalty box front far",
+                "penalty box front near",
+                "penalty spot",
+            ]
+        ).points,
+        arcs=on_circle("penalty arc", (-50, 50), 8),
+        start=TRUTH,
+    )
+    img = np.zeros((1080, 1920, 3), dtype=np.uint8)
+    kept, notes = seed.settle(right, img, [], tmp_path)
+    assert not any("other one" in n for n in notes)
+    assert kept.points[0][1] == right.points[0][1]
+
+    turned, notes = seed.settle(seed.flip_x(right), img, [], tmp_path)
+    assert any("other one" in n for n in notes)
+    assert turned.points[0][1] == pytest.approx(right.points[0][1])

@@ -956,6 +956,7 @@ def build(
         {tid: [s.f for s in ss] for tid, ss in positions.items()},
         pitch,
         on_the_ball(ball, positions, fps),
+        {tid: float(np.mean([s.y for s in ss])) for tid, ss in positions.items()},
     )
     positions, teams = _split_two_shirts(kept, positions, teams)
     # After the sides are named, because only `assign` knows which tracks hold a keeper.

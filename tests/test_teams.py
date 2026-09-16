@@ -251,5 +251,100 @@ def test_a_side_its_own_signature_cannot_settle_is_not_painted() -> None:
     sig[48] = 0.41
     undecided.side_sum, undecided.side_seen, undecided.side_weight = sig, 1, 1.0
     undecided.tone_sum = np.array((73.0, 101.0, 109.0), dtype=np.float64)
+    # And what is left of them once the green goes is WHITE, so the dark-kit rule does not
+    # reach them either.
+    undecided.kit_sum, undecided.kit_seen = shirt(green=0.34, dark=0.1, light=0.56), 1
 
     assert kit_colours([undecided, worn(2, 0, 0.6, RED)], teams) is None
+
+
+def shirt(green: float, dark: float, light: float, hue: int = 8) -> np.ndarray:
+    """`kit_mean`'s 12 hues by 4 brightnesses: grass, and the rest of the shirt split between
+    the darkest brightness and the lightest."""
+    grid = np.zeros((12, 4), dtype=np.float64)
+    grid[3, 2] = green
+    grid[hue, 0] = dark
+    grid[hue, 3] = light
+    return grid.flatten()
+
+
+def unsettled(track_id: int, colour: float, grey: float, kit: np.ndarray) -> Track:
+    """A side under `KIT_CONFIDENT`: `colour` in skin and trim hues, `grey` colourless."""
+    t = Track(id=track_id)
+    sig = np.zeros(49, dtype=np.float64)
+    sig[0 * 4 + 1] = colour / 2
+    sig[11 * 4 + 1] = colour / 2
+    sig[3 * 4 + 2] = 1.0 - colour - grey
+    sig[48] = grey
+    t.side_sum, t.side_seen, t.side_weight = sig, 1, 1.0
+    t.kit_sum, t.kit_seen = kit, 1
+    t.tone_sum = np.array((95.0, 100.0, 105.0), dtype=np.float64)
+    return t
+
+
+def test_a_dark_kit_under_the_bar_is_painted_dark() -> None:
+    # A coach's navy side against a red one: 32% colourless, 32% skin and trim, the rest
+    # grass. Unpainted, the board's palette put the RED side in violet and the navy one in
+    # amber. Most of what is not grass is dark, and that is the kit.
+    teams: dict[int, TeamLabel] = {1: "home", 2: "away"}
+    navy = unsettled(1, colour=0.32, grey=0.33, kit=shirt(green=0.35, dark=0.5, light=0.15))
+    got = kit_colours([navy, worn(2, 0, 0.8, (40.0, 40.0, 200.0))], teams)
+    assert got is not None
+    assert got["home"] == stage3_teams.DARK_KIT
+
+
+def test_a_dark_side_whose_largest_part_has_a_hue_is_still_not_painted() -> None:
+    # Colour outweighs colourless, so this is a coloured kit the signature could not settle,
+    # and a dark one is not "black" -- it keeps the refusal it always had.
+    teams: dict[int, TeamLabel] = {1: "home", 2: "away"}
+    maroon = unsettled(1, colour=0.42, grey=0.26, kit=shirt(green=0.32, dark=0.55, light=0.13))
+    assert kit_colours([maroon, worn(2, 7, 0.8, (200.0, 60.0, 40.0))], teams) is None
+
+
+def _in_goal(rng: np.random.Generator) -> tuple[list[Track], dict[int, float]]:
+    """Ten a side, one keeper in a kit nobody else wears, and two officials at halfway."""
+    tracks, mean_x = [], {}
+    for i in range(20):
+        base = np.array(RED if i < 10 else BLUE, dtype=np.float64)
+        worn = np.abs(base + rng.normal(0, 0.08, 3))
+        tracks.append(kitted(i, (float(worn[0]), float(worn[1]), float(worn[2]))))
+        mean_x[i] = 30.0 if i < 10 else 75.0
+    tracks.append(kitted(80, (1.0, 1.0, 0.0)))
+    mean_x[80] = 3.0
+    for j, x in enumerate((50.0, 58.0)):
+        tracks.append(kitted(90 + j, (0.0, 1.0, 0.03 * j)))
+        mean_x[90 + j] = x
+    return tracks, mean_x
+
+
+def test_an_official_who_walks_into_a_goal_is_still_an_official() -> None:
+    # The referee's kit is as odd twenty metres from goal as it is at halfway, so position
+    # alone named him the keeper; he was watched for longer than the real one and the board
+    # put him in goal. His kit is the officials' kit, and that settles it.
+    tracks, mean_x = _in_goal(np.random.default_rng(7))
+    tracks.append(kitted(81, (0.02, 0.97, 0.01)))
+    mean_x[81] = 19.0
+    out = assign(tracks, mean_x)
+    assert out[80] == "gkHome"
+    assert out[81] == "referee"
+
+
+def test_a_keeper_in_an_officials_kit_is_still_the_keeper_in_his_own_goal() -> None:
+    # SNGS-151's away keeper wears a kit nearer the referee's than two officials are to each
+    # other. Where he stands settles it: nobody but a keeper averages six metres from goal.
+    tracks, mean_x = _in_goal(np.random.default_rng(7))
+    tracks.append(kitted(81, (0.02, 0.97, 0.01)))
+    mean_x[81] = 5.0
+    mean_y = {t.id: 34.0 for t in tracks}
+    assert assign(tracks, mean_x, mean_y=mean_y)[81] == "gkHome"
+    # And the same kit twenty metres out is still the official.
+    mean_x[81] = 19.0
+    assert assign(tracks, mean_x, mean_y=mean_y)[81] == "referee"
+
+
+def test_an_odd_kit_in_goal_is_still_the_keeper_when_no_official_is_named() -> None:
+    tracks, mean_x = _in_goal(np.random.default_rng(7))
+    tracks = [t for t in tracks if t.id < 90]
+    tracks.append(kitted(81, (0.02, 0.97, 0.01)))
+    mean_x[81] = 19.0
+    assert assign(tracks, mean_x)[81] == "gkHome"

@@ -52,6 +52,7 @@ def test_every_stage_has_its_command() -> None:
         "reg-eval".replace("-", "_"),
         "reid",
         "render",
+        "run",
         "score",
         "seed",
         "segment",

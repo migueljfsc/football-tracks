@@ -36,7 +36,12 @@ uv run ft auto SNGS-147 --mode seed  # the whole pipeline from ONE seeded frame
 uv run ft score work/SNGS-147/tracks.json
 
 # YOUR OWN broadcast clip, which has no annotations
+uv run ft run my_goal.mov            # every step below, in order, asking what it needs
+uv run ft run my_goal                # the same, picking a clip up where it was left
+
+# ...which is these, and they remain if a stage has to be redone on its own
 uv run ft frames my_goal.mov         # -> data/clips/my_goal/img1/, bars removed
+uv run ft pitch my_goal --length 100 --width 64   # BEFORE seeding, or landmarks lie (D89)
 uv run ft seed my_goal               # click pitch landmarks on frame 1
 uv run ft calibrate my_goal --frame 1      # check: do lines land on lines?
 uv run ft detect my_goal

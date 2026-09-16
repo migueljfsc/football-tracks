@@ -47,7 +47,8 @@ src/football_tracks/
   stage1_propagate.py       carry a homography across gaps by tracking the grass
   video.py                  a recording -> the numbered-JPEG layout, bars removed
   seed.py                   clicked landmarks -> a homography; seed.json is the format
-  seedui.py                 the click tool. Disposable: the FILE is the interface (D23)
+  seedui.py                 the click tool, and the scrubber. Disposable: the FILE is the interface (D23)
+  guide.py                  where a chain is weakest, and the frame to click next (D83)
   detect.py                 stage 2a, RT-DETR (Apache) - see D28 for why not the others
   stage2_track.py           stage 2b, association in stabilised pixels
   reid.py                   stage 2c, how each player looks - only the stitcher reads it (D95)
@@ -147,6 +148,15 @@ Each of these cost a day. Where one names a decision, the full account is in
   Between them the two checks cover all three of a pitch's symmetries; neither alone does.
 - **`seed.*.json` is a GLOB, so a backup named `seed.as-clicked.json` is a live anchor.** Back a
   seed up as `seed-<something>.json` or `stale.seed.json`, which do not match.
+- **A seed with traced curves is fitted FROM a camera, and the file keeps it** (`start`).
+  "On this circle" cannot join the linear fit, so the fit refines the camera the other seeds
+  carry to that frame -- which is what rescues a view whose straight markings all sit in one
+  band and fold (D34). `usable_seeds` refits from the file, and a refinement is only
+  reproducible from the same start. Flips leave `start` alone, and the END check for such a
+  seed is handedness against it: clicked on the wrong goal, the fit finds the mirror-image
+  camera and matches every click as well as the right one does.
+- **A refused click is moved to `refused.seed.*.json`**, out of the glob, and `ft run` stops
+  suggesting the stretch a person skipped after a refusal. Nothing in the loop may trap them.
 - **`ft calibrate <clip>` says where to click the next seed** (D83): the frame furthest from an
   anchor, or -- with two -- the frame where the two chains disagree most, which is drift
   measured rather than counted. It also names the stretches with no homography at all.
@@ -207,6 +217,19 @@ Each of these cost a day. Where one names a decision, the full account is in
 
 ### Teams and the ball
 
+- **An official walks into the keeper's zone, and a keeper can wear an official's colours.**
+  Odd kit + near a goal made six officials keepers across the benchmark -- and a referee fielded
+  in goal on a coach's board, because he was watched longer than the real keeper. So a keeper
+  candidate wearing a named official's kit (within `OUTLIER_RATIO` of the typical kit distance)
+  is an official -- EXCEPT one averaging within `KEEPER_HOME_M` (11 m) of his goal's centre:
+  SNGS-151's away keeper sits 0.79 typical distances from the referee's kit, closer than two
+  officials are to each other. Kit alone and position alone each get one of those wrong.
+- **A dark kit falls under `KIT_CONFIDENT` by construction.** Navy or black is a smaller share of
+  its crop than the grass, and what hue it has is skin and trim -- 32/32 on the coach's clip, so
+  neither side was painted and the board's palette put the red team in violet. Where colourless
+  >= colour and most of the non-grass shirt is DARK it is painted dark. Darkness comes from
+  `kit_mean`'s brightness, never `side_mean`, which pools white and black into one bin; that is
+  also what keeps Sporting's hoops out -- their green is struck with the pitch and the rest is white.
 - **k-means collapses on kit colours** (D31). It minimises inertia, so the cheapest split is one
   tight cluster and one holding everybody else. The axis of greatest variance and an Otsu cut.
 - **A goalkeeper is not a third team**, and leaving him in the clustering costs both sides.

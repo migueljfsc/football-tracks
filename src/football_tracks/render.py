@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import json
 from collections import defaultdict
+from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
@@ -99,7 +100,14 @@ def frame(
     return img
 
 
-def video(doc: dict[str, Any], out: Path, *, scale: float = 10.0, margin: float = 3.0) -> Path:
+def video(
+    doc: dict[str, Any],
+    out: Path,
+    *,
+    scale: float = 10.0,
+    margin: float = 3.0,
+    progress: Callable[[int], None] | None = None,
+) -> Path:
     """Every frame the file has a sample for, at the source's frame rate."""
     per = _by_frame(doc)
     frames = sorted(per)
@@ -120,6 +128,8 @@ def video(doc: dict[str, Any], out: Path, *, scale: float = 10.0, margin: float 
                 pts.append((s["x"], s["y"]))
                 del pts[:-TRAIL_FRAMES]
             writer.write(frame(doc, f, scale=scale, margin=margin, trails=dict(trails)))
+            if progress is not None:
+                progress(f)
     finally:
         writer.release()
     return out

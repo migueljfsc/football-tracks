@@ -15,7 +15,7 @@ from __future__ import annotations
 
 import json
 import math
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from pathlib import Path
 from typing import Any
 
@@ -182,6 +182,49 @@ def mirrored_line(name: str, pitch: Pitch = DEFAULT_PITCH) -> tuple[float, float
     return mirror_line(*traceable(pitch)[name], pitch=pitch)
 
 
+def curves(pitch: Pitch = DEFAULT_PITCH) -> dict[str, tuple[float, float, float]]:
+    """Painted circles a human can trace, as centre x, centre y and radius in metres.
+
+    What a camera aimed at the far half from midfield has when the straight markings do
+    not reach down the picture: the far touchline and a box corner sit in one band, the
+    fit folds just below them (D34), and nothing lower is straight. The centre circle and
+    the penalty arcs are lower. A point traced on one says "somewhere on this circle",
+    one equation like a traced line -- but the circle bends through DEPTH, which is the
+    thing a band of straight markings cannot pin down.
+
+    The penalty arc is named by the circle it lies on, centred on the spot; only the part
+    outside the box is painted, which matters for the diagram and not for the fit.
+    """
+    return {
+        "centre circle": (pitch.halfway, pitch.middle, CENTRE_R),
+        "penalty arc": (11.0, pitch.middle, CENTRE_R),
+    }
+
+
+def mirrored_curve(name: str, pitch: Pitch = DEFAULT_PITCH) -> tuple[float, float, float]:
+    """The same curve at the other end. The centre circle is its own mirror image."""
+    cx, cy, r = curves(pitch)[name]
+    return (pitch.length - cx, cy, r)
+
+
+def curve_extent(
+    name: str, far_goal: bool, pitch: Pitch = DEFAULT_PITCH
+) -> npt.NDArray[np.float64]:
+    """The painted part of a curve, as a polyline in metres, for the diagram.
+
+    The penalty arc's circle runs on into the box, where nothing is painted -- the same
+    reason `extents` exists for the straight markings.
+    """
+    cx, cy, r = mirrored_curve(name, pitch) if far_goal else curves(pitch)[name]
+    if name == "penalty arc":
+        half = math.degrees(math.acos((16.5 - 11.0) / r))
+        centre = 180.0 if far_goal else 0.0
+        angles = np.radians(np.linspace(centre - half, centre + half, 40))
+    else:
+        angles = np.radians(np.linspace(0.0, 360.0, 80))
+    return np.column_stack([cx + r * np.cos(angles), cy + r * np.sin(angles)])
+
+
 @dataclass(slots=True)
 class Seed:
     frame: int
@@ -191,6 +234,15 @@ class Seed:
     )  # (image, pitch line)
     # A fingerprint of the picture these clicks were made on. See `fingerprint`.
     image: str | None = None
+    arcs: list[tuple[tuple[float, float], tuple[float, float, float]]] = field(
+        default_factory=list
+    )  # (image, pitch circle as centre x, centre y, radius)
+    # Image -> pitch. The camera a fit through curves is refined FROM, which the other seeds
+    # carried to this frame when it was clicked. Kept in the file because `usable_seeds`
+    # refits every seed from its file, and a refinement is only reproducible from the
+    # same start. Flips leave it alone: it came from seeds already settled, so when a
+    # flip corrects the clicks it is the clicks that were wrong, not the start.
+    start: npt.NDArray[np.float64] | None = None
 
     def to_json(self) -> dict[str, object]:
         return {
@@ -205,6 +257,17 @@ class Seed:
                 {"image": [round(ix, 1), round(iy, 1)], "line": list(ln)}
                 for (ix, iy), ln in self.lines
             ],
+            **(
+                {
+                    "arcs": [
+                        {"image": [round(ix, 1), round(iy, 1)], "circle": list(circle)}
+                        for (ix, iy), circle in self.arcs
+                    ]
+                }
+                if self.arcs
+                else {}
+            ),
+            **({"start": self.start.tolist()} if self.start is not None else {}),
         }
 
 
@@ -232,6 +295,14 @@ def read(path: Path) -> Seed:
             for p in d.get("lines", [])
         ],
         image=d.get("image"),
+        arcs=[
+            (
+                (float(p["image"][0]), float(p["image"][1])),
+                (float(p["circle"][0]), float(p["circle"][1]), float(p["circle"][2])),
+            )
+            for p in d.get("arcs", [])
+        ],
+        start=np.array(d["start"], dtype=np.float64) if "start" in d else None,
     )
 
 
@@ -385,6 +456,8 @@ def flip_x(seed: Seed, pitch: Pitch = DEFAULT_PITCH) -> Seed:
         points=[(img, (pitch.length - px, py)) for img, (px, py) in seed.points],
         lines=[(img, mirror_line(a, b, c, pitch)) for img, (a, b, c) in seed.lines],
         image=seed.image,
+        arcs=[(img, (pitch.length - cx, cy, r)) for img, (cx, cy, r) in seed.arcs],
+        start=seed.start,
     )
 
 
@@ -395,6 +468,11 @@ def flip_y(seed: Seed, pitch: Pitch = DEFAULT_PITCH) -> Seed:
         points=[(img, (px, pitch.width - py)) for img, (px, py) in seed.points],
         # A line a*x + b*y + c = 0 reflected in y = W/2 becomes a*x - b*y + (c + b*W).
         lines=[(img, (a, -b, c + b * pitch.width)) for img, (a, b, c) in seed.lines],
+        # Kept: `settle` stamps a seed before it flips one, and dropping the stamp here left
+        # every far/near-corrected seed unguarded against anchoring another clip (D34).
+        image=seed.image,
+        arcs=[(img, (cx, pitch.width - cy, r)) for img, (cx, cy, r) in seed.arcs],
+        start=seed.start,
     )
 
 
@@ -438,6 +516,106 @@ def contradictions(seed: Seed) -> list[tuple[str, str]]:
     return out
 
 
+def settled_handedness(others: list[Path], frames_dir: Path) -> float:
+    """Which way round this clip's existing seeds see the pitch, if they agree.
+
+    Zero when there are none, when none has an opinion, or when they disagree among
+    themselves -- in the last case there is already a mislabelled seed in the folder and
+    guessing which one from a new arrival would be picking a side.
+    """
+    seen: set[float] = set()
+    for path in others:
+        seeded = read(path)
+        img = cv2.imread(str(frames_dir / f"{seeded.frame:06d}.jpg"))
+        h = homography(seeded)
+        if img is None or h is None:
+            continue
+        hand = handedness(h, img.shape[1], img.shape[0])
+        if hand:
+            seen.add(hand)
+    return seen.pop() if len(seen) == 1 else 0.0
+
+
+def settle(
+    got: Seed,
+    img: Any,
+    others: list[Path],
+    frames_dir: Path,
+    *,
+    pitch: Pitch = DEFAULT_PITCH,
+) -> tuple[Seed, list[str]]:
+    """A fresh set of clicks, checked against everything except the clicks themselves.
+
+    Every check here is one the reprojection overlay CANNOT make, which is why they run
+    before anything is written. A pitch is symmetric about the halfway line and again end
+    to end, so a mirrored model or a seed clicked on the wrong goal draws onto the real
+    markings perfectly, reports small residuals, and anchors the play 105 m away (D88).
+    Between them `orientation` and `handedness` cover all three symmetries; neither alone
+    does.
+
+    `others` is every OTHER seed of this clip -- the file being written is excluded by
+    the caller, because a seed compared with itself always agrees.
+
+    Returns the settled seed and what to tell whoever clicked it. Messages rather than
+    echoes so the same checks serve `ft seed` and `ft run`.
+    """
+    notes: list[str] = []
+    # Stamped with the picture it was clicked on, so it can never anchor another clip.
+    got = replace(got, image=fingerprint(img))
+
+    agreement = orientation(got)
+    if agreement < -ORIENTATION_CONFIDENT:
+        notes.append("far and near look swapped - flipping the pitch y axis to match the camera")
+        got = flip_y(got, pitch)
+    elif agreement < ORIENTATION_CONFIDENT:
+        notes.append(
+            "WARNING: cannot tell which side the camera is on from these points."
+            " If the board comes out mirrored, far and near are swapped."
+        )
+
+    # The END check, which needs the clip rather than the clicks. The camera cannot get
+    # under the pitch, so every seed of one clip must see the ground plane the same way.
+    #
+    # A seed fitted through curves carries its own reference: the start was carried here
+    # from seeds already settled, so it sees the ground the right way round. A MISFIT
+    # cannot judge the end -- labelled with the wrong goal, the fit finds the mirror-image
+    # camera and matches every click as well as the right one does, because the pitch is
+    # symmetric. Only handedness tells the two apart.
+    fitted = homography(got)
+    if got.arcs and got.start is not None:
+        mine = handedness(fitted, img.shape[1], img.shape[0]) if fitted is not None else 0.0
+        theirs = handedness(got.start, img.shape[1], img.shape[0])
+        if mine and theirs and mine != theirs:
+            notes.append(
+                "the goal in shot is the other one - flipping the pitch end to match the"
+                " seeds already clicked for this clip"
+            )
+            got = flip_x(got, pitch)
+    elif fitted is not None:
+        mine = handedness(fitted, img.shape[1], img.shape[0])
+        theirs = settled_handedness(others, frames_dir)
+        if mine and theirs and mine != theirs:
+            notes.append(
+                "the goal in shot is the other one - flipping the pitch end to match the"
+                " seeds already clicked for this clip"
+            )
+            got = flip_x(got, pitch)
+
+    for a, b in contradictions(got):
+        notes.append(
+            f"WARNING: {a} and {b} are labelled with the wrong side of the pitch -"
+            " nearer the camera is LOWER in the frame, and these two run the other way."
+        )
+
+    directions = {abs(a) > abs(b) for _, (a, b, _c) in got.lines}
+    if got.lines and len(directions) == 1:
+        notes.append(
+            "NOTE: every traced line runs the same way. Lines parallel to each other pin"
+            " down nothing across them - the exact points are carrying the fit."
+        )
+    return got, notes
+
+
 def degenerate(pitch: npt.NDArray[np.float64]) -> bool:
     """Whether the clicked landmarks lie too close to a straight line to fit a camera.
 
@@ -464,10 +642,15 @@ def homography(seed: Seed) -> npt.NDArray[np.float64] | None:
 
     Refused when the evidence is degenerate: everything along one line pins down nothing
     about the direction away from it, and fits perfectly anyway (D24).
+
+    Traced curves go through `_through_curves` instead, which cannot be one linear fit.
     """
     import cv2
 
     from . import calibration
+
+    if seed.arcs:
+        return _through_curves(seed)
 
     pitch = np.array([p[1] for p in seed.points], dtype=np.float64)
 
@@ -574,7 +757,10 @@ def _collapses(h: npt.NDArray[np.float64], seed: Seed) -> bool:
     """
     from . import calibration
 
-    image = np.array([p[0] for p in seed.points] + [p[0] for p in seed.lines], dtype=np.float64)
+    image = np.array(
+        [p[0] for p in seed.points] + [p[0] for p in seed.lines] + [p[0] for p in seed.arcs],
+        dtype=np.float64,
+    )
     if len(image) < 3:
         return True
     got = calibration.apply(h, image)
@@ -582,6 +768,87 @@ def _collapses(h: npt.NDArray[np.float64], seed: Seed) -> bool:
         return True
     spread = np.linalg.svd(got - got.mean(axis=0), compute_uv=False)
     return bool(spread[0] < MIN_SPREAD_M or spread[1] / spread[0] < MIN_SPREAD_RATIO)
+
+
+def _signed(h: npt.NDArray[np.float64], seed: Seed) -> npt.NDArray[np.float64]:
+    """Every clicked constraint's miss, in metres and with its sign, in one vector.
+
+    Two per landmark (x and y), one per traced point on a line, one per traced point on a
+    curve. Signed rather than a distance so a least-squares solver has a smooth surface to
+    walk down -- a distance has a kink at zero, right where the answer is.
+    """
+    from . import calibration
+
+    out: list[npt.NDArray[np.float64]] = []
+    if seed.points:
+        got = calibration.apply(h, np.array([p[0] for p in seed.points], dtype=np.float64))
+        out.append((got - np.array([p[1] for p in seed.points], dtype=np.float64)).ravel())
+    if seed.lines:
+        got = calibration.apply(h, np.array([p[0] for p in seed.lines], dtype=np.float64))
+        abc = np.array([p[1] for p in seed.lines], dtype=np.float64)
+        dist = abc[:, 0] * got[:, 0] + abc[:, 1] * got[:, 1] + abc[:, 2]
+        out.append(dist / np.maximum(1e-9, np.hypot(abc[:, 0], abc[:, 1])))
+    if seed.arcs:
+        got = calibration.apply(h, np.array([p[0] for p in seed.arcs], dtype=np.float64))
+        circle = np.array([p[1] for p in seed.arcs], dtype=np.float64)
+        out.append(np.hypot(got[:, 0] - circle[:, 0], got[:, 1] - circle[:, 1]) - circle[:, 2])
+    return np.concatenate(out) if out else np.zeros(0, dtype=np.float64)
+
+
+def misfit(h: npt.NDArray[np.float64], seed: Seed) -> float:
+    """The median miss of a seed's clicks under a camera, in metres."""
+    miss = np.abs(_signed(h, seed))
+    return float(np.median(miss)) if miss.size and np.all(np.isfinite(miss)) else math.inf
+
+
+def _through_curves(seed: Seed) -> npt.NDArray[np.float64] | None:
+    """A camera fitted to clicks that include traced curves, refined from a start.
+
+    "On this circle" is quadratic in the camera, so it cannot join the one linear fit the
+    straight markings use; the fit starts from a camera and improves it. Two starts are
+    tried and the better result kept. `seed.start` is what the frame this exists for
+    needs: its straight markings all sit in one band, so their own fit is the fold
+    (D34) and refining from it goes nowhere. The straight clicks' own fit is what a first
+    seed has, when there is nothing to carry from.
+
+    The loss is robust at a misclick's width: a curve takes many clicks along a line
+    players stand on, and one on a boot should move nothing.
+    """
+    from scipy.optimize import least_squares
+
+    # A circle looks the same from every angle round its centre, so on its own it fixes no
+    # rotation, and beside a single straight marking it can still reflect across it. Two
+    # pieces of straight evidence break both.
+    straight = len(seed.points) + len({ln for _, ln in seed.lines})
+    if straight < 2 or len(seed.points) * 2 + len(seed.lines) + len(seed.arcs) < 8:
+        return None
+
+    plain = homography(Seed(frame=seed.frame, points=seed.points, lines=seed.lines))
+    starts = [h for h in (seed.start, plain) if h is not None and abs(h[2, 2]) > 1e-12]
+
+    def residuals(v: npt.NDArray[np.float64]) -> npt.NDArray[np.float64]:
+        miss = _signed(np.append(v, 1.0).reshape(3, 3), seed)
+        return np.nan_to_num(miss, nan=1e6, posinf=1e6, neginf=-1e6)
+
+    best: npt.NDArray[np.float64] | None = None
+    best_cost = math.inf
+    for h0 in starts:
+        try:
+            sol = least_squares(
+                residuals,
+                (h0 / h0[2, 2]).ravel()[:8],
+                loss="soft_l1",
+                f_scale=MISCLICK_METRES,
+                x_scale="jac",
+            )
+        except ValueError:
+            continue
+        if np.all(np.isfinite(sol.x)) and float(sol.cost) < best_cost:
+            best, best_cost = np.asarray(sol.x, dtype=np.float64), float(sol.cost)
+    if best is None:
+        return None
+    h: npt.NDArray[np.float64] = np.append(best, 1.0).reshape(3, 3)
+    return None if _collapses(h, seed) else h
 
 
 def _point_residuals(h: npt.NDArray[np.float64], seed: Seed) -> list[float]:

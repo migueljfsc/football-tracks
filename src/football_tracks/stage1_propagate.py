@@ -116,7 +116,13 @@ def between(prev_bgr: MatLike, next_bgr: MatLike) -> H | None:
     return np.asarray(d, dtype=np.float64)
 
 
-def motions(frames_dir: Path, frames: list[int], *, cache: Path | None = None) -> dict[int, H]:
+def motions(
+    frames_dir: Path,
+    frames: list[int],
+    *,
+    cache: Path | None = None,
+    progress: Callable[[int], None] | None = None,
+) -> dict[int, H]:
     """Frame-to-frame ground-plane transforms, keyed by the LATER frame.
 
     `motions[f]` maps image f-1 onto image f. Measured per pair and never accumulated,
@@ -140,6 +146,8 @@ def motions(frames_dir: Path, frames: list[int], *, cache: Path | None = None) -
             if d is not None:
                 out[f] = d
         prev_img, prev_f = img, f
+        if progress is not None:
+            progress(f)
 
     if cache is not None:
         cache.write_text(

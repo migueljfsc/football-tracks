@@ -36,6 +36,13 @@ OUTLIER_RATIO = 2.0
 # track to be read as that goal's keeper rather than a player in a strange light.
 KEEPER_ZONE_M = 22.0
 
+# How near its goal's centre a track's AVERAGE position must be for it to be that goal's
+# keeper whatever it wears, in metres: the penalty mark's distance. An official's kit is
+# not an official where only a keeper lives -- SNGS-151's away keeper wears a kit 0.79 of
+# a typical distance from the referee's, closer than two real officials are to each other,
+# and averages 5.9 m from his goal. The nearest official sent the other way averages 15.2 m.
+KEEPER_HOME_M = 11.0
+
 # Most officials that may be picked out of one clip. A match has three on the pitch and
 # rarely more than two in shot, and the cap is what stops a player in strange light being
 # deleted: an odd kit is only read as an official while there is a slot left for one.
@@ -219,6 +226,12 @@ KIT_CONFIDENT = 0.45
 # How far apart the two painted kits must be, as BGR distance, before they are worth showing.
 KIT_APART = 60.0
 
+# How much of a shirt must be dark, once the pitch's hues are struck out of it, for a kit
+# the signature cannot settle to be painted dark anyway. "Most of it", for the reason
+# `KIT_CONFIDENT` gives: a kit is what most of a shirt is.
+KIT_DARK = 0.5
+DARK_KIT = "#2b2b2b"
+
 
 # The hue bins the PITCH occupies, of the twelve the signature keeps. `GREEN_LO`/`GREEN_HI`
 # put grass at 35-85 of OpenCV's 0-179, which is bins 2 through 5.
@@ -233,7 +246,24 @@ KIT_APART = 60.0
 GRASS_HUES = range(2, 6)
 
 
-def _paint(mine: Vec, theirs: Vec, tone: Vec) -> str | None:
+def _darkness(kit: Vec | None) -> float | None:
+    """How much of a shirt is dark, 0 to 1, once the pitch's hues are struck out of it.
+
+    Read off `kit_mean`, the signature over EVERY pixel, because that is the one that keeps
+    brightness for the colourless ones: `side_mean` gathers them into a single bin, where a
+    black shirt and a white one are the same number. The grass goes first for the reason it
+    goes in `_paint` -- every crop has it, and it is bright.
+    """
+    if kit is None or kit.shape != (48,):
+        return None
+    grid = kit.reshape(12, 4).copy()
+    for b in GRASS_HUES:
+        grid[b] = 0.0
+    total = float(grid.sum())
+    return float(grid[:, :2].sum() / total) if total > 0 else None
+
+
+def _paint(mine: Vec, theirs: Vec, tone: Vec, dark: float | None = None) -> str | None:
     """One side's shirt colour, from the signature that NAMES the sides.
 
     D81 read this off a mean of the torso instead, and could not tell two sides apart that
@@ -273,6 +303,16 @@ def _paint(mine: Vec, theirs: Vec, tone: Vec) -> str | None:
     # green IS the pitch's green and is struck out by definition, leaving 41% colourless
     # against 25% of everything else. Painted anyway, they came out yellow.
     if max(colour, grey) < KIT_CONFIDENT:
+        # Except a DARK kit, which is the commonest thing to fall under the bar: a navy or
+        # black shirt is less of its crop than the grass around it, and what hue it has is
+        # skin and trim. A coach's clip of a dark-navy side against a red one split 32%
+        # colourless to 32% colour, unpainted, and the board's palette put the RED side in
+        # violet and the navy one in amber -- a swap nobody watching the clip could read
+        # past. Where most of the shirt is colourless and most of it is dark, it is a dark
+        # kit. Sporting's hoops cannot come this way: their green is struck out with the
+        # pitch, and what is left is white.
+        if dark is not None and grey >= colour and dark > KIT_DARK:
+            return DARK_KIT
         return None
     if grey > colour:
         return "#e6e6e6" if float(np.mean(tone)) > 128 else "#2b2b2b"
@@ -313,11 +353,21 @@ def kit_colours(tracks: list[Track], teams: dict[int, TeamLabel]) -> dict[str, s
         side: np.mean(np.array([sig for sig, _tone in rows], dtype=np.float64), axis=0)
         for side, rows in seen.items()
     }
+    shirts: dict[str, list[Vec]] = {"home": [], "away": []}
+    for t in tracks:
+        side = teams.get(t.id)
+        if side in shirts and t.kit_mean is not None and t.kit_mean.shape == (48,):
+            shirts[side].append(t.kit_mean)
+    dark = {
+        side: _darkness(np.mean(np.array(rows, dtype=np.float64), axis=0)) if rows else None
+        for side, rows in shirts.items()
+    }
     worn = {
         side: _paint(
             signature[side],
             signature["away" if side == "home" else "home"],
             np.median(np.array([tone for _sig, tone in rows], dtype=np.float64), axis=0),
+            dark[side],
         )
         for side, rows in seen.items()
     }
@@ -440,6 +490,7 @@ def assign(
     frames: dict[int, list[int]] | None = None,
     pitch: Pitch = DEFAULT_PITCH,
     carried: set[int] | None = None,
+    mean_y: dict[int, float] | None = None,
 ) -> dict[int, TeamLabel]:
     """Track id -> team label.
 
@@ -509,6 +560,39 @@ def assign(
     ]
     referee = {outfield[i].id for i in candidates[:MAX_REFEREES]}
 
+    # A kit in a goal is that goal's keeper -- unless it is the kit an official is already
+    # wearing. An official walks into the keeper's zone as readily as anybody, and his kit
+    # is as odd there as it is at halfway: on a coach's clip the referee, twenty metres out
+    # at the end of the move, was labelled the defending side's keeper, and because he was
+    # watched for longer than the keeper himself the board fielded him in goal and left the
+    # real one off. "The same kit" is the yardstick that made both of them odd in the first
+    # place -- within `OUTLIER_RATIO` of the typical distance from a kit to its own side --
+    # so this is the outlier test asked of the officials rather than of the two teams.
+    if referee and bool(keeper.any()):
+        outfield_kits = np.array([t.side_mean for t in outfield], dtype=np.float64)
+        centres = np.array(
+            [
+                outfield_kits[labels == k].mean(axis=0)
+                if np.any(labels == k)
+                else outfield_kits.mean(axis=0)
+                for k in (0, 1)
+            ]
+        )
+        typical = float(np.median(np.linalg.norm(outfield_kits - centres[labels], axis=1)))
+        worn = [t.side_mean for t in outfield if t.id in referee]
+        for i, t in enumerate(usable):
+            if not keeper[i] or typical <= 0:
+                continue
+            if mean_y is not None and t.id in mean_y:
+                goal = 0.0 if mean_x[t.id] <= pitch.halfway else pitch.length
+                home = float(np.hypot(mean_x[t.id] - goal, mean_y[t.id] - pitch.middle))
+                if home <= KEEPER_HOME_M:
+                    continue
+            nearest = min(float(np.linalg.norm(points[i] - w)) for w in worn)
+            if nearest <= OUTLIER_RATIO * typical:
+                keeper[i] = False
+                referee.add(t.id)
+
     sides = {}
     for k in (0, 1):
         xs = [mean_x[t.id] for t, lab in zip(outfield, labels, strict=True) if lab == k]
@@ -550,7 +634,7 @@ def assign(
     for i, (t, lab) in enumerate(zip(outfield, labels, strict=True)):
         if sure[i]:
             out[t.id] = "home" if lab == left else "away"
-    for t in outfield:
+    for t in usable:
         if t.id in referee:
             out[t.id] = "referee"
     for i, t in enumerate(usable):
