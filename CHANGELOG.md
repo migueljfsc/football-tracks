@@ -1,3 +1,9 @@
+## v0.29.0 (2026-09-16)
+
+### Feat
+
+- **run**: a recording to a board in one command
+
 ## v0.28.0 (2026-09-15)
 
 ### Feat
