@@ -1,3 +1,9 @@
+## v0.29.1 (2026-09-16)
+
+### Fix
+
+- **seed**: let a new window finish coming forward before anything blocks
+
 ## v0.29.0 (2026-09-16)
 
 ### Feat
