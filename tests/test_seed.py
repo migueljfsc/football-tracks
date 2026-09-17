@@ -702,3 +702,72 @@ def test_a_curve_seed_clicked_on_the_wrong_goal_is_turned_round(tmp_path: Path) 
     turned, notes = seed.settle(seed.flip_x(right), img, [], tmp_path)
     assert any("other one" in n for n in notes)
     assert turned.points[0][1] == pytest.approx(right.points[0][1])
+
+
+def _looking_at(first: float, last: float) -> npt.NDArray[np.float64]:
+    """Image -> pitch for a touchline camera whose frame spans pitch x `first` to `last`."""
+    frame = np.array([[0, 0], [1920, 0], [1920, 1080], [0, 1080]], np.float32)
+    ground = np.array([[first - 10, 0], [last + 10, 0], [last, 68], [first, 68]], np.float32)
+    return np.asarray(cv2.getPerspectiveTransform(frame, ground), dtype=np.float64)
+
+
+def _on_the_pitch(
+    x: float, y: float, yaw: float, tilt: float, focal: float
+) -> npt.NDArray[np.float64]:
+    """Image -> pitch for a camera 8 m above (x, y), which puts half the pitch behind it."""
+    ahead = np.array([np.cos(yaw) * np.cos(tilt), np.sin(yaw) * np.cos(tilt), -np.sin(tilt)])
+    right = np.cross(ahead, [0.0, 0.0, 1.0])
+    right /= np.linalg.norm(right)
+    rotation = np.stack([right, np.cross(ahead, right), ahead])
+    k = np.array([[focal, 0.0, 960.0], [0.0, focal, 540.0], [0.0, 0.0, 1.0]])
+    t = -rotation @ np.array([x, y, 8.0])
+    return np.asarray(np.linalg.inv(k @ np.column_stack([rotation[:, :2], t])), dtype=np.float64)
+
+
+def test_a_region_offers_its_own_markings_first_and_hides_none() -> None:
+    points = list(seed.landmarks())
+    lines = list(seed.traceable()) + list(seed.curves())
+
+    middle = seed.ordered(points, "midfield")
+    assert middle[:4] == ["halfway far", "halfway near", "circle far", "circle near"]
+    assert sorted(middle) == sorted(points)
+
+    traced = seed.ordered(lines, "midfield")
+    assert traced[:4] == ["halfway line", "centre circle", "far touchline", "near touchline"]
+    assert sorted(traced) == sorted(lines)
+
+    # The touchlines run through both regions, so they follow either one's own markings.
+    goal = seed.ordered(lines, "goal end")
+    assert goal[-4:] == ["far touchline", "near touchline", "halfway line", "centre circle"]
+    assert goal[0] == "goal line"
+    assert sorted(goal) == sorted(lines)
+
+
+def test_both_is_the_order_the_click_tool_always_had() -> None:
+    points = list(seed.landmarks())
+    lines = list(seed.traceable()) + list(seed.curves())
+    assert seed.ordered(points, "both") == points
+    assert seed.ordered(lines, "both") == lines
+    assert seed.REGIONS[0] == "both"
+
+
+def test_the_carried_camera_says_which_region_is_in_shot() -> None:
+    assert seed.region_in_view(_looking_at(37, 68), 1920, 1080) == "midfield"
+    assert seed.region_in_view(_looking_at(0, 30), 1920, 1080) == "goal end"
+    # Either goal: which one is the `e` key's question.
+    assert seed.region_in_view(_looking_at(75, 105), 1920, 1080) == "goal end"
+    assert seed.region_in_view(_looking_at(5, 60), 1920, 1080) == "both"
+
+
+def test_a_marking_behind_the_lens_is_not_in_shot() -> None:
+    """A point behind the camera still projects to a pixel, mirrored through the middle
+    of the picture. This camera sees midfield ahead and a goal end in the sky behind it."""
+    camera = _on_the_pitch(30.0, 50.0, np.radians(90), np.radians(10), 800.0)
+    assert seed.region_in_view(camera, 1920, 1080) == "midfield"
+
+
+def test_a_camera_the_region_cannot_be_read_from_offers_both() -> None:
+    camera = _looking_at(37, 68)
+    # A homography's overall sign is arbitrary, and a carried one can come either way.
+    assert seed.region_in_view(-camera, 1920, 1080) == "midfield"
+    assert seed.region_in_view(np.zeros((3, 3)), 1920, 1080) == "both"

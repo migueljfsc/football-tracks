@@ -1588,6 +1588,7 @@ def _seed_one(
     A seed with traced curves is stamped with the camera its fit starts from -- `start`
     when the caller has one, otherwise wherever the other seeds carry this frame. `window`
     is a window already open to click in, which `ft run` passes so the session keeps one.
+    `start` also picks which region's markings the click tool offers first.
     """
     from . import seedui
 
@@ -1598,7 +1599,7 @@ def _seed_one(
 
     work = work_dir(Path(clip))
     pitch = read_pitch(work)
-    got = seedui.collect(img, frame, pitch, message=message, window=window)
+    got = seedui.collect(img, frame, pitch, message=message, window=window, camera=start)
     if got is None:
         say("abandoned; nothing written")
         return None

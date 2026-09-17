@@ -23,6 +23,7 @@ from . import overlay as overlay_mod
 from . import pitch as pitch_mod
 from .config import DEFAULT_PITCH, Pitch
 from .seed import (
+    REGIONS,
     Seed,
     curve_extent,
     curves,
@@ -32,6 +33,8 @@ from .seed import (
     mirrored_curve,
     mirrored_extent,
     mirrored_line,
+    ordered,
+    region_in_view,
     traceable,
 )
 from .stage1_propagate import Chain
@@ -150,6 +153,7 @@ def _draw(
     corner: str | None = "bottom left",
     message: str | None = None,
     curved: list[Any] | None = None,
+    region: str = "both",
 ) -> Any:
     img = base.copy()
     curved = curved or []
@@ -180,7 +184,8 @@ def _draw(
         f"{len(seed_points)} points + {len(traced)} traced"
         f"{f' + {len(curved)} on curves' if curved else ''}   |   {end} end"
         " - press 'e' if the goal in shot is the other one",
-        "t = points / trace lines and circles    n = next    p = back    u = undo",
+        f"t = points / trace lines and circles    r = region: {region.upper()}"
+        "    n = next    p = back    u = undo",
         f"d = move the diagram / hide it     s = save"
         f"{'' if enough else ' (needs more evidence)'}"
         # After a refusal this frame may offer nothing more, and the way out must say so.
@@ -232,6 +237,7 @@ def collect(
     pitch: Pitch = DEFAULT_PITCH,
     message: str | None = None,
     window: str | None = None,
+    camera: Any = None,
 ) -> Seed | None:
     """Run the window until saved or abandoned. Returns None if abandoned.
 
@@ -245,20 +251,37 @@ def collect(
     anywhere along a named line, which is what a tight goalmouth shot actually offers -
     long clear markings whose corners are off screen. The circles are traced the same way,
     after the lines, for the shot whose straight markings all sit in one band.
+
+    `r` puts one region's markings first -- a goal end, midfield, or both, which is the
+    order they are listed in. `camera` is where the other seeds carry this frame, image to
+    pitch, and picks the region to start on; without one it starts on both.
     """
-    names = list(landmarks(pitch))
     curve_table = curves(pitch)
-    trace_names = list(traceable(pitch)) + list(curve_table)
-    state: dict[str, Any] = {"i": 0, "far": False, "trace": False, "corner": 0, "rect": None}
+    height, width = frame.shape[:2]
+    region = "both" if camera is None else region_in_view(camera, width, height, pitch)
+    state: dict[str, Any] = {
+        "i": 0,
+        "far": False,
+        "trace": False,
+        "corner": 0,
+        "rect": None,
+        "region": REGIONS.index(region),
+    }
+
+    def offered(trace: bool) -> list[str]:
+        names = list(traceable(pitch)) + list(curve_table) if trace else list(landmarks(pitch))
+        return ordered(names, REGIONS[int(state["region"])])
+
     points: list[Any] = []
     traced: list[Any] = []
     curved: list[Any] = []
     # Which name each click was made against, so undo can put the diagram back on it. The
-    # previous index is not enough: `n` and `p` skip names, and a traced line takes many
-    # clicks before `n` moves on to the next one. Trace mode keeps one history for lines and
-    # curves together, so undo takes back the last click whichever list it went into.
-    points_at: list[int] = []
-    trace_history: list[tuple[bool, int]] = []
+    # previous index is not enough: `n` and `p` skip names, a traced line takes many clicks
+    # before `n` moves on to the next one, and `r` reorders the list between clicks. Trace
+    # mode keeps one history for lines and curves together, so undo takes back the last
+    # click whichever list it went into.
+    points_at: list[str] = []
+    trace_history: list[tuple[bool, str]] = []
 
     def on_mouse(event: int, x: int, y: int, _flags: int, _param: Any) -> None:
         if event != cv2.EVENT_LBUTTONDOWN:
@@ -269,21 +292,20 @@ def collect(
         rect = state["rect"]
         if rect is not None and rect[0] <= x <= rect[2] and rect[1] <= y <= rect[3]:
             return
+        name = offered(bool(state["trace"]))[state["i"]]
         if state["trace"]:
-            name = trace_names[state["i"]]
             if name in curve_table:
                 circle = mirrored_curve(name, pitch) if state["far"] else curve_table[name]
                 curved.append(((float(x), float(y)), circle))
             else:
                 line = mirrored_line(name, pitch) if state["far"] else traceable(pitch)[name]
                 traced.append(((float(x), float(y)), line))
-            trace_history.append((name in curve_table, state["i"]))
+            trace_history.append((name in curve_table, name))
             return  # stay on the same marking - tracing wants several clicks
-        name = names[state["i"]]
         spot = mirrored(name, pitch) if state["far"] else landmarks(pitch)[name]
         points.append(((float(x), float(y)), spot))
-        points_at.append(state["i"])
-        state["i"] = min(state["i"] + 1, len(names) - 1)
+        points_at.append(name)
+        state["i"] = min(state["i"] + 1, len(landmarks(pitch)) - 1)
 
     # One panel, measured once: every diagram is the same size whatever it draws, so the
     # rectangle the click filter needs does not depend on the mode -- and asking for it in
@@ -295,7 +317,7 @@ def collect(
     cv2.setMouseCallback(name, on_mouse)
 
     while True:
-        active = trace_names if state["trace"] else names
+        active = offered(bool(state["trace"]))
         state["i"] = min(int(state["i"]), len(active) - 1)
         corner = CORNERS[int(state["corner"]) % len(CORNERS)]
         state["rect"] = _inset_rect(frame, sizer, corner)
@@ -311,6 +333,7 @@ def collect(
                 corner,
                 message,
                 curved,
+                REGIONS[int(state["region"])],
             ),
         )
         key = cv2.waitKey(20) & 0xFF
@@ -339,13 +362,17 @@ def collect(
         if key == ord("t"):
             state["trace"] = not state["trace"]
             state["i"] = 0
+        if key == ord("r"):
+            state["region"] = (int(state["region"]) + 1) % len(REGIONS)
+            state["i"] = 0
         if key == ord("u"):
             if state["trace"] and trace_history:
-                was_curve, state["i"] = trace_history.pop()
+                was_curve, undone = trace_history.pop()
                 (curved if was_curve else traced).pop()
+                state["i"] = offered(True).index(undone)
             elif not state["trace"] and points:
                 points.pop()
-                state["i"] = points_at.pop()
+                state["i"] = offered(False).index(points_at.pop())
 
 
 SCRUB = "football-tracks - place the pitch"

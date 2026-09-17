@@ -17,7 +17,7 @@ import json
 import math
 from dataclasses import dataclass, field, replace
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal
 
 import cv2
 import numpy as np
@@ -223,6 +223,85 @@ def curve_extent(
     else:
         angles = np.radians(np.linspace(0.0, 360.0, 80))
     return np.column_stack([cx + r * np.cos(angles), cy + r * np.sin(angles)])
+
+
+Region = Literal["both", "goal end", "midfield"]
+
+# The order `r` cycles them in. "both" first: it is the order the click tool always had,
+# and the only honest one when nothing says where the camera is looking.
+REGIONS: tuple[Region, ...] = ("both", "goal end", "midfield")
+
+# What only a view of the middle of the pitch offers. Everything else belongs to a goal
+# end, except the touchlines, which run through both.
+MIDFIELD = frozenset(
+    {"halfway far", "halfway near", "circle far", "circle near", "halfway line", "centre circle"}
+)
+EITHER = frozenset({"far touchline", "near touchline"})
+
+
+def ordered(names: list[str], region: Region) -> list[str]:
+    """`names` with what `region` shows first, then the touchlines, then everything else.
+
+    Reordered, never filtered. The region is a guess -- a key press, or a carried camera
+    that may have drifted a whole region away (D34) -- so a wrong one costs a few presses
+    of `n` and cannot hide the marking that is really in shot.
+    """
+    if region == "both":
+        return list(names)
+    own = [n for n in names if n not in EITHER and (n in MIDFIELD) == (region == "midfield")]
+    shared = [n for n in names if n in EITHER]
+    return own + shared + [n for n in names if n not in own and n not in shared]
+
+
+# Points tried along each straight marking.
+REGION_SAMPLES = 40
+
+
+def region_in_view(
+    h: npt.NDArray[np.float64], width: int, height: int, pitch: Pitch = DEFAULT_PITCH
+) -> Region:
+    """Which region's markings a camera puts inside the frame; "both" for both or neither.
+
+    `h` maps image to pitch, as a carried camera does. Either goal end counts, because
+    which one is the `e` key's question and is not answered here.
+
+    A marking behind the lens projects to a pixel as well, so a sample only counts where
+    its homogeneous scale has the sign of the bottom of the frame -- ground in any
+    broadcast view. `h @ inv(h)` is the identity, so the pitch scale at a sample's pixel
+    is `1 / w`, and its sign is the sign of `w`.
+    """
+    try:
+        inv = np.linalg.inv(h)
+    except np.linalg.LinAlgError:
+        return "both"
+    ground = float(h[2] @ np.array([width / 2.0, float(height), 1.0]))
+    if not np.isfinite(ground) or abs(ground) < 1e-12:
+        return "both"
+
+    def line(a: tuple[float, float], b: tuple[float, float]) -> npt.NDArray[np.float64]:
+        t = np.linspace(0.0, 1.0, REGION_SAMPLES)[:, None]
+        return np.array(a, dtype=np.float64) * (1.0 - t) + np.array(b, dtype=np.float64) * t
+
+    def shown(polylines: list[npt.NDArray[np.float64]]) -> bool:
+        pts = np.vstack(polylines)
+        u, v, w = (np.column_stack([pts, np.ones(len(pts))]) @ inv.T).T
+        front = np.sign(w) == np.sign(ground)
+        with np.errstate(divide="ignore", invalid="ignore"):
+            x, y = u / w, v / w
+        inside = front & (x >= 0) & (x <= width) & (y >= 0) & (y <= height)
+        return bool(inside.any())
+
+    straight = extents(pitch)
+    goal = [n for n in straight if n not in MIDFIELD and n not in EITHER]
+    goal_end = [line(*straight[n]) for n in goal]
+    goal_end += [line(*mirrored_extent(n, pitch)) for n in goal]
+    goal_end += [curve_extent("penalty arc", far, pitch) for far in (False, True)]
+    midfield = [line(*straight["halfway line"]), curve_extent("centre circle", False, pitch)]
+
+    at_goal, at_middle = shown(goal_end), shown(midfield)
+    if at_goal == at_middle:
+        return "both"
+    return "goal end" if at_goal else "midfield"
 
 
 @dataclass(slots=True)
