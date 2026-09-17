@@ -1,3 +1,9 @@
+## v0.30.0 (2026-09-17)
+
+### Feat
+
+- **seed**: offer the markings a frame can show first
+
 ## v0.29.1 (2026-09-16)
 
 ### Fix

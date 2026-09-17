@@ -306,7 +306,7 @@ wheels = [
 
 [[package]]
 name = "football-tracks"
-version = "0.29.1"
+version = "0.30.0"
 source = { editable = "." }
 dependencies = [
     { name = "numpy" },
