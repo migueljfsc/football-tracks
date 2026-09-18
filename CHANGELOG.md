@@ -1,3 +1,9 @@
+## v0.33.0 (2026-09-18)
+
+### Feat
+
+- **camera**: score the match camera against ground truth on the benchmark
+
 ## v0.32.1 (2026-09-18)
 
 ### Fix
