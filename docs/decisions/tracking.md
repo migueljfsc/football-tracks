@@ -585,3 +585,45 @@ all from the absorb.
 
 On the coach's clip both defenders now run with the play from their first sighting, and the
 keeper still takes the ball at the end.
+
+**D97 -- with the camera fixed, a player's missing half is in pieces; appearance cannot say which
+pieces are his, and a veto built on it breaks the tackles it was meant to protect.** D96 put
+the benchmark's positions within 2 m for 98% of players, and that changes D76's arithmetic. A
+player's tracks together now hold 85% of his life and the best one 59%, so 26 points are lost
+to splits -- up from 20, because the half that used to be mis-projected is now in the right
+place and visibly in pieces. `ft score` prints both numbers now, and a third: TRACK purity, the
+share of a predicted track's samples that are its main player's. Identity purity asks whether
+a player stayed in one track and cannot see two players joined into one; track purity can.
+
+Why the splits are not joined, by the life each join would have added, on the camera runs:
+
+    refused because                                   share
+    gap over 3 s, player OUT OF SHOT (camera away)     ~28%
+    gap over 3 s, player in shot but untracked         ~16%
+    prediction gate (median miss 1.5x tolerance)        34%
+    both alive at once                                  16%
+    lost to a better candidate                           5%
+
+And 19% of the links the stitcher does make are wrong (38 of 200).
+
+**Appearance cannot open a gate.** OSNet's same-player and different-player distances overlap
+too far: across long gaps a threshold that admits 159 of one man's pieces admits 591 of other
+people's. Short handovers are not a lever either -- 28 of 2,855 are one player.
+
+**It looked like it could close one, and on the benchmark it did.** Among the joins made, the
+right ones sit at a median look distance of 0.09 and the wrong ones at 0.18. A veto at 0.18 on
+every join took track purity 91.4% -> 92.1% on the camera runs and 87.4% -> 88.7% on the seed
+runs, and paired with a longer reach (5 s, 2.5 m/s) the boards gained 4.5% and 3.2% of watched
+time with the team split up and SNGS-147 -- D69's casualty -- at 93.9% from 91.6%.
+
+**It failed on the first clip that played no part in choosing it.** On the nottingham coach
+clip the veto alone cost 8% of the board's watched time and added three turnovers the clip does
+not have: a red defender who goes to ground in a sliding tackle does not look, lying down, like
+himself standing up, so his track is split exactly where the tackle happens -- and the loose
+half, near the ball, is named the carrier of a ball he never won. That moment is where tracks
+break in the first place, so a veto on appearance fires on the joins that matter most. Both
+constants were reverted; the measurement stays.
+
+**What the benchmark could not show and a coach clip did** is the rule this repeats: a gate
+tuned on the clips it is scored on has to be checked on one it was not, and the check is the
+board with its scenes, not the score.

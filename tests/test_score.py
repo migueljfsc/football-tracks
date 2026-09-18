@@ -135,3 +135,23 @@ def test_a_player_split_in_two_is_half_a_player_to_the_board() -> None:
     assert s.recall == 1.0
     assert s.coverage_best == 0.5
     assert s.coverage_all == 1.0
+
+
+def test_two_players_joined_into_one_track_is_what_track_purity_sees() -> None:
+    """Identity purity asks whether a player stayed in one track, and says 100% here: each
+    real player's samples all went to track 7. Only asking of the TRACK shows that it holds
+    two people -- the error a stitcher makes (D97)."""
+    truth = doc(
+        trk(1, "home", [(f, 10.0, 10.0) for f in range(1, 6)]),
+        trk(2, "home", [(f, 30.0, 10.0) for f in range(6, 11)]),
+    )
+    pred = doc(
+        trk(
+            7,
+            "home",
+            [(f, 10.0, 10.0) for f in range(1, 6)] + [(f, 30.0, 10.0) for f in range(6, 11)],
+        ),
+    )
+    s = score(truth, pred)
+    assert s.identity_purity == 1.0
+    assert s.track_purity == 0.5

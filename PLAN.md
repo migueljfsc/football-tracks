@@ -39,9 +39,14 @@ is no longer what limits it.
 right goal from the wrong one -- a mirrored seed fits to 0.02 m at two landmarks and misses by
 1.63 m at four (D88, D96). So the saving is a clip that needs no seeds, not a cheaper seed.
 
-**Next:** teams by kit per game, so `home` means the same side in every clip of a match and half
-time stops moving it -- and a look at whether a clip's blind stretches are worth clicking at all,
-since on the clips so far they are close-ups with no football in them.
+**Fragmentation is now the loss, and it is 26 points** (D97): a player's tracks together hold
+85% of his life on the camera runs and the best one 59%. Appearance cannot tell his pieces from a
+team-mate's, and an appearance veto that won on the benchmark broke a coach clip's tackles. The
+biggest single share is a player out of shot while the camera looks elsewhere (~28%), which the
+camera model can now see -- the next move is re-entry matching built on that.
+
+**After that:** teams by kit per game, so `home` means the same side in every clip of a match
+and half time stops moving it.
 
 ## Where this stands — 6 September 2026
 

@@ -61,6 +61,11 @@ class Score:
     # predicted track holds, and all of their tracks together. Medians over players.
     coverage_best: float = 0.0
     coverage_all: float = 0.0
+    # Of the matched samples in each PREDICTED track, the share that belong to its main real
+    # player -- pooled over tracks. The other side of identity purity: purity asks whether a
+    # player stayed in one track, and cannot see two players joined into one, which is the
+    # error a stitcher makes (D97).
+    track_purity: float = 0.0
 
     @property
     def recall(self) -> float:
@@ -188,6 +193,13 @@ def score(truth: dict[str, Any], pred: dict[str, Any], *, radius: float = MATCH_
     )
     all_share = sorted(len(assigned.get(gid, [])) / n for gid, n in lives.items())
 
+    held: dict[int, Counter[int]] = defaultdict(Counter)
+    for gid, pids in assigned.items():
+        for pid in pids:
+            held[pid][gid] += 1
+    in_tracks = sum(sum(c.values()) for c in held.values())
+    mainly = sum(c.most_common(1)[0][1] for c in held.values())
+
     correct = wrong = missing = 0
     gt_numbered = 0
     for gid, number in gt_numbers.items():
@@ -245,6 +257,7 @@ def score(truth: dict[str, Any], pred: dict[str, Any], *, radius: float = MATCH_
         else 0.0,
         coverage_best=_percentile(best_share, 0.5),
         coverage_all=_percentile(all_share, 0.5),
+        track_purity=mainly / in_tracks if in_tracks else 0.0,
     )
 
 
@@ -264,6 +277,7 @@ def report(s: Score) -> str:
             else ""
         ),
         f"identity purity   {s.identity_purity:6.1%}  ({s.id_switches} switches)",
+        f"track purity      {s.track_purity:6.1%}  (of a track's samples, its main player's)",
         f"a player's life   {s.coverage_best:6.1%} in their best track,"
         f" {s.coverage_all:6.1%} in all of them (median)",
         f"shirt numbers     {s.jersey_correct} right, {s.jersey_wrong} WRONG,"
