@@ -15,8 +15,13 @@ how much of the error belongs to which stage:
              the seed put back so a clip is covered where it refuses everything. Seeding
              has total coverage and drifts; the segmenter has neither drift nor coverage,
              and a board needs both (D67).
+* `camera` - the segmenter's lines again, but read as three numbers -- pan, tilt and zoom
+             -- off a camera position the match is already known to have been shot from.
+             No clicks on THIS clip at all, and the frames nothing is visible in are
+             spanned by aiming between the frames either side rather than by carrying
+             (D96).
 
-All four write the same tracks.json, scored by the same `ft score`.
+All five write the same tracks.json, scored by the same `ft score`.
 """
 
 from __future__ import annotations
@@ -40,12 +45,13 @@ from . import (
     stage2_track,
     stage3_teams,
 )
+from . import camera as camera_mod
 from . import seed as seed_mod
 from .config import DEFAULT_PITCH, Pitch
 from .stage3_teams import assign
 from .tracks import PLAYER_MARGIN, Sample, TeamLabel, Track, on_pitch
 
-Mode = Literal["truth", "seed", "segmenter", "hybrid"]
+Mode = Literal["truth", "seed", "segmenter", "hybrid", "camera"]
 
 
 # How many frames either side the ball's position is taken a median over.
@@ -420,6 +426,24 @@ def segmenter_homographies(
     return out
 
 
+# How far a frame's own lines may land from the camera fitted to them, in metres, before
+# the frame is left unsolved.
+#
+# Wider than a seed's own residual because the evidence is a model's guess at which paint
+# is which: a mislabelled marking pulls the aim, and the aim has nowhere to hide it -- three
+# numbers cannot warp to fit a bad correspondence the way eight can, so a bad frame shows
+# up here as a plain miss.
+CAMERA_GATE_M = 1.5
+
+# How far apart two solved frames may be before the frames between them are left unsolved.
+#
+# Between two aims a second apart the camera panned smoothly and the frames between are
+# between them; over a cut it did not, and the "pan" that would be interpolated is two
+# different shots averaged. A second is long enough to bridge the stretches the segmenter
+# blinks on and short enough that a cut is never spanned.
+MAX_SPAN_FRAMES = 25
+
+
 # How far a per-frame fit may sit from the seed's own chain and still be anchored on, in
 # metres.
 #
@@ -429,6 +453,53 @@ def segmenter_homographies(
 # p90 at 27.9 m: the segmenter is self-CONSISTENTLY wrong there for runs of frames, so
 # agreeing with the frames before it says nothing, and only the human fit can tell.
 ANCHOR_GATE_M = 5.0
+
+
+def camera_homographies(
+    frames_dir: Path,
+    rig: camera_mod.Camera,
+    lens_at: tuple[float, float],
+    weights: Path | None = None,
+    *,
+    max_residual_m: float = CAMERA_GATE_M,
+    max_span: int = MAX_SPAN_FRAMES,
+) -> dict[int, Any]:
+    """Every frame's camera, from the segmenter's lines and a position already known.
+
+    The clip is never clicked. What a person supplied is somewhere else entirely -- another
+    clip of the same match, whose seeds said where the camera stands (D96) -- and each frame
+    here only has to say where it is aimed.
+
+    Frames whose lines no aim explains are left unsolved, and the gaps short enough to be
+    one pan are spanned from the aims either side. A frame solved from its own lines always
+    wins over a spanned one.
+    """
+    from . import calib
+
+    chosen = weights or calib.WEIGHTS
+    net = calib.model(chosen).to(calib.device()).eval()
+    views: dict[int, camera_mod.View] = {}
+    last: camera_mod.View | None = None
+    numbers: list[int] = []
+    for path in sorted(frames_dir.glob("*.jpg")):
+        image = cv2.imread(str(path))
+        if image is None:
+            continue
+        f = int(path.stem)
+        numbers.append(f)
+        mask = calib.predict(net, image)
+        pairs = calib.pairs_from_mask(mask, image.shape[1], image.shape[0])
+        arcs = calib.arcs_from_mask(mask, image.shape[1], image.shape[0])
+        got = camera_mod.aim(rig, lens_at, pairs, arcs, start=last)
+        if got is None or got[1] > max_residual_m:
+            last = None
+            continue
+        views[f] = last = got[0]
+    spanned = camera_mod.spanned(views, numbers, max_span)
+    return {
+        f: camera_mod.matrix(rig, lens_at, spanned[f]) if f in spanned else None for f in numbers
+    }
+
 
 # How far from a seed, in frames, before a per-frame fit is preferred to the seed carried
 # there.
@@ -563,9 +634,15 @@ def homographies(
     weights: Path | None = None,
     segmenter_cache: Path | None = None,
     size: tuple[int, int] = (1920, 1080),
+    rig: camera_mod.Camera | None = None,
+    lens_at: tuple[float, float] | None = None,
 ) -> dict[int, Any]:
-    """Per-frame homographies: from every frame's lines, from frame one's, or from the
-    segmenter's."""
+    """Per-frame homographies: from every frame's lines, from frame one's, from the
+    segmenter's, or aimed off the match's own camera."""
+    if mode == "camera":
+        if rig is None or lens_at is None:
+            raise ValueError("--mode camera needs the game's camera and the clip's lens centre")
+        return camera_homographies(frames_dir, rig, lens_at, weights)
     if mode == "segmenter":
         direct = segmenter_homographies(
             frames_dir, weights, max_residual_m=max_residual_m, cache=segmenter_cache

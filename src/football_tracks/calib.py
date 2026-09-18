@@ -449,6 +449,64 @@ def _residual_m(h: Any, pairs: list[tuple[tuple[float, float], Any]]) -> float:
     return float(np.median(d))
 
 
+def pairs_from_mask(
+    mask: npt.NDArray[np.uint8], width: int, height: int
+) -> list[tuple[tuple[float, float], tuple[float, float, float]]]:
+    """The segmenter's named pixels as (image point, pitch line), in the frame's own pixels.
+
+    The evidence itself, before any fit reads it. A camera model wants the same
+    correspondences the homography is fitted from, so both are judged on one thing (D96).
+    """
+    sx, sy = width / WIDTH, height / HEIGHT
+    pairs: list[tuple[tuple[float, float], tuple[float, float, float]]] = []
+    rng = np.random.default_rng(0)
+    for name, index in INDEX.items():
+        line = calibration.PITCH_LINES.get(name)
+        if line is None:
+            continue  # circles and goalposts are labelled, but the fitter speaks lines
+        ys, xs = np.nonzero(mask == index)
+        if len(xs) < MIN_PIXELS:
+            continue
+        if len(xs) > PER_CLASS:
+            keep = rng.choice(len(xs), PER_CLASS, replace=False)
+            xs, ys = xs[keep], ys[keep]
+        pairs.extend(
+            (((float(x) + 0.5) * sx, (float(y) + 0.5) * sy), line)
+            for x, y in zip(xs, ys, strict=True)
+        )
+    return pairs
+
+
+def arcs_from_mask(
+    mask: npt.NDArray[np.uint8], width: int, height: int
+) -> list[tuple[tuple[float, float], tuple[float, float, float]]]:
+    """The segmenter's circle pixels as (image point, pitch circle), in the frame's pixels.
+
+    The other half of the evidence, and the half the homography fitter throws away: a
+    circle is quadratic in the camera, so a linear fit cannot hold it. A midfield frame's
+    straight markings all lie in one band and leave the fit free in depth (D34) -- the
+    centre circle is what bends through it (D96).
+    """
+    sx, sy = width / WIDTH, height / HEIGHT
+    out: list[tuple[tuple[float, float], tuple[float, float, float]]] = []
+    rng = np.random.default_rng(0)
+    for name, index in INDEX.items():
+        circle = calibration.PITCH_CIRCLES.get(name)
+        if circle is None:
+            continue
+        ys, xs = np.nonzero(mask == index)
+        if len(xs) < MIN_PIXELS:
+            continue
+        if len(xs) > PER_CLASS:
+            keep = rng.choice(len(xs), PER_CLASS, replace=False)
+            xs, ys = xs[keep], ys[keep]
+        out.extend(
+            (((float(x) + 0.5) * sx, (float(y) + 0.5) * sy), circle)
+            for x, y in zip(xs, ys, strict=True)
+        )
+    return out
+
+
 def fit_from_mask(
     mask: npt.NDArray[np.uint8],
     width: int,
@@ -469,23 +527,7 @@ def fit_from_mask(
     from . import refine
 
     sx, sy = width / WIDTH, height / HEIGHT
-    pairs: list[tuple[tuple[float, float], tuple[float, float, float]]] = []
-    rng = np.random.default_rng(0)
-    for name, index in INDEX.items():
-        line = calibration.PITCH_LINES.get(name)
-        if line is None:
-            continue  # circles and goalposts are labelled, but the fitter speaks lines
-        ys, xs = np.nonzero(mask == index)
-        if len(xs) < MIN_PIXELS:
-            continue
-        if len(xs) > PER_CLASS:
-            keep = rng.choice(len(xs), PER_CLASS, replace=False)
-            xs, ys = xs[keep], ys[keep]
-        pairs.extend(
-            (((float(x) + 0.5) * sx, (float(y) + 0.5) * sy), line)
-            for x, y in zip(xs, ys, strict=True)
-        )
-
+    pairs = pairs_from_mask(mask, width, height)
     seen = {ln for _, ln in pairs}
     across = sum(1 for a, b, _c in seen if abs(a) > abs(b))
     # Both axes are still required outright: no number of crossings rescues a frame that

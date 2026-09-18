@@ -80,6 +80,21 @@ CLIPS = ROOT / "data" / "clips"
 CALIB_DATA = ROOT / "data" / "calib2023"
 
 
+GAMES = WORK / "games"
+
+
+def game_dir(game: str, *, create: bool = True) -> Path:
+    """Where what a whole MATCH knows lives, rather than one clip of it.
+
+    A camera is the first such thing: it stands in one place for ninety minutes, so it
+    belongs to the game and every clip cut from it reads the same one (D96).
+    """
+    d = GAMES / game
+    if create:
+        d.mkdir(parents=True, exist_ok=True)
+    return d
+
+
 def work_dir(clip: Path, *, create: bool = True) -> Path:
     """Where a clip's artefacts live. One directory per clip, named after it.
 

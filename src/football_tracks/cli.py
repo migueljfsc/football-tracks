@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import importlib.util
+import json
+import math
 import time
 from collections.abc import Callable, Iterator
 from contextlib import contextmanager
@@ -15,6 +17,7 @@ import typer
 
 from . import auto as auto_mod
 from . import calibration, soccernet, stage0_segment, stage1_propagate, stage1_register, tracks
+from . import camera as camera_mod
 from . import detect as detect_mod
 from . import guide as guide_mod
 from . import overlay as overlay_mod
@@ -24,7 +27,16 @@ from . import render as render_mod
 from . import score as score_mod
 from . import seed as seed_mod
 from . import video as video_mod
-from .config import CALIB_DATA, CLIPS, WORK, Pitch, read_pitch, work_dir, write_pitch
+from .config import (
+    CALIB_DATA,
+    CLIPS,
+    WORK,
+    Pitch,
+    game_dir,
+    read_pitch,
+    work_dir,
+    write_pitch,
+)
 
 app = typer.Typer(add_completion=False, help="Broadcast clip -> player tracks in pitch metres.")
 
@@ -35,6 +47,45 @@ def _size(root: Path, labels: dict[str, Any] | None) -> tuple[int, int]:
         return (int(labels["images"][0]["width"]), int(labels["images"][0]["height"]))
     clip = video_mod.load(root)
     return (clip.width, clip.height)
+
+
+def _clip_meta(clip: str) -> dict[str, Any]:
+    return cast("dict[str, Any]", json.loads((CLIPS / clip / "clip.json").read_text()))
+
+
+def _game_of(clip: str, game: str | None) -> str:
+    """Which match a clip is from: said outright, or remembered from when it was fitted."""
+    if game:
+        return game
+    try:
+        named = str(_clip_meta(clip).get("game") or "")
+    except (OSError, ValueError):
+        named = ""
+    if not named:
+        raise typer.BadParameter(
+            f"{clip} is not in a game yet - pass --game, or run `ft camera <a seeded clip>"
+            " --game <name>` on a clip of the same match first"
+        )
+    return named
+
+
+def _name_game(clip: str, game: str) -> None:
+    """Remember a clip's match in its own clip.json, so it need not be said twice."""
+    path = CLIPS / clip / "clip.json"
+    meta = _clip_meta(clip)
+    meta["game"] = game
+    path.write_text(json.dumps(meta, indent=2) + "\n")
+
+
+def _game_camera(clip: str, game: str | None) -> tuple[camera_mod.Camera, tuple[float, float]]:
+    """The match's camera, and where its lens axis falls in THIS clip's pixels."""
+    named = _game_of(clip, game)
+    path = game_dir(named, create=False) / camera_mod.FILE
+    if not path.exists():
+        raise typer.BadParameter(
+            f"no camera for {named} - run `ft camera <a seeded clip of it> --game {named}`"
+        )
+    return camera_mod.read(path), camera_mod.lens(_clip_meta(clip))
 
 
 def _carry(mode: str, carry: int) -> int | None:
@@ -752,14 +803,15 @@ def _pipeline(
     snap: bool,
     max_residual: float = 0.0,
     stitch: bool = True,
+    game: str | None = None,
 ) -> tuple[Path, auto_mod.Result]:
     """Frames in, tracks.json out. Shared by `ft auto` and `ft bench`.
 
     Extracted so the benchmark runs the SAME pipeline the user runs, rather than a
     second copy of it that can drift away from it silently.
     """
-    if mode not in ("truth", "seed", "segmenter", "hybrid"):
-        raise typer.BadParameter("mode must be 'truth', 'seed', 'segmenter' or 'hybrid'")
+    if mode not in ("truth", "seed", "segmenter", "hybrid", "camera"):
+        raise typer.BadParameter("mode must be 'truth', 'seed', 'segmenter', 'hybrid' or 'camera'")
     picked: auto_mod.Mode = cast("auto_mod.Mode", mode)
 
     c = soccernet.Clip(name=clip, root=CLIPS / clip)
@@ -782,7 +834,15 @@ def _pipeline(
 
     labels: dict[str, Any] | None = None
     seed_path = out / "seed.json"
-    if c.labels_path.exists():
+    if picked == "camera":
+        # No clicks on this clip at all: the camera came from another clip of the match,
+        # and every frame here only says where it was aimed (D96).
+        rig, lens_at = _game_camera(clip, game)
+        pitch = rig.pitch
+        homs = auto_mod.camera_homographies(c.frames_dir, rig, lens_at)
+        solved = sum(1 for h in homs.values() if h is not None)
+        typer.echo(f"camera {rig.game}: {solved}/{len(homs)} frames aimed")
+    elif c.labels_path.exists():
         labels = c.labels()
         homs = auto_mod.homographies(
             labels,
@@ -867,9 +927,14 @@ def auto(
         typer.Option(
             help="'truth' uses every frame's lines; 'seed' uses only frame one's;"
             " 'segmenter' uses the learned ones and no annotations at all; 'hybrid'"
-            " anchors on the learned ones and carries the seed across the rest."
+            " anchors on the learned ones and carries the seed across the rest;"
+            " 'camera' aims the match's own camera at every frame and needs no clicks."
         ),
     ] = "seed",
+    game: Annotated[
+        str | None,
+        typer.Option(help="Which match this clip is from, for `--mode camera`."),
+    ] = None,
     carry: Annotated[int, typer.Option(help="Frames a homography may be carried.")] = -1,
     interval_s: Annotated[
         float,
@@ -908,8 +973,11 @@ def auto(
     `--mode hybrid` anchors on those same learned lines wherever they can be fitted and
     carries between them, so the chain is reset before it drifts and the frames the
     segmenter refuses are still covered (D67).
+    `--mode camera` reads those lines as three numbers -- pan, tilt and zoom -- off the
+    position the match was shot from, which another clip's clicks already established. No
+    seed on this clip, and nothing to carry (D96).
     """
-    path, result = _pipeline(clip, mode, carry, interval_s, snap, max_residual, stitch)
+    path, result = _pipeline(clip, mode, carry, interval_s, snap, max_residual, stitch, game)
     typer.echo(
         f"mode {mode}: {result.detections} detections -> {result.raw_tracks} raw tracks"
         f" -> {len(result.tracks)} kept"
@@ -1543,6 +1611,91 @@ def pitch(
             f" {here.length:g} x {here.width:g} m. Re-seed, or they describe a different pitch."
         )
     typer.echo(f"wrote {write_pitch(work, want)}")
+
+
+@app.command()
+def camera(
+    clip: Annotated[str, typer.Argument(help="A clip of the match that has been seeded.")],
+    game: Annotated[
+        str | None, typer.Option(help="What to call the match. Defaults to the clip's name.")
+    ] = None,
+    overlay: Annotated[bool, typer.Option(help="Draw the markings back onto each seed.")] = True,
+) -> None:
+    """Where the camera stood for this whole match, from one clip's clicks.
+
+    A broadcast camera does not move between clips of the same game -- it pans, tilts and
+    zooms from one gantry -- so the position several seeds agree on is the position every
+    other clip of that match was also shot from. `ft auto <other clip> --mode camera` then
+    registers those clips with no clicking at all (D96).
+
+    It takes SEVERAL seeds, and seeds aimed at different parts of the pitch. One frame is
+    eight numbers of evidence and the position is three of them, so a single view trades
+    height against zoom and settles anywhere along that trade; two views of the same corner
+    barely do better. What the fit prints is how far the position moves when each seed is
+    left out of it, which is the number that says whether the seeds really pinned it.
+    """
+    work = work_dir(Path(clip))
+    root = CLIPS / clip
+    usable, refused = auto_mod.usable_seeds(work, root / "img1")
+    for path, why in refused:
+        typer.echo(f"IGNORING {path.name}: {why}")
+    if len(usable) < 2:
+        raise typer.BadParameter(
+            f"{clip} has {len(usable)} usable seed(s); a camera needs at least two views,"
+            " and three aimed at different parts of the pitch is what pins it"
+        )
+
+    named = game or clip
+    lens_at = camera_mod.lens(_clip_meta(clip))
+    pitch = read_pitch(work)
+    seeds = sorted(usable, key=lambda s: s.frame)
+    got = camera_mod.fit([(s, lens_at) for s in seeds], pitch=pitch, game=named)
+    if got is None:
+        raise typer.BadParameter(f"{clip}'s seeds describe no camera")
+    rig, views = got
+    typer.echo(
+        f"{named}: camera at ({rig.x:.1f}, {rig.y:.1f}) m, {rig.height:.1f} m up,"
+        f" on a {pitch.length:g} x {pitch.width:g} m pitch"
+    )
+    for s in seeds:
+        h = camera_mod.matrix(rig, lens_at, views[s.frame])
+        own = seed_mod.homography(s)
+        mine = f"{seed_mod.misfit(h, s):.2f} m" if h is not None else "NO camera"
+        theirs = f"{seed_mod.misfit(own, s):.2f} m" if own is not None else "no fit"
+        typer.echo(
+            f"{INDENT}f{s.frame}: {mine} (this seed's own fit {theirs}),"
+            f" pan {math.degrees(views[s.frame].pan):.0f} deg,"
+            f" zoom {views[s.frame].focal:.0f} px"
+        )
+
+    # Each seed left out in turn. A position that moves metres when one view goes was
+    # never fitted from the others -- it was that view's own trade between height and zoom.
+    moved = []
+    for s in seeds:
+        others = [(o, lens_at) for o in seeds if o.frame != s.frame]
+        if len(others) < 2:
+            continue
+        without = camera_mod.fit(others, pitch=pitch, game=named)
+        if without is not None:
+            other = without[0]
+            here = (rig.x, rig.y, rig.height)
+            moved.append(math.dist(here, (other.x, other.y, other.height)))
+    if moved:
+        typer.echo(f"{INDENT}leaving any one seed out moves it by at most {max(moved):.1f} m")
+
+    path = camera_mod.write(game_dir(named) / camera_mod.FILE, rig)
+    _name_game(clip, named)
+    typer.echo(f"wrote {path}")
+
+    if overlay:
+        for s in seeds:
+            img = video_mod.read_frame(root / "img1", s.frame)
+            h = camera_mod.matrix(rig, lens_at, views[s.frame])
+            if img is None or h is None:
+                continue
+            dest = work / f"camera.f{s.frame}.png"
+            cv2.imwrite(str(dest), overlay_mod.draw(img, h))
+            typer.echo(f"{INDENT}wrote {dest}")
 
 
 def name_of(frame: int, check: bool) -> str:

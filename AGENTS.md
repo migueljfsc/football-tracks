@@ -42,6 +42,7 @@ src/football_tracks/
   tracks.py                 the tracks.json writer, shared by every producer
   calibration.py            named pitch lines -> a homography
   calib.py                  the LEARNED detector — frame -> named lines, no seed (D36)
+  camera.py                 one camera for a whole MATCH, and each frame's aim (D96)
   refine.py                 snap a homography onto the painted lines. Off by default (D35)
   stage1_register.py        fit per frame, and measure what it costs
   stage1_propagate.py       carry a homography across gaps by tracking the grass
@@ -64,6 +65,7 @@ tests/                      the pure helpers only
 data/clips/                 source video, never committed
 data/calib2023/             SN-Calibration-2023, training data for the segmenter only
 work/<clip>/                every stage's artefacts, all reproducible
+work/games/<game>/          what a MATCH knows and a clip does not: camera.json
 work/calib/                 segmenter weights and training logs. Gitignored — see below
 ```
 

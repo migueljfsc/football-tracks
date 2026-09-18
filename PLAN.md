@@ -11,6 +11,24 @@ This file is the current state and the next move. Everything durable lives in [`
 [the benchmark](docs/benchmark.md), and [the decisions](docs/decisions) — fifty of them, cited
 from source comments by number, and most recording something that was measured and abandoned.
 
+## One camera for a match — 18 September 2026
+
+**A clip of a match already seeded needs no clicks.** A broadcast camera stays on its gantry,
+so a position fitted from one clip's seeds registers every other clip of that match: `ft camera
+<clip> --game <name>` writes it once, and `ft auto <other clip> --mode camera` aims it at each
+frame from the segmenter's lines (D96).
+
+Measured on two Milan-Benfica clips. Five seeds agree on (52.5, 103.6), 14.8 m up, and leaving
+any one of them out moves it by 0.3 m. On the second clip, never clicked, three numbers a frame
+beat a free homography on the segmenter's own pixels -- 0.55 m median against 0.90, and p90
+3.45 m against 9.74 -- while solving 653 of 793 frames, the whole tactical-camera stretch
+unbroken. A free fit cannot be stopped from answering 18 m wrong on a frame it likes; a
+rotation of a camera above the ground cannot fold a pitch or drift out of shape.
+
+**Next:** the wizard. `ft run` still asks for clicks on every clip; with a game camera it should
+click only where the segmenter sees nothing, and a seed should cost about two clicks rather than
+six (pan, tilt and zoom is three numbers, so two landmarks over-determine it).
+
 ## Where this stands — 6 September 2026
 
 **Every one of the eleven benchmark clips produces a full board.** `ft auto --mode seed` is

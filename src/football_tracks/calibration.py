@@ -70,6 +70,19 @@ PITCH_LINES: dict[str, Line] = {
 # degrees of freedom and leave the rest floating.
 CENTRE_RADIUS = 9.15
 
+# The painted CIRCLES, as centre x, centre y and radius in metres. On 105 x 68 for the
+# same reason `PITCH_LINES` is: these are SoccerNet's names for SoccerNet's pitch.
+#
+# No linear fit can use them -- "somewhere on this circle" is quadratic in the camera -- so
+# the homography fitter ignores them. A camera model solved by three numbers is not linear
+# either, and a circle is the one marking a midfield view always has that bends through
+# DEPTH, which is exactly what a band of straight markings cannot pin down (D34, D96).
+PITCH_CIRCLES: dict[str, tuple[float, float, float]] = {
+    "Circle central": (PITCH_LENGTH / 2, _HALF_W, CENTRE_RADIUS),
+    "Circle left": (11.0, _HALF_W, CENTRE_RADIUS),
+    "Circle right": (PITCH_LENGTH - 11.0, _HALF_W, CENTRE_RADIUS),
+}
+
 # How much closer to one candidate than the other a LONE crossing's estimated pitch y must
 # be before it is named. The two candidates are 18.3 m apart on the centre circle and 14.6
 # on a penalty arc, and the estimate is a linear read of a perspective image, so it is

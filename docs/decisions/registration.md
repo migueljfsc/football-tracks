@@ -11,6 +11,58 @@ honest attempt. But the fallback is genuinely good — a human clicking four lan
 accurate than any model — and reaching for it is not a failure. The decision to switch belongs
 at the end of M1, judged on the reprojection picture.
 
+**D96 — one camera for a whole match, three numbers a frame.** A broadcast camera does not
+move. It sits on its gantry for ninety minutes and pans, tilts and zooms, so every frame of
+every clip of that match is the same camera pointed somewhere else. A coach asked the question
+that follows from it: *"we could potentially spend a lot of time in one clip marking everything
+and giving the program a model of the pitch and then other clips would just be an import step"*.
+
+**The position is real and the seeds agree on it.** Fitted separately, the five seeds of a
+Milan-Benfica clip put the camera up to 17 m apart -- each frame is eight numbers of evidence
+and the position is three of them, so one view trades height against zoom and lands anywhere
+along that trade. Fitted together they agree on (52.5, 103.6), 14.8 m up: level with the
+halfway line, 36 m back from the near touchline, which is where the gantry is. Leaving any one
+seed out moves it by 0.3 m, and each seed's own clicks are explained as well by three numbers
+as by its own eight (0.13-0.21 m against 0.10-0.24 m).
+
+**It transfers to another clip of the same match, and beats the free fit there.** On a second
+clip, never clicked, scored against the segmenter's own named pixels:
+
+    clip                      free homography (8)   aimed off the camera (3)
+    the clicked one           1.16 m   p90 18.30    0.54 m   p90 0.75
+    the second one, unseen    0.90 m   p90  9.74    0.55 m   p90 3.45
+
+The comparison is rigged in the free fit's favour -- it is chosen to minimise roughly that
+residual, and the camera model had never seen the clip -- and it still loses. The p90 is the
+point: a free fit answers 18 m and 41 m wrong on frames it is happy with, and three numbers
+cannot, because no rotation of a camera above the ground folds a pitch (D34) or drifts out of
+shape (D18).
+
+**So a clip of a known match needs no clicks at all.** `ft camera <clip> --game <name>` writes
+the position once; `ft auto <other clip> --mode camera` aims it at every frame from the
+segmenter's lines. On the second clip that is 653 of 793 frames in 1m50s, and the 140 it
+refuses are the opening close-up and a cut -- the tactical-camera stretch, frames 168 to 793,
+is solved unbroken. Gaps short enough to be one pan are filled by aiming BETWEEN the frames
+either side, which a carry cannot do without accumulating (D18).
+
+**D17 came back at a camera model's size, and circles are what answer it.** Three numbers need
+more than three constraints. The midfield frames of that clip show two straight markings -- the
+halfway line and a touchline -- which any aim fits to 0.01 m while putting the markings off the
+picture; the residual cannot see it because nothing is left over to disagree. The guard is
+structural: three distinct markings, counting a circle as one. And the circle may now BE
+evidence, because this fit is not linear -- `calib.arcs_from_mask` hands over the centre circle
+the homography fitter has to throw away, which is the one marking a midfield view always has
+that bends through depth. With it, coverage went 77% to 82% and every midfield frame that was
+silently wrong is either right or refused.
+
+**Two clips of one match are cropped differently** -- 9 px and 1 px on this pair -- so the lens
+axis is taken from each clip's own crop rather than assumed to be the middle of its picture.
+
+What this does NOT do: say which clips belong to one match (a person names that), survive a
+camera being moved between clips, or help a clip shot from a different camera. Half time does
+not touch it -- the pitch does not move -- but it does move which team is `home`, which is
+`stage3_teams`' business and not the camera's.
+
 **D16 — the homography is fitted from POINT-ON-LINE constraints, not from line
 intersections.** Every annotated point is known to lie on a named pitch line, which gives
 one linear equation `l · (H p) = 0`; stacking them is an ordinary DLT.
