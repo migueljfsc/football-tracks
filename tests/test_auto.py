@@ -2,6 +2,10 @@
 
 from __future__ import annotations
 
+import json
+from pathlib import Path
+from typing import Any
+
 from football_tracks.tracks import Sample
 
 
@@ -46,6 +50,7 @@ def test_every_stage_has_its_command() -> None:
         "auto",
         "bench",
         "calibrate",
+        "camera",
         "detect",
         "frames",
         "pitch",
@@ -61,3 +66,23 @@ def test_every_stage_has_its_command() -> None:
         assert name in registered, f"`ft {name.replace('_', '-')}` is not registered"
     # And no helper: a function under a stray decorator is registered as a command nobody meant.
     assert "_pipeline" not in registered, "`_pipeline` is a helper, not a command"
+
+
+def test_a_clip_named_for_a_match_stays_named_for_it(tmp_path: Path, monkeypatch: Any) -> None:
+    """`--game` on `ft run` or `ft auto` is recorded beside the clip, so the next command on it
+    finds the match's camera and kits without being told again -- and a clip nobody named is
+    simply not in a match, rather than an error for the commands that do not need one."""
+    from football_tracks import cli
+
+    monkeypatch.setattr(cli, "CLIPS", tmp_path)
+    (tmp_path / "Untitled_1").mkdir()
+    (tmp_path / "Untitled_1" / "clip.json").write_text(json.dumps({"name": "Untitled_1"}))
+
+    assert cli._maybe_game("Untitled_1", None) is None
+    cli._name_game("Untitled_1", "milan-benfica")
+    assert cli._game_of("Untitled_1", None) == "milan-benfica"
+    # Said outright, the flag wins over what was recorded.
+    assert cli._game_of("Untitled_1", "another-match") == "another-match"
+    # A clip with no clip.json at all -- a SoccerNet one -- is left alone.
+    cli._name_game("nowhere", "milan-benfica")
+    assert not (tmp_path / "nowhere").exists()

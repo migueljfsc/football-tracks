@@ -1046,6 +1046,8 @@ def auto(
     position the match was shot from, which another clip's clicks already established. No
     seed on this clip, and nothing to carry (D96).
     """
+    if game:
+        _name_game(clip, game)
     path, result = _pipeline(clip, mode, carry, interval_s, snap, max_residual, stitch, game)
     typer.echo(
         f"mode {mode}: {result.detections} detections -> {result.raw_tracks} raw tracks"
@@ -1652,6 +1654,8 @@ def run(
     # A match already seeded once has a camera, and a clip of it needs no clicks at all --
     # the lines in the picture say where that camera was aimed (D96). Clicks are asked for
     # only where the segmenter can read nothing.
+    if game and not annotated:
+        _name_game(clip, game)
     named = game or str(_clip_meta(clip).get("game") or "") if not annotated else ""
     fitted = (game_dir(named, create=False) / camera_mod.FILE) if named else None
     rig = camera_mod.read(fitted) if fitted is not None and fitted.exists() else None
@@ -1761,7 +1765,17 @@ def _extract(
     clip_name = name or source.stem
     dest = CLIPS / clip_name
     before = len(list((dest / "img1").glob("*.jpg")))
+    # Which match this is: a person said so, extraction does not measure it, and a trimmed
+    # recording re-extracted under its name is still that match. Said aloud rather than kept
+    # quietly, because the same name could be reused for another match's recording.
+    try:
+        match = str(_clip_meta(clip_name).get("game") or "")
+    except (OSError, ValueError):
+        match = ""
     clip = video_mod.extract(source, dest)
+    if match:
+        _name_game(clip_name, match)
+        say(f"kept the match it was named for, {match} - pass --game to name another")
     if before > clip.frames:
         say(
             f"replaced {before} frames already under this name - a shorter recording used to"
