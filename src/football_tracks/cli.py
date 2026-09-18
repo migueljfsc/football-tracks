@@ -1676,6 +1676,20 @@ def run(
     )
 
 
+# Everything cached from a clip's frames and keyed by frame NUMBER -- which a re-extraction
+# keeps and a trimmed recording shifts, so each of these would be reused against footage it
+# was never measured on. The camera aims and the segmenter fits are keyed by weights and
+# camera, not by the picture, and a trimmed clip re-extracted under its old name reads every
+# one of them a few hundred frames out.
+FROM_FRAMES = (
+    "motions.json",
+    "detections.json",
+    "appearance.npz",
+    "aims.json",
+    "segmenter.json",
+)
+
+
 def _extract(
     source: Path, name: str | None, *, say: Callable[[str], None] = typer.echo
 ) -> video_mod.Clip:
@@ -1701,7 +1715,7 @@ def _extract(
     # another camera fits nothing and says nothing about it.
     work = work_dir(Path(clip_name))
     if before:
-        for cached in ("motions.json", "detections.json", "appearance.npz"):
+        for cached in FROM_FRAMES:
             path = work / cached
             if path.exists():
                 path.unlink()
