@@ -1,3 +1,9 @@
+## v0.35.0 (2026-09-18)
+
+### Feat
+
+- **score**: measure two players joined into one track, and record why a look veto failed
+
 ## v0.34.0 (2026-09-18)
 
 ### Feat
