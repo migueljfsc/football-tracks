@@ -1,3 +1,9 @@
+## v0.36.1 (2026-09-18)
+
+### Fix
+
+- **run**: remember the match a clip was named for
+
 ## v0.36.0 (2026-09-18)
 
 ### Feat
