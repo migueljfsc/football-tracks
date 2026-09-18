@@ -28,6 +28,7 @@ from __future__ import annotations
 
 import json
 import math
+from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Literal
@@ -455,38 +456,183 @@ MAX_SPAN_FRAMES = 25
 ANCHOR_GATE_M = 5.0
 
 
-def camera_homographies(
+def _cached_aims(
+    cache: Path, weights: Path, rig: camera_mod.Camera, gate: float
+) -> dict[int, camera_mod.View] | None:
+    """Aims read from a previous run, or None if they were made for something else.
+
+    Keyed on the weights AND the camera, because moving the camera changes every aim -- and
+    a stale aim here is indistinguishable from a frame the segmenter read differently.
+    """
+    try:
+        stored = json.loads(cache.read_text())
+    except (OSError, ValueError):
+        return None
+    if stored.get("weights") != str(weights) or stored.get("mtime") != weights.stat().st_mtime:
+        return None
+    if stored.get("gate") != gate or stored.get("camera") != [rig.x, rig.y, rig.height]:
+        return None
+    return {
+        int(f): camera_mod.View(pan=v[0], tilt=v[1], focal=v[2]) for f, v in stored["views"].items()
+    }
+
+
+def _store_aims(
+    cache: Path,
+    weights: Path,
+    rig: camera_mod.Camera,
+    gate: float,
+    views: dict[int, camera_mod.View],
+) -> None:
+    cache.write_text(
+        json.dumps(
+            {
+                "version": 1,
+                "weights": str(weights),
+                "mtime": weights.stat().st_mtime,
+                "gate": gate,
+                "camera": [rig.x, rig.y, rig.height],
+                "views": {str(f): [v.pan, v.tilt, v.focal] for f, v in sorted(views.items())},
+            }
+        )
+        + "\n"
+    )
+
+
+# How far a clicked frame's own landmarks may land from the aim fitted to them, in metres.
+#
+# Tighter than the segmenter's gate because the evidence is exact: a landmark is a spot, not
+# a pixel somewhere along a marking, and the clicked seeds of a real clip fit their match's
+# camera to 0.13-0.21 m.
+#
+# It is also the end check. A camera in a known place cannot fit the far goal's markings to
+# the near goal's names, so D88's invisible failure arrives here as a plain miss -- 1.63 m at
+# the four landmarks `camera.MIN_SEED_CONSTRAINTS` asks for. The gate sits between what a
+# clicked seed really costs and what a mirrored one cannot get under.
+CLICK_GATE_M = 0.5
+
+
+def aimed_seeds(
+    work: Path,
+    frames_dir: Path,
+    rig: camera_mod.Camera,
+    lens_at: tuple[float, float],
+    gate: float = CLICK_GATE_M,
+) -> tuple[list[seed_mod.Seed], list[tuple[Path, str]]]:
+    """The clicked frames the match's camera can be aimed from, and the ones it cannot.
+
+    The same files `usable_seeds` reads, judged against the camera instead of against
+    themselves: two landmarks are enough (D96) where a homography needs four markings, and
+    a seed too thin to fit a homography at all is still worth three numbers.
+    """
+    good: list[seed_mod.Seed] = []
+    bad: list[tuple[Path, str]] = []
+    for path in seed_paths(work):
+        seeded = seed_mod.read(path)
+        img = cv2.imread(str(frames_dir / f"{seeded.frame:06d}.jpg"))
+        if img is None:
+            bad.append((path, f"frame {seeded.frame} is not in the clip"))
+            continue
+        if seeded.image and seed_mod.unlike(seeded.image, seed_mod.fingerprint(img)) > (
+            seed_mod.MAX_UNLIKE_BITS
+        ):
+            bad.append(
+                (
+                    path,
+                    f"it was clicked on a different picture - frame {seeded.frame} of the clip"
+                    " in this folder now is not the one these landmarks describe",
+                )
+            )
+            continue
+        got = camera_mod.aim_from_seed(rig, lens_at, seeded)
+        if got is None:
+            bad.append(
+                (
+                    path,
+                    "too few clicks to aim the camera - four landmarks, or a couple of them"
+                    " and some points traced along the markings",
+                )
+            )
+        elif got[1] > gate:
+            bad.append(
+                (
+                    path,
+                    f"no aim of this match's camera fits these clicks: they miss by {got[1]:.1f} m."
+                    " Check the far/near names against the diagram, and whether the goal in shot"
+                    " is the other one",
+                )
+            )
+        else:
+            good.append(seeded)
+    return good, bad
+
+
+def camera_chain(
+    rig: camera_mod.Camera,
+    lens_at: tuple[float, float],
+    views: dict[int, camera_mod.View],
+    numbers: list[int],
+    clicked: set[int],
+    max_span: int = MAX_SPAN_FRAMES,
+) -> stage1_propagate.Chain:
+    """The clip's cameras as the wizard's timeline reads them.
+
+    A frame is solved from its own evidence, spanned between two frames that were, or not
+    solved at all -- which is what `guide.standing` colours. Distance here is frames from
+    the nearest evidence, as it is for a carry, so the same words describe both.
+    """
+    filled = camera_mod.spanned(views, numbers, max_span)
+    homs: dict[int, Any] = {
+        f: camera_mod.matrix(rig, lens_at, filled[f]) if f in filled else None for f in numbers
+    }
+    reach: dict[int, int] = {}
+    seen = sorted(views)
+    for f in numbers:
+        if homs.get(f) is None or not seen:
+            continue
+        reach[f] = 0 if f in clicked else min(abs(f - g) for g in seen) or 1
+    return stage1_propagate.Chain(
+        homographies=homs,
+        solved_directly=len(views),
+        carried=sum(1 for f in filled if f not in views),
+        gaps=sum(1 for f in numbers if homs.get(f) is None),
+        carried_from=reach,
+    )
+
+
+def camera_aims(
     frames_dir: Path,
     rig: camera_mod.Camera,
     lens_at: tuple[float, float],
     weights: Path | None = None,
     *,
     max_residual_m: float = CAMERA_GATE_M,
-    max_span: int = MAX_SPAN_FRAMES,
-) -> dict[int, Any]:
-    """Every frame's camera, from the segmenter's lines and a position already known.
+    cache: Path | None = None,
+    progress: Callable[[int], None] | None = None,
+) -> tuple[dict[int, camera_mod.View], list[int]]:
+    """Where the camera was aimed at each frame it can be read from, and every frame there is.
 
-    The clip is never clicked. What a person supplied is somewhere else entirely -- another
-    clip of the same match, whose seeds said where the camera stands (D96) -- and each frame
-    here only has to say where it is aimed.
-
-    Frames whose lines no aim explains are left unsolved, and the gaps short enough to be
-    one pan are spanned from the aims either side. A frame solved from its own lines always
-    wins over a spanned one.
+    The slow half of `--mode camera`: a segmenter pass over the clip. Cached, because the
+    wizard re-registers after every click and the lines do not change when somebody clicks.
     """
     from . import calib
 
+    numbers = sorted(int(p.stem) for p in frames_dir.glob("*.jpg"))
     chosen = weights or calib.WEIGHTS
+    if cache is not None and cache.exists():
+        stored = _cached_aims(cache, chosen, rig, max_residual_m)
+        if stored is not None:
+            return stored, numbers
+
     net = calib.model(chosen).to(calib.device()).eval()
     views: dict[int, camera_mod.View] = {}
     last: camera_mod.View | None = None
-    numbers: list[int] = []
-    for path in sorted(frames_dir.glob("*.jpg")):
-        image = cv2.imread(str(path))
+    for f in numbers:
+        image = cv2.imread(str(frames_dir / f"{f:06d}.jpg"))
+        if progress is not None:
+            progress(f)
         if image is None:
             continue
-        f = int(path.stem)
-        numbers.append(f)
         mask = calib.predict(net, image)
         pairs = calib.pairs_from_mask(mask, image.shape[1], image.shape[0])
         arcs = calib.arcs_from_mask(mask, image.shape[1], image.shape[0])
@@ -495,6 +641,43 @@ def camera_homographies(
             last = None
             continue
         views[f] = last = got[0]
+    if cache is not None:
+        _store_aims(cache, chosen, rig, max_residual_m, views)
+    return views, numbers
+
+
+def camera_homographies(
+    frames_dir: Path,
+    rig: camera_mod.Camera,
+    lens_at: tuple[float, float],
+    weights: Path | None = None,
+    *,
+    seeds: list[seed_mod.Seed] | None = None,
+    max_residual_m: float = CAMERA_GATE_M,
+    max_span: int = MAX_SPAN_FRAMES,
+    cache: Path | None = None,
+) -> dict[int, Any]:
+    """Every frame's camera, from the segmenter's lines and a position already known.
+
+    The clip need never be clicked. What a person supplied is somewhere else entirely --
+    another clip of the same match, whose seeds said where the camera stands (D96) -- and
+    each frame here only has to say where it is aimed.
+
+    `seeds` are clicks on THIS clip, for the stretches the segmenter cannot read. They are
+    evidence of the same kind and better: an exact landmark rather than a pixel somewhere
+    along a marking, so a clicked frame's aim replaces a read one.
+
+    Frames nothing explains are left unsolved, and the gaps short enough to be one pan are
+    spanned from the aims either side.
+    """
+    views, numbers = camera_aims(
+        frames_dir, rig, lens_at, weights, max_residual_m=max_residual_m, cache=cache
+    )
+    views = dict(views)
+    for clicked in seeds or []:
+        got = camera_mod.aim_from_seed(rig, lens_at, clicked)
+        if got is not None:
+            views[clicked.frame] = got[0]
     spanned = camera_mod.spanned(views, numbers, max_span)
     return {
         f: camera_mod.matrix(rig, lens_at, spanned[f]) if f in spanned else None for f in numbers

@@ -55,6 +55,30 @@ the homography fitter has to throw away, which is the one marking a midfield vie
 that bends through depth. With it, coverage went 77% to 82% and every midfield frame that was
 silently wrong is either right or refused.
 
+**The wizard asks only where the segmenter sees nothing.** `ft run <clip> --game <name>` reads
+the lines once, reports what it solved, and offers the stretches it could not -- on the second
+clip that is 630 frames read, 23 spanned, and two blind stretches, both of them the opening
+close-up. The segmenter's pass is cached beside the clip, so re-registering after a click takes
+a second rather than two minutes. Where no camera exists yet, the first clip is clicked as
+before and its seeds fit one at the end, so the NEXT clip of that match is free.
+
+**A clicked frame is three numbers too, and that is what makes the end check exact.** `settle`'s
+symmetry guards are the camera's job here: a seed clicked on the wrong goal cannot be an aim of
+a camera in a known place, so it arrives as a plain miss instead of a perfect fit (D88). Two
+things had to be true for that. The aim is bounded to what a gantry can do -- across the pitch,
+and down at it -- because unbounded the mirror IS a solution: the same camera upside down, tilt
+at 191 degrees, fitting a wrong-goal seed to 1e-14. And the seed needs four landmarks, not two:
+
+    landmarks   how close a mirrored seed gets
+        2            0.02 m      -- indistinguishable
+        3            0.61 m
+        4            1.63 m
+        5            4.08 m
+
+Two landmarks aim the camera perfectly well, so the click count is set by the END check rather
+than by the fit -- which is why a seed still costs what it always did. The saving is not a
+cheaper seed. It is a clip that needs none.
+
 **Two clips of one match are cropped differently** -- 9 px and 1 px on this pair -- so the lens
 axis is taken from each clip's own crop rather than assumed to be the middle of its picture.
 

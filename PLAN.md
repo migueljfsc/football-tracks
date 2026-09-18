@@ -25,9 +25,16 @@ beat a free homography on the segmenter's own pixels -- 0.55 m median against 0.
 unbroken. A free fit cannot be stopped from answering 18 m wrong on a frame it likes; a
 rotation of a camera above the ground cannot fold a pitch or drift out of shape.
 
-**Next:** the wizard. `ft run` still asks for clicks on every clip; with a game camera it should
-click only where the segmenter sees nothing, and a seed should cost about two clicks rather than
-six (pan, tilt and zoom is three numbers, so two landmarks over-determine it).
+`ft run <clip> --game <name>` does the whole of it: the camera registers what it can, the blind
+stretches are offered one at a time, and a first clip's clicks fit the camera for the next.
+
+**A seed still costs four landmarks, not two.** Three numbers need two, but two cannot tell the
+right goal from the wrong one -- a mirrored seed fits to 0.02 m at two landmarks and misses by
+1.63 m at four (D88, D96). So the saving is a clip that needs no seeds, not a cheaper seed.
+
+**Next:** teams by kit per game, so `home` means the same side in every clip of a match and half
+time stops moving it -- and a look at whether a clip's blind stretches are worth clicking at all,
+since on the clips so far they are close-ups with no football in them.
 
 ## Where this stands — 6 September 2026
 

@@ -56,9 +56,32 @@ NEAR_ENOUGH_M = 1.0
 # here because a solver walking uphill reaches `exp(800)` in a few steps otherwise.
 LOG_FOCAL = (math.log(200.0), math.log(200_000.0))
 
+# What a camera on a gantry can be aimed at: across the pitch rather than behind itself, and
+# DOWN at the ground rather than up at the roof.
+#
+# Not tidiness. A pitch is symmetric end to end, and the mirror image of a camera looking at
+# one goal is the same camera upside down looking at the other -- so a seed clicked on the
+# wrong goal (D88) fits to 1e-14 with the tilt at 191 degrees. Bounded, there is no such
+# solution and the clicks simply miss, which is what `aimed_seeds` reports.
+PAN_LIMIT = (math.radians(-89.0), math.radians(89.0))
+TILT_LIMIT = (math.radians(0.5), math.radians(89.0))
+
+
+def _clamp(value: float, bounds: tuple[float, float]) -> float:
+    return min(max(value, bounds[0]), bounds[1])
+
 
 def _focal(log_focal: float) -> float:
-    return float(math.exp(min(max(log_focal, LOG_FOCAL[0]), LOG_FOCAL[1])))
+    return float(math.exp(_clamp(log_focal, LOG_FOCAL)))
+
+
+def _view(p: Any) -> View:
+    """A solver's three numbers as an aim a camera could actually be pointed at."""
+    return View(
+        pan=_clamp(float(p[0]), PAN_LIMIT),
+        tilt=_clamp(float(p[1]), TILT_LIMIT),
+        focal=_focal(float(p[2])),
+    )
 
 
 @dataclass(frozen=True)
@@ -141,6 +164,25 @@ Arcs = list[tuple[tuple[float, float], tuple[float, float, float]]]
 # because there was nothing left for it to disagree with.
 MIN_MARKINGS = 3
 
+# Constraints a seed must carry before its aim is believed. A clicked landmark is two (x and
+# y), a point traced along a marking or a circle is one -- so this is three landmarks, where
+# a homography wants four markings.
+#
+# Two landmarks DO aim the camera, and that is not enough. A pitch is symmetric end to end,
+# so the question is not whether an aim fits but whether the MIRROR of it also does (D88) --
+# and a camera at the halfway line is its own mirror image, so the clicks are the only thing
+# that can tell the two apart. How close a mirrored seed can get, worst case over views:
+#
+#     landmarks   the mirror gets within
+#         2            0.02 m       -- indistinguishable
+#         3            0.61 m       -- inside a plausible gate
+#         4            1.63 m
+#         5            4.08 m
+#
+# So four, which is what the click tool already asks for. The saving this model brings is
+# not a cheaper seed, it is a clip that needs almost none (D96).
+MIN_SEED_CONSTRAINTS = 8
+
 
 def arc_misses(
     h: npt.NDArray[np.float64] | None, arcs: Arcs, cap: float = 1e3
@@ -192,7 +234,7 @@ def _solve(
         if focal <= 0:
             continue
         got = least_squares(residual, [pan, tilt, math.log(focal)], loss="soft_l1", f_scale=0.5)
-        view = View(float(got.x[0]), float(got.x[1]), _focal(float(got.x[2])))
+        view = _view(got.x)
         miss = float(np.median(np.abs(residual(got.x))))
         if best is None or miss < best[1]:
             best = (view, miss)
@@ -225,7 +267,7 @@ def aim(
         return None
 
     def residual(p: npt.NDArray[np.float64]) -> npt.NDArray[np.float64]:
-        view = View(float(p[0]), float(p[1]), _focal(float(p[2])))
+        view = _view(p)
         h = matrix(camera, lens_at, view)
         return np.concatenate([line_misses(h, pairs), arc_misses(h, on)])
 
@@ -251,6 +293,43 @@ def aim(
         ),
     )
     return _solve(residual, tuple(ranked[:REFINE_BEST]))
+
+
+def aim_from_seed(
+    camera: Camera,
+    lens_at: tuple[float, float],
+    clicked: Any,
+    *,
+    start: View | None = None,
+    starts: tuple[tuple[float, float, float], ...] = COARSE,
+) -> tuple[View, float] | None:
+    """Pan, tilt and zoom from a person's clicks, with the position already known.
+
+    The same three numbers the segmenter's lines give, from better evidence: a landmark is
+    an exact spot rather than a pixel somewhere along a marking.
+
+    Three numbers need two landmarks and the wrong GOAL needs four, which is what is asked
+    for -- see `MIN_SEED_CONSTRAINTS`, where the difference is measured.
+    """
+    from . import seed as seed_mod
+
+    weight = len(clicked.points) * 2 + len(clicked.lines) + len(clicked.arcs)
+    if weight < MIN_SEED_CONSTRAINTS:
+        return None
+
+    def residual(p: npt.NDArray[np.float64]) -> npt.NDArray[np.float64]:
+        view = _view(p)
+        h = matrix(camera, lens_at, view)
+        if h is None:
+            return np.full(weight, 1e3)
+        miss = seed_mod._signed(h, clicked)
+        return np.where(np.isfinite(miss), miss, 1e3)
+
+    if start is not None:
+        near = _solve(residual, ((start.pan, start.tilt, start.focal),))
+        if near is not None and near[1] <= NEAR_ENOUGH_M:
+            return near
+    return _solve(residual, starts)
 
 
 def between(a: View, b: View, t: float) -> View:
@@ -315,7 +394,7 @@ def fit(
         camera = Camera(float(x[0]), float(x[1]), float(x[2]), pitch=pitch, game=game)
         out = []
         for (s, at), p in zip(clicked, x[3:].reshape(len(clicked), 3), strict=True):
-            view = View(float(p[0]), float(p[1]), _focal(float(p[2])))
+            view = _view(p)
             h = matrix(camera, at, view)
             n = len(s.points) * 2 + len(s.lines) + len(s.arcs)
             miss = seed_mod._signed(h, s) if h is not None else np.full(n, 1e3)
@@ -330,7 +409,7 @@ def fit(
     if camera.height <= 0:
         return None
     views = {
-        s.frame: View(float(p[0]), float(p[1]), _focal(float(p[2])))
+        s.frame: _view(p)
         for (s, _at), p in zip(clicked, got.x[3:].reshape(len(clicked), 3), strict=True)
     }
     return camera, views

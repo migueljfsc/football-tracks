@@ -835,11 +835,16 @@ def _pipeline(
     labels: dict[str, Any] | None = None
     seed_path = out / "seed.json"
     if picked == "camera":
-        # No clicks on this clip at all: the camera came from another clip of the match,
-        # and every frame here only says where it was aimed (D96).
+        # The camera came from another clip of the match, so this one need not be clicked at
+        # all -- and where it was, those clicks are three numbers like any other frame (D96).
         rig, lens_at = _game_camera(clip, game)
         pitch = rig.pitch
-        homs = auto_mod.camera_homographies(c.frames_dir, rig, lens_at)
+        aimed, refused = auto_mod.aimed_seeds(out, c.frames_dir, rig, lens_at)
+        for path, why in refused:
+            typer.echo(f"IGNORING {path.name}: {why}")
+        homs = auto_mod.camera_homographies(
+            c.frames_dir, rig, lens_at, seeds=aimed, cache=out / "aims.json"
+        )
         solved = sum(1 for h in homs.values() if h is not None)
         typer.echo(f"camera {rig.game}: {solved}/{len(homs)} frames aimed")
     elif c.labels_path.exists():
@@ -1183,6 +1188,8 @@ def _click(
     work: Path,
     frames_dir: Path,
     start: Any = None,
+    rig: camera_mod.Camera | None = None,
+    lens_at: tuple[float, float] | None = None,
 ) -> tuple[str, bool]:
     """Click one frame until the pipeline will use it, or whoever is clicking gives up.
 
@@ -1196,6 +1203,10 @@ def _click(
     `q` in the click tool skips the frame. `start` is the camera the chain carries here,
     which a fit through traced curves is refined from.
 
+    With `rig`, the clicks are judged as an AIM of the match's camera rather than as a
+    camera of their own: a frame too thin to fit a homography is still worth three numbers,
+    and a seed clicked on the wrong goal misses instead of fitting perfectly (D88, D96).
+
     Returns what the scrubber should say next, and whether the frame was given up on
     after a refusal -- which is what stops the scrubber suggesting that stretch again.
     """
@@ -1204,7 +1215,15 @@ def _click(
     message: str | None = None
     while True:
         written = _seed_one(
-            clip, frame, check=check, message=message, say=_say, start=start, window=seedui.SCRUB
+            clip,
+            frame,
+            check=check,
+            message=message,
+            say=_say,
+            start=start,
+            window=seedui.SCRUB,
+            rig=rig,
+            lens_at=lens_at,
         )
         if written is None:
             if message is not None:
@@ -1215,7 +1234,10 @@ def _click(
                 )
             return f"Nothing saved on frame {frame}.", False
         path, notes = written
-        _usable, refused = auto_mod.usable_seeds(work, frames_dir)
+        if rig is not None and lens_at is not None:
+            _aimed, refused = auto_mod.aimed_seeds(work, frames_dir, rig, lens_at)
+        else:
+            _usable, refused = auto_mod.usable_seeds(work, frames_dir)
         why = next((reason for p, reason in refused if p == path), None)
         if why is None:
             more = f" ({len(notes)} note{'' if len(notes) == 1 else 's'} in the terminal)"
@@ -1226,9 +1248,9 @@ def _click(
         _warn(f"REFUSED {path.name}, moved to {aside.name}: {why}")
         img = video_mod.read_frame(frames_dir, frame)
         message = (
-            guide_mod.refusal(seed_mod.read(aside), img.shape[1], img.shape[0])
-            if img is not None
-            else f"{why}\nQ: skip this frame."
+            f"{why}\nQ: skip this frame."
+            if rig is not None or img is None
+            else guide_mod.refusal(seed_mod.read(aside), img.shape[1], img.shape[0])
         )
 
 
@@ -1315,6 +1337,115 @@ def _seed_until_happy(clip: str, frames_dir: Path, numbers: list[int], work: Pat
         seedui.close()
 
 
+def _fit_game_camera(clip: str, game: str, work: Path, frames_dir: Path) -> str:
+    """Fit the match's camera from the clicks just made, so the next clip needs none.
+
+    Several seeds aimed at different parts of the pitch are what pin a position down (D96);
+    fewer say so rather than writing a camera nobody should trust.
+    """
+    usable, _refused = auto_mod.usable_seeds(work, frames_dir)
+    if len(usable) < 2:
+        return f"{game} has no camera yet: it takes two seeds or more"
+    lens_at = camera_mod.lens(_clip_meta(clip))
+    got = camera_mod.fit(
+        [(s, lens_at) for s in sorted(usable, key=lambda s: s.frame)],
+        pitch=read_pitch(work),
+        game=game,
+    )
+    if got is None:
+        return f"{game} has no camera: these seeds describe none"
+    rig = got[0]
+    camera_mod.write(game_dir(game) / camera_mod.FILE, rig)
+    _name_game(clip, game)
+    return (
+        f"{game}'s camera is at ({rig.x:.1f}, {rig.y:.1f}), {rig.height:.1f} m up"
+        " - the next clip of it needs no clicks"
+    )
+
+
+def _aim_until_happy(
+    clip: str,
+    frames_dir: Path,
+    numbers: list[int],
+    work: Path,
+    rig: camera_mod.Camera,
+    lens_at: tuple[float, float],
+) -> str:
+    """Place the camera with the match's own, and ask for clicks only where it cannot see.
+
+    The clip may need nothing at all: where the segmenter reads the markings, three numbers
+    off a position another clip established register the frame (D96). What is left is the
+    stretches it cannot read -- a close-up, a crowd shot, a replay -- and those are offered
+    one at a time. They cost what a seed always cost -- four landmarks or so, because that is
+    what tells the right goal from the wrong one -- and there are far fewer of them.
+
+    The segmenter's pass is cached, so clicking and looking again costs a second rather than
+    another two minutes.
+    """
+    from . import seedui
+
+    notice: str | None = None
+    skipped: set[int] = set()
+    warned: set[Path] = set()
+    with typer.progressbar(length=len(numbers), label=f"{INDENT}reading the lines") as bar:
+        views, _ = auto_mod.camera_aims(
+            frames_dir,
+            rig,
+            lens_at,
+            cache=work / "aims.json",
+            progress=lambda _f: bar.update(1),
+        )
+    read = len(views)
+    try:
+        while True:
+            aimed, refused = auto_mod.aimed_seeds(work, frames_dir, rig, lens_at)
+            for path, why in refused:
+                if path not in warned:
+                    _warn(f"IGNORING {path.name}: {why}")
+                    warned.add(path)
+            clicked = {}
+            for seeded in aimed:
+                got = camera_mod.aim_from_seed(rig, lens_at, seeded)
+                if got is not None:
+                    clicked[seeded.frame] = got[0]
+            chain = auto_mod.camera_chain(
+                rig, lens_at, {**views, **clicked}, numbers, set(clicked), auto_mod.MAX_SPAN_FRAMES
+            )
+            solved = sum(1 for h in chain.homographies.values() if h is not None)
+            _say(
+                f"{rig.game}'s camera: {solved}/{len(numbers)} frames"
+                f" ({read} read from the lines, {len(clicked)} clicked, {chain.carried} spanned)"
+            )
+            blind = [
+                (first, last) for first, last, kind in guide_mod.stretches(chain) if kind == "lost"
+            ]
+            for first, last in blind[:3]:
+                _say(f"no camera      {first}-{last} ({last - first + 1} frames)")
+            dark = sum(last - first + 1 for first, last in blind)
+            # A stretch somebody gave up on is not offered again: nothing in this loop may
+            # trap them, and a close-up has nothing to click whatever the wizard thinks.
+            offer = [run for run in blind if not any(run[0] <= f <= run[1] for f in skipped)]
+            if not offer:
+                return f"{solved}/{len(numbers)} frames" + (
+                    f", {dark} without a camera" if dark else ", no clicking needed"
+                )
+
+            first, last = max(offer, key=lambda run: run[1] - run[0])
+            picked = seedui.scrub(
+                frames_dir, numbers, chain=chain, start=(first + last) // 2, notice=notice
+            )
+            if picked is None:
+                return f"{solved}/{len(numbers)} frames, {dark} without a camera"
+            _say(f"clicking frame {picked}")
+            notice, gave_up = _click(
+                clip, picked, check=True, work=work, frames_dir=frames_dir, rig=rig, lens_at=lens_at
+            )
+            if gave_up:
+                skipped.add(picked)
+    finally:
+        seedui.close()
+
+
 def _still_weak(chain: stage1_propagate.Chain, skipped: set[int]) -> str:
     """Name every stretch still poor or lost when the clicking stops, and sum them up.
 
@@ -1345,9 +1476,18 @@ def run(
         str,
         typer.Option(
             help="'seed' carries the clicked frames; 'segmenter' uses the learned lines and"
-            " no clicks; 'hybrid' anchors on the learned ones and carries the seed between."
+            " no clicks; 'hybrid' anchors on the learned ones and carries the seed between;"
+            " 'camera' aims the match's own camera, which is chosen automatically when the"
+            " game has one."
         ),
     ] = "seed",
+    game: Annotated[
+        str | None,
+        typer.Option(
+            help="Which match this clip is from. With a camera already fitted for it the"
+            " clip needs no clicks; without one, this clip's clicks fit it for the next."
+        ),
+    ] = None,
     carry: Annotated[int, typer.Option(help="Frames a homography may be carried.")] = -1,
     interval_s: Annotated[
         float,
@@ -1382,8 +1522,8 @@ def run(
             " to extract, or the name of one already extracted"
         )
     # Checked here and not where `_pipeline` checks it, which is after the clicking.
-    if mode not in ("truth", "seed", "segmenter", "hybrid"):
-        raise typer.BadParameter("mode must be 'truth', 'seed', 'segmenter' or 'hybrid'")
+    if mode not in ("truth", "seed", "segmenter", "hybrid", "camera"):
+        raise typer.BadParameter("mode must be 'truth', 'seed', 'segmenter', 'hybrid' or 'camera'")
 
     work = work_dir(Path(clip))
     missing = _missing_vision(work, fresh)
@@ -1445,6 +1585,20 @@ def run(
             write_pitch(work, want)
             out.text = f"{want.length:g} x {want.width:g} m"
 
+    # A match already seeded once has a camera, and a clip of it needs no clicks at all --
+    # the lines in the picture say where that camera was aimed (D96). Clicks are asked for
+    # only where the segmenter can read nothing.
+    named = game or str(_clip_meta(clip).get("game") or "") if not annotated else ""
+    fitted = (game_dir(named, create=False) / camera_mod.FILE) if named else None
+    rig = camera_mod.read(fitted) if fitted is not None and fitted.exists() else None
+    if rig is not None and mode == "seed":
+        mode = "camera"
+    elif mode == "camera" and rig is None:
+        raise typer.BadParameter(
+            "--mode camera needs a camera for the game - pass --game, or run `ft camera"
+            " <a seeded clip of it> --game <name>` first"
+        )
+
     # The segmenter reads the picture and needs no clicks; `hybrid` carries a seed ACROSS the
     # frames the segmenter refuses, so that one does want the loop.
     if annotated:
@@ -1455,9 +1609,18 @@ def run(
         steps.skip(
             "place the camera", "the segmenter reads the lines from the picture", "segmenter"
         )
+    elif rig is not None:
+        with steps.step("place the camera") as out:
+            out.text = _aim_until_happy(
+                clip, frames_dir, numbers, work, rig, camera_mod.lens(_clip_meta(clip))
+            )
     else:
         with steps.step("place the camera") as out:
             out.text = _seed_until_happy(clip, frames_dir, numbers, work)
+            # The clicking just done is what places the camera for every OTHER clip of this
+            # match, and it is only knowable once: fit it now rather than asking again later.
+            if named:
+                out.text += f"; {_fit_game_camera(clip, named, work, frames_dir)}"
 
     dets = work / "detections.json"
     if dets.exists():
@@ -1480,7 +1643,7 @@ def run(
 
     with steps.step("track") as out:
         _motions(frames_dir, numbers, work)
-        path, result = _pipeline(clip, mode, carry, interval_s, False)
+        path, result = _pipeline(clip, mode, carry, interval_s, False, game=named or None)
         _say(
             f"{result.detections} detections -> {result.raw_tracks} raw tracks"
             f" -> {len(result.tracks)} kept"
@@ -1730,6 +1893,8 @@ def _seed_one(
     say: Callable[[str], None] = typer.echo,
     start: Any = None,
     window: str | None = None,
+    rig: camera_mod.Camera | None = None,
+    lens_at: tuple[float, float] | None = None,
 ) -> tuple[Path, list[str]] | None:
     """Click one frame and write it: where it went, and what `settle` had to say about it.
 
@@ -1760,17 +1925,37 @@ def _seed_one(
         got = replace(got, start=start if start is not None else _carried(clip, frame))
 
     mine = name_of(frame, check)
-    others = [p for p in auto_mod.seed_paths(work) if p.name != mine]
-    got, notes = seed_mod.settle(got, img, others, root / "img1", pitch=pitch)
+    notes: list[str] = []
+    if rig is not None and lens_at is not None:
+        # The symmetry checks `settle` makes are the camera's now. A pitch is symmetric and
+        # a seed cannot see that in itself (D88), but a camera in a known place can: clicked
+        # on the wrong goal, no aim of it fits, which `aimed_seeds` reports as a plain miss.
+        # The stamp still matters -- a seed must never anchor another clip's frame (D34).
+        got = replace(got, image=seed_mod.fingerprint(img))
+    else:
+        others = [p for p in auto_mod.seed_paths(work) if p.name != mine]
+        got, notes = seed_mod.settle(got, img, others, root / "img1", pitch=pitch)
     for note in notes:
         say(note)
 
     path = seed_mod.write(work / mine, got)
-    h = seed_mod.homography(got)
+    aimed = (
+        camera_mod.aim_from_seed(rig, lens_at, got)
+        if rig is not None and lens_at is not None
+        else None
+    )
+    fitted = (
+        f"the camera aimed to {aimed[1]:.2f} m"
+        if aimed is not None
+        else "NO aim of the camera"
+        if rig is not None
+        else "a homography"
+        if seed_mod.homography(got) is not None
+        else "NO homography"
+    )
     say(
         f"{len(got.points)} points + {len(got.lines)} traced"
-        f"{f' + {len(got.arcs)} on curves' if got.arcs else ''}"
-        f" -> {'a homography' if h is not None else 'NO homography'}"
+        f"{f' + {len(got.arcs)} on curves' if got.arcs else ''} -> {fitted}"
     )
     say(f"wrote {path}")
     return path, notes

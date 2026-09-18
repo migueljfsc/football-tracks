@@ -160,3 +160,67 @@ def test_a_gap_is_spanned_but_a_cut_is_not() -> None:
     # 100 sits in a gap of 190 frames: whatever happened there, it was not one pan.
     assert 100 not in out
     assert set(out) == {1, 5, 10, 200}
+
+
+def seed_of(view: camera.View, names: list[str]) -> seed.Seed:
+    """A seed clicked on the frame this view draws."""
+    spots = [seed.landmarks()[n] for n in names]
+    shot = project(view, spots)
+    return seed.Seed(
+        frame=1,
+        points=[((float(u), float(v)), spots[i]) for i, (u, v) in enumerate(shot)],
+    )
+
+
+def test_a_seed_aims_a_camera_already_placed_and_a_thin_one_is_refused() -> None:
+    """Three numbers from clicks, and what the click count is really set by (D96).
+
+    Two landmarks aim it perfectly well and are refused anyway: with one spare constraint
+    the MIRROR of the aim fits as well, so the wrong goal cannot be told from the right one
+    (D88, and `camera.MIN_SEED_CONSTRAINTS`).
+    """
+    view = camera.View(pan=math.radians(-12), tilt=math.radians(12), focal=5800.0)
+    four = seed_of(view, ["penalty spot", "corner far", "6yd front near", "goal post far"])
+    got = camera.aim_from_seed(RIG, LENS, four)
+    assert got is not None
+    found, miss = got
+    assert miss < 0.05
+    assert abs(found.focal - view.focal) < 50
+    assert camera.aim_from_seed(RIG, LENS, seed_of(view, ["penalty spot", "corner far"])) is None
+
+
+def test_clicks_on_the_wrong_goal_miss_by_metres() -> None:
+    """A pitch is symmetric end to end and a seed cannot see that in itself (D88).
+
+    A camera in a known place can: the far goal's markings under the near goal's names are
+    not a view of it, so the miss says so where a homography's residual could not.
+    """
+    view = camera.View(pan=math.radians(-25), tilt=math.radians(11), focal=6000.0)
+    right = seed_of(view, ["goal post far", "penalty spot", "6yd front far", "corner near"])
+    wrong = seed.flip_x(right)
+    from football_tracks import auto
+
+    good = camera.aim_from_seed(RIG, LENS, right)
+    bad = camera.aim_from_seed(RIG, LENS, wrong)
+    assert good is not None and bad is not None
+    assert good[1] < 0.05
+    # Past the gate `aimed_seeds` refuses on. How far past is what set the click count:
+    # at three landmarks a mirrored seed misses by about a metre, at four by three (D96).
+    assert bad[1] > auto.CLICK_GATE_M
+
+
+def test_the_timeline_tells_read_frames_from_spanned_ones() -> None:
+    from football_tracks import auto, guide
+
+    views = {
+        10: camera.View(0.0, math.radians(12), 5000.0),
+        12: camera.View(math.radians(1), math.radians(12), 5000.0),
+        400: camera.View(math.radians(20), math.radians(12), 5000.0),
+    }
+    numbers = [10, 11, 12, 200, 400]
+    chain = auto.camera_chain(RIG, LENS, views, numbers, clicked={400})
+    assert guide.standing(chain, 10) == "good"  # read from its own lines
+    assert guide.standing(chain, 11) == "good"  # spanned between two that were
+    assert guide.standing(chain, 400) == "clicked"
+    assert guide.standing(chain, 200) == "lost"  # too far from either to be one pan
+    assert chain.homographies[200] is None
