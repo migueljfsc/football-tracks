@@ -57,6 +57,10 @@ class Score:
     ball_matched: int
     ball_median_m: float
     ball_near: float
+    # How much of a real player's life -- their ground-truth samples -- the single best
+    # predicted track holds, and all of their tracks together. Medians over players.
+    coverage_best: float = 0.0
+    coverage_all: float = 0.0
 
     @property
     def recall(self) -> float:
@@ -170,6 +174,20 @@ def score(truth: dict[str, Any], pred: dict[str, Any], *, radius: float = MATCH_
         purities.append(Counter(pids).most_common(1)[0][1] / len(pids))
         switches += sum(1 for a, b in pairwise(pids) if a != b)
 
+    # Fragmentation, as the board meets it: Pitchboard fields a TRACK, so a player split in
+    # three arrives as whichever piece held most of them. The best track is what the board
+    # can show; all of a player's tracks together are what perfect joining could make of
+    # it; the gap between the two is the ceiling on any stitcher (D69, D76).
+    lives: Counter[int] = Counter()
+    for pts in gt_by_frame.values():
+        for gid, _x, _y in pts:
+            lives[gid] += 1
+    best_share = sorted(
+        (Counter(assigned[gid]).most_common(1)[0][1] if assigned.get(gid) else 0) / n
+        for gid, n in lives.items()
+    )
+    all_share = sorted(len(assigned.get(gid, [])) / n for gid, n in lives.items())
+
     correct = wrong = missing = 0
     gt_numbered = 0
     for gid, number in gt_numbers.items():
@@ -225,6 +243,8 @@ def score(truth: dict[str, Any], pred: dict[str, Any], *, radius: float = MATCH_
         ball_near=sum(1 for d in ball_errors if d <= BALL_NEAR_M) / len(ball_errors)
         if ball_errors
         else 0.0,
+        coverage_best=_percentile(best_share, 0.5),
+        coverage_all=_percentile(all_share, 0.5),
     )
 
 
@@ -244,6 +264,8 @@ def report(s: Score) -> str:
             else ""
         ),
         f"identity purity   {s.identity_purity:6.1%}  ({s.id_switches} switches)",
+        f"a player's life   {s.coverage_best:6.1%} in their best track,"
+        f" {s.coverage_all:6.1%} in all of them (median)",
         f"shirt numbers     {s.jersey_correct} right, {s.jersey_wrong} WRONG,"
         f" {s.jersey_missing} unread, of {s.jersey_gt_total}",
     ]

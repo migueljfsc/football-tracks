@@ -120,3 +120,18 @@ def test_matching_is_nearest_first_and_never_double_assigns() -> None:
     pairs = match_frame(gt, pred)
     assert len(pairs) == 1
     assert pairs[0][0] == 2  # 0.1 m beats 0.4 m
+
+
+def test_a_player_split_in_two_is_half_a_player_to_the_board() -> None:
+    """Recall and purity both say this player is fine; the board fields a TRACK, and the
+    best one holds half of him. All of his tracks together hold all of him, which is what
+    perfect joining could reach (D69, D76)."""
+    truth = doc(trk(1, "home", [(f, 10.0, 10.0) for f in range(1, 11)]))
+    pred = doc(
+        trk(7, "home", [(f, 10.0, 10.0) for f in range(1, 6)]),
+        trk(8, "home", [(f, 10.0, 10.0) for f in range(6, 11)]),
+    )
+    s = score(truth, pred)
+    assert s.recall == 1.0
+    assert s.coverage_best == 0.5
+    assert s.coverage_all == 1.0
