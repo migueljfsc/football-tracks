@@ -627,3 +627,24 @@ constants were reverted; the measurement stays.
 **What the benchmark could not show and a coach clip did** is the rule this repeats: a gate
 tuned on the clips it is scored on has to be checked on one it was not, and the check is the
 board with its scenes, not the score.
+
+**The camera can say a player left the picture; it cannot say who walked back in.** The largest
+share of the loss is a player out of shot while the camera looks elsewhere, and D96's camera sees
+that happen: projecting a track's last point a few frames on shows whether it left the frame. Of
+141 long gaps between one player's pieces, 79 (56%) are exactly that -- his track ends as he
+walks out of the picture and the next begins as he walks back in. So the event is detectable.
+The identity is not. Matching each exit to a later entry on the same side, with the TRUE teams:
+
+    rule                                  made   right
+    nearest entry                          182    85  (47%; his return often never comes)
+    mutual nearest, within 10 m             65    48  (74%)
+    one global assignment, within 8 m       67    45  (67%)
+
+Team-mates leave and come back together, a back line a few metres apart, so position picks the
+right man about seven times in ten -- below the 81% of the stitcher's own links, with the side
+known perfectly, which the pipeline does not know. Not built.
+
+**A and B fail for one reason.** Neither geometry nor this appearance model can say which of two
+team-mates a piece of track belongs to, and every remaining join needs exactly that. What would
+answer it is an identity signal that survives a tackle and a pan: a readable shirt number, or a
+re-id model trained on football rather than on pedestrians.

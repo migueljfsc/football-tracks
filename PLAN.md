@@ -42,8 +42,10 @@ right goal from the wrong one -- a mirrored seed fits to 0.02 m at two landmarks
 **Fragmentation is now the loss, and it is 26 points** (D97): a player's tracks together hold
 85% of his life on the camera runs and the best one 59%. Appearance cannot tell his pieces from a
 team-mate's, and an appearance veto that won on the benchmark broke a coach clip's tackles. The
-biggest single share is a player out of shot while the camera looks elsewhere (~28%), which the
-camera model can now see -- the next move is re-entry matching built on that.
+biggest single share is a player out of shot while the camera looks elsewhere (~28%): the camera
+model sees him leave and come back, and position cannot say which team-mate came back (~70% right
+with the true teams). Every remaining join needs an identity signal -- a readable shirt number, or
+a re-id model trained on football -- and that is the next project on this front.
 
 **After that:** teams by kit per game, so `home` means the same side in every clip of a match
 and half time stops moving it.
