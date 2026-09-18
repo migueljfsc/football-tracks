@@ -674,7 +674,23 @@ contact, at the frame's edge, behind somebody -- and the crops there are the wor
 wrong players per right one at a usable threshold is not a join rule, and re-entry stays under
 the stitcher's own 81%. Not integrated; the weights are in work/reid/football.pt.
 
-**One thing it did not try:** a look over the whole fragment's cleanest crops rather than its
-last eight. D95 takes the end because a contact join is about that moment; a long-gap or
-re-entry join is about who the player IS, and nothing forces that to be read from the frames
-where he was being lost.
+**A look over the whole track is better, and it is still not identity.** Averaged over a
+fragment's clean crops -- full height, clear of the frame's edge, not overlapped by another box --
+rather than its last eight, the football network reaches 0.854 same-player-vs-team-mate at the
+stitcher (from 0.765 today) and halves the wrong players a long-gap threshold lets in. Paired
+with position for re-entry (D97), mutual best on distance plus look:
+
+    re-entry matching                     made   right
+    position alone                          67    51  (76%)
+    + whole-track football look             73    61  (84%)   best-track coverage 58.3 -> 62.4%
+      of those, clubs it never saw          49    37  (76%)
+      of those, St. Gallen                  24    24  (100%)
+
+Every point above position alone is St. Gallen, whose players it trained on. On clubs it never
+saw it matches position and stays under the stitcher's own 81%. Stopped here, by the rule set
+before it started.
+
+The flip side is worth writing down. A network that has seen a side's players picks them out
+perfectly -- and a coach analyses his OWN team, in every clip, every week. A model fitted to one
+club's players would be the identity signal this stage lacks. What it would need that this
+repo does not have is labels for that club, which a coach correcting boards is making anyway.
