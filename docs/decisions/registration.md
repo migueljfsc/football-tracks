@@ -79,6 +79,46 @@ Two landmarks aim the camera perfectly well, so the click count is set by the EN
 than by the fit -- which is why a seed still costs what it always did. The saving is not a
 cheaper seed. It is a clip that needs none.
 
+**Measured against ground truth on four more matches.** SoccerNet's benchmark already has
+several clips per match -- `game_id` in the labels, 18-20 clips for three of them -- so each
+match's camera was fitted from its NON-benchmark clips' labelled lines (`ft camera <clips>
+--truth`) and every benchmark clip was then run with `--mode camera`, its own labels used only
+to judge. The camera never saw the clip it was scored on; game 7 has only its two benchmark
+clips, so each was scored with the camera fitted from the other.
+
+The position held on every match: 13-19 clips each explained by one camera at 0.1-0.2 m,
+leaving any one clip out moving it 0.1-0.3 m, and all four on the halfway line, 15-22 m behind
+the near touchline and 8.6-11.3 m up. Where the players are (D70), against today's `--mode
+seed`:
+
+    clip       players within 2 m   p90 at players    thrown off the pitch
+    SNGS-060      94% -> 100%        1.53 -> 1.11 m         0 -> 0
+    SNGS-066      92% ->  98%        1.83 -> 1.17 m         0 -> 0
+    SNGS-067      63% -> 100%        7.83 -> 1.04 m       560 -> 0
+    SNGS-069      57% ->  99%       11.73 -> 1.27 m       527 -> 0
+    SNGS-075      99% -> 100%        1.17 -> 0.80 m         0 -> 0
+    SNGS-100      54% ->  97%        2.36 -> 1.32 m         0 -> 0   (seed solved 57% of it)
+    SNGS-110      59% ->  98%       12.12 -> 0.98 m       123 -> 0
+    SNGS-151      57% ->  98%       10.98 -> 1.13 m       593 -> 0
+    SNGS-116      77% ->  98%        9.21 -> 1.02 m       237 -> 0
+    SNGS-121      75% ->  89%        3.15 -> 0.88 m         0 -> 0
+
+And through the whole pipeline, scored by `ft score` at `--interval-s 0`: recall 61.7% -> 82.9%,
+precision 76.1% -> 95.9%, median position error 0.74 -> 0.43 m, team split 87.0% -> 88.8%.
+Identity purity fell 74.4% -> 72.2%, most on SNGS-151 (86.9 -> 77.5) -- the tracker now keeps
+the players the seed chain threw off the pitch, and those are the hard ones.
+
+**The board moved less, as D36 says it would.** Watched player-seconds 2,471 -> 2,522, passes
+drawn 50 -> 60, the worst scene's coverage 17.8% -> 23.3% on average and never 0% again, and
+SNGS-100 went from a 16-second window to the whole 30. But SNGS-121 lost 20% of its watched
+time -- 70 frames the camera could not aim -- and SNGS-060 7%. Registration is no longer what
+limits a board; the fragmentation PLAN.md already names is.
+
+Two things flatter the comparison and should be said. The seed baseline is ONE labelled frame
+carried, standing in for a person seeding once, where `ft run` asks for several. And the camera
+was fitted from ground-truth lines, which is what a careful first clip's clicks approach -- the
+Milan-Benfica seeds did (0.3 m leave-one-out, against 0.1-0.3 m here).
+
 **Two clips of one match are cropped differently** -- 9 px and 1 px on this pair -- so the lens
 axis is taken from each clip's own crop rather than assumed to be the middle of its picture.
 

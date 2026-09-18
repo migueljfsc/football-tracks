@@ -127,7 +127,7 @@ def test_the_position_is_recovered_from_seeds_of_different_views() -> None:
     assert got is not None
     found, aims = got
     assert math.dist((found.x, found.y, found.height), (RIG.x, RIG.y, RIG.height)) < 0.5
-    assert abs(aims[2].focal - views[1].focal) < 100
+    assert abs(aims[1].focal - views[1].focal) < 100
 
 
 def test_one_seed_cannot_place_the_camera() -> None:

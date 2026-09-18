@@ -165,8 +165,8 @@ Arcs = list[tuple[tuple[float, float], tuple[float, float, float]]]
 MIN_MARKINGS = 3
 
 # Constraints a seed must carry before its aim is believed. A clicked landmark is two (x and
-# y), a point traced along a marking or a circle is one -- so this is three landmarks, where
-# a homography wants four markings.
+# y), a point traced along a marking or a circle is one -- so this is four landmarks, or two
+# and some traced points: what the click tool has always asked for.
 #
 # Two landmarks DO aim the camera, and that is not enough. A pitch is symmetric end to end,
 # so the question is not whether an aim fits but whether the MIRROR of it also does (D88) --
@@ -368,7 +368,8 @@ def fit(
     pitch: Pitch = DEFAULT_PITCH,
     game: str = "",
     start: tuple[float, float, float] | None = None,
-) -> tuple[Camera, dict[int, View]] | None:
+    aims: list[View] | None = None,
+) -> tuple[Camera, list[View]] | None:
     """Where the camera stands, from several seeds of it -- each with its own lens centre.
 
     One seed cannot say: a frame is eight numbers of evidence and the camera's position is
@@ -377,18 +378,32 @@ def fit(
     has to explain all of them at once.
 
     `clicked` is (seed, lens centre) so seeds from clips cropped differently can be fitted
-    together. Returns the camera and each seed's aim, or None if the seeds describe nothing.
+    together. `start` and `aims` are where to begin -- a fit already made, when the question
+    is how far leaving one view out moves it.
+
+    Returns the camera and each seed's aim, in the order given -- a list and not a map by
+    frame, because frame 56 exists in every clip and seeds from several are one fit. None if
+    the seeds describe nothing.
     """
     from . import seed as seed_mod
 
     if len(clicked) < 2:
         return None
     guess = start if start is not None else (pitch.halfway, pitch.width + 35.0, 15.0)
-    aims: list[tuple[float, float, float]] = []
-    for s, at in clicked:
-        h = seed_mod.homography(s)
-        rough = _coarse_for(h, at, Camera(*guess, pitch=pitch))
-        aims.append(rough)
+    # Each view aimed on its own first, off the guessed position. Started from a sweep
+    # instead, a fit of forty views walks until the solver gives up: one badly started view
+    # pulls the shared position, which spoils every other view's aim.
+    rough_rig = Camera(*guess, pitch=pitch)
+    begun: list[tuple[float, float, float]] = []
+    for i, (s, at) in enumerate(clicked):
+        if aims is not None:
+            begun.append((aims[i].pan, aims[i].tilt, aims[i].focal))
+            continue
+        own = aim_from_seed(rough_rig, at, s)
+        if own is not None:
+            begun.append((own[0].pan, own[0].tilt, own[0].focal))
+        else:
+            begun.append(_coarse_for(seed_mod.homography(s), at, rough_rig))
 
     def residual(x: npt.NDArray[np.float64]) -> npt.NDArray[np.float64]:
         camera = Camera(float(x[0]), float(x[1]), float(x[2]), pitch=pitch, game=game)
@@ -402,17 +417,33 @@ def fit(
         return np.concatenate(out) if out else np.zeros(0)
 
     x0 = [*guess]
-    for pan, tilt, focal in aims:
+    for pan, tilt, focal in begun:
         x0 += [pan, tilt, math.log(focal)]
-    got = least_squares(residual, x0, loss="soft_l1", f_scale=0.5)
+    # Each seed's misses depend on the position and on its OWN aim, never on another seed's.
+    # Said to the solver, a fit of forty frames costs what a fit of forty separate frames
+    # does rather than forty times that.
+    sizes = [len(s.points) * 2 + len(s.lines) + len(s.arcs) for s, _at in clicked]
+    sparsity = np.zeros((sum(sizes), len(x0)), dtype=np.int8)
+    row = 0
+    for i, n in enumerate(sizes):
+        sparsity[row : row + n, :3] = 1
+        sparsity[row : row + n, 3 + 3 * i : 6 + 3 * i] = 1
+        row += n
+    # Metres, radians and a log-zoom are orders of magnitude apart; scaled by the Jacobian
+    # the solver steps each by what it moves the misses, not by its units.
+    got = least_squares(
+        residual,
+        x0,
+        loss="soft_l1",
+        f_scale=0.5,
+        jac_sparsity=sparsity,
+        method="trf",
+        x_scale="jac",
+    )
     camera = Camera(float(got.x[0]), float(got.x[1]), float(got.x[2]), pitch=pitch, game=game)
     if camera.height <= 0:
         return None
-    views = {
-        s.frame: _view(p)
-        for (s, _at), p in zip(clicked, got.x[3:].reshape(len(clicked), 3), strict=True)
-    }
-    return camera, views
+    return camera, [_view(p) for p in got.x[3:].reshape(len(clicked), 3)]
 
 
 def _coarse_for(

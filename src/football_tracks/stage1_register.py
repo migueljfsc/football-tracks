@@ -44,6 +44,24 @@ def fit_all(labels: dict[str, Any]) -> Homographies:
     return out
 
 
+def evidence(labels: dict[str, Any]) -> dict[int, tuple[list[Any], list[Any]]]:
+    """Each labelled frame's markings as point-on-line and point-on-circle pairs, in pixels.
+
+    What a camera model is fitted from, read from the annotation: the same two kinds of
+    evidence the segmenter predicts and a person clicks, so ground truth goes through the
+    code that ships (D96).
+    """
+    frame_of = {img["image_id"]: _frame_index(img["file_name"]) for img in labels["images"]}
+    size = {img["image_id"]: (img["width"], img["height"]) for img in labels["images"]}
+    out: dict[int, tuple[list[Any], list[Any]]] = {}
+    for a in labels["annotations"]:
+        if a.get("category_id") != 5:
+            continue
+        w, h = size[a["image_id"]]
+        out[frame_of[a["image_id"]]] = calibration.evidence_of(calibration.lines_of(a), w, h)
+    return out
+
+
 @dataclass(slots=True)
 class Registration:
     frames: int

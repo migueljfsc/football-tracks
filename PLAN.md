@@ -28,6 +28,13 @@ rotation of a camera above the ground cannot fold a pitch or drift out of shape.
 `ft run <clip> --game <name>` does the whole of it: the camera registers what it can, the blind
 stretches are offered one at a time, and a first clip's clicks fit the camera for the next.
 
+**Measured on the benchmark, it is the biggest registration win this repo has had.** Each
+SoccerNet match's camera fitted from its other clips, every benchmark clip scored with a camera
+that never saw it: players within 2 m 72.7% -> 97.7%, none of 2,040 thrown off the pitch, and
+through the pipeline recall 61.7% -> 82.9% and precision 76.1% -> 95.9% (D96). The board gains
+less -- 2% more watched player-seconds, 50 -> 60 passes, no scene empty -- because registration
+is no longer what limits it.
+
 **A seed still costs four landmarks, not two.** Three numbers need two, but two cannot tell the
 right goal from the wrong one -- a mirrored seed fits to 0.02 m at two landmarks and misses by
 1.63 m at four (D88, D96). So the saving is a clip that needs no seeds, not a cheaper seed.

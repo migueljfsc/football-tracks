@@ -819,13 +819,14 @@ def homographies(
     size: tuple[int, int] = (1920, 1080),
     rig: camera_mod.Camera | None = None,
     lens_at: tuple[float, float] | None = None,
+    aims_cache: Path | None = None,
 ) -> dict[int, Any]:
     """Per-frame homographies: from every frame's lines, from frame one's, from the
     segmenter's, or aimed off the match's own camera."""
     if mode == "camera":
         if rig is None or lens_at is None:
             raise ValueError("--mode camera needs the game's camera and the clip's lens centre")
-        return camera_homographies(frames_dir, rig, lens_at, weights)
+        return camera_homographies(frames_dir, rig, lens_at, weights, cache=aims_cache)
     if mode == "segmenter":
         direct = segmenter_homographies(
             frames_dir, weights, max_residual_m=max_residual_m, cache=segmenter_cache

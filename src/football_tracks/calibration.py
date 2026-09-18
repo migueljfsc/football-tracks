@@ -424,6 +424,32 @@ def lines_of(annotation: dict[str, Any]) -> dict[str, list[dict[str, float]]]:
     return payload
 
 
+def evidence_of(
+    lines: dict[str, list[dict[str, float]]], width: int, height: int
+) -> tuple[
+    list[tuple[tuple[float, float], Line]],
+    list[tuple[tuple[float, float], tuple[float, float, float]]],
+]:
+    """A labelled frame's markings as point-on-line and point-on-circle pairs, in pixels.
+
+    The same two kinds of evidence the segmenter hands a camera model, read from the
+    annotation instead of predicted -- so a camera is fitted from ground truth by the code
+    that fits it from anything else, and a benchmark clip scores what ships (D96).
+    """
+    pairs: list[tuple[tuple[float, float], Line]] = []
+    arcs: list[tuple[tuple[float, float], tuple[float, float, float]]] = []
+    for name, poly in lines.items():
+        line = PITCH_LINES.get(name)
+        circle = PITCH_CIRCLES.get(name)
+        for q in poly:
+            at = (q["x"] * width, q["y"] * height)
+            if line is not None:
+                pairs.append((at, line))
+            elif circle is not None:
+                arcs.append((at, circle))
+    return pairs, arcs
+
+
 # The grid the disagreement is measured over: across the frame, and down its lower part,
 # which for any football camera is where the grass is.
 PROBE_COLS = 12

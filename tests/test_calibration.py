@@ -138,3 +138,19 @@ def test_apply_round_trips_through_the_inverse() -> None:
     there = calibration.apply(np.linalg.inv(h), pts)
     back = calibration.apply(h, there)
     assert np.allclose(back, pts, atol=1e-6)
+
+
+def test_a_labelled_frame_hands_over_lines_and_circles_as_a_camera_reads_them() -> None:
+    """Ground truth goes through the code that ships (D96): the segmenter's two kinds of
+    evidence, from the annotation instead of a prediction, in the frame's own pixels."""
+    lines = {
+        "Middle line": [{"x": 0.5, "y": 0.2}, {"x": 0.5, "y": 0.8}],
+        "Circle central": [{"x": 0.4, "y": 0.5}],
+        "Goal left post left": [{"x": 0.1, "y": 0.1}],
+    }
+    pairs, arcs = calibration.evidence_of(lines, 1920, 1080)
+    assert pairs == [
+        ((960.0, 216.0), calibration.PITCH_LINES["Middle line"]),
+        ((960.0, 864.0), calibration.PITCH_LINES["Middle line"]),
+    ]
+    assert arcs == [((768.0, 540.0), calibration.PITCH_CIRCLES["Circle central"])]
