@@ -648,3 +648,33 @@ known perfectly, which the pipeline does not know. Not built.
 team-mates a piece of track belongs to, and every remaining join needs exactly that. What would
 answer it is an identity signal that survives a tackle and a pan: a readable shirt number, or a
 re-id model trained on football rather than on pedestrians.
+
+**D98 -- a re-id network trained on football tells team-mates apart on clean crops and barely at
+the ends of tracks, which is where the stitcher asks.** D97 left every remaining join needing an
+identity signal, so OSNet-AIN was fine-tuned from its pinned weights on SoccerNet GSR crops:
+eighteen clips of three matches from the valid split, batch-hard triplet with each batch drawn
+from ONE clip and mostly ONE team, so the negatives are team-mates in the same kit. Chosen on a
+fourth match (test split, game 11), judged on the benchmark once.
+
+**The benchmark leaked, and it showed.** SoccerNet's clips are Swiss league: St. Gallen plays in
+two training matches and in benchmark match 4, whose clips jumped to 0.93-0.96 AUC -- memory, not
+skill. Scored team by team with St. Gallen set apart, a player against his own team-mates on
+ground-truth crops goes from about 0.72 to about 0.91 on clubs the network never saw.
+
+**At the stitcher it is 0.77 -> 0.82.** Measured on the fragments the pipeline actually makes,
+players the network never saw, same player against team-mate:
+
+    fragment ends, unseen players                       old     football
+    AUC, same player vs team-mate                      0.765     0.818
+    long gaps: others admitted keeping 75% of his       848       625
+    re-entry, mutual best on position + look        76% right  78% right
+
+The difference is WHERE the look is taken. A fragment ends because its player was lost -- in
+contact, at the frame's edge, behind somebody -- and the crops there are the worst of him. Three
+wrong players per right one at a usable threshold is not a join rule, and re-entry stays under
+the stitcher's own 81%. Not integrated; the weights are in work/reid/football.pt.
+
+**One thing it did not try:** a look over the whole fragment's cleanest crops rather than its
+last eight. D95 takes the end because a contact join is about that moment; a long-gap or
+re-entry join is about who the player IS, and nothing forces that to be read from the frames
+where he was being lost.
