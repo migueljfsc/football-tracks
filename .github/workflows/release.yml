@@ -31,7 +31,21 @@ jobs:
           # commitizen reads the whole history to work out the increment.
           fetch-depth: 0
 
+      # Only the tip of main is released. `concurrency` queues a second run rather than
+      # dropping it, and a queued run checks out the commit that triggered it -- so when GitHub
+      # delivers one push twice, or two pushes land close together, the later run recomputes
+      # a bump the first already tagged and fails on "tag already exists". The run for the
+      # newest commit releases everything since the last tag, so an older one has nothing to do.
+      - id: tip
+        run: |
+          git fetch --quiet origin main
+          if [ "$(git rev-parse origin/main)" != "$GITHUB_SHA" ]; then
+            echo "main has moved past $GITHUB_SHA; the run for its tip releases it"
+            echo "stale=true" >> "$GITHUB_OUTPUT"
+          fi
+
       - id: cz
+        if: ${{ steps.tip.outputs.stale != 'true' }}
         uses: commitizen-tools/commitizen-action@0.27.1
         with:
           github_token: ${{ secrets.CZ_TOKEN || github.token }}
