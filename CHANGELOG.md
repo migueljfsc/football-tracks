@@ -1,3 +1,9 @@
+## v0.36.0 (2026-09-18)
+
+### Feat
+
+- **teams**: a match remembers its kits, so home is one team in every clip
+
 ## v0.35.0 (2026-09-18)
 
 ### Feat
