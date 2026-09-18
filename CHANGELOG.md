@@ -1,3 +1,9 @@
+## v0.31.0 (2026-09-18)
+
+### Feat
+
+- **camera**: one camera for a match, three numbers a frame
+
 ## v0.30.0 (2026-09-17)
 
 ### Feat
