@@ -1,3 +1,9 @@
+## v0.32.1 (2026-09-18)
+
+### Fix
+
+- **frames**: drop the camera aims and segmenter fits when a clip is re-extracted
+
 ## v0.32.0 (2026-09-18)
 
 ### Feat
