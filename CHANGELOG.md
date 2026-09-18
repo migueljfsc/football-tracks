@@ -1,3 +1,9 @@
+## v0.34.0 (2026-09-18)
+
+### Feat
+
+- **score**: report how much of a player's life their tracks hold
+
 ## v0.33.0 (2026-09-18)
 
 ### Feat
