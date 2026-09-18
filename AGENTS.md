@@ -65,7 +65,7 @@ tests/                      the pure helpers only
 data/clips/                 source video, never committed
 data/calib2023/             SN-Calibration-2023, training data for the segmenter only
 work/<clip>/                every stage's artefacts, all reproducible
-work/games/<game>/          what a MATCH knows and a clip does not: camera.json
+work/games/<game>/          what a MATCH knows and a clip does not: camera.json, kits.json
 work/calib/                 segmenter weights and training logs. Gitignored — see below
 ```
 
@@ -219,6 +219,11 @@ Each of these cost a day. Where one names a decision, the full account is in
 
 ### Teams and the ball
 
+- **Within a clip `home` is the side nearer x=0; across a match it is a KIT** (D99). The ends
+  swap at half time and a camped side flips the positional rule, so once a game's first clip
+  has written `work/games/<game>/kits.json` every later clip names its sides by the stored kit.
+  The first clip decides -- delete kits.json to let the next one. The split never changes, so
+  no score can see this; SoccerNet's side flipped in the second half is the yardstick.
 - **An official walks into the keeper's zone, and a keeper can wear an official's colours.**
   Odd kit + near a goal made six officials keepers across the benchmark -- and a referee fielded
   in goal on a coach's board, because he was watched longer than the real keeper. So a keeper

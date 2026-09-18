@@ -7,6 +7,8 @@ player turns a pass into a turnover that never happened.
 
 from __future__ import annotations
 
+from pathlib import Path
+
 import numpy as np
 
 from football_tracks import stage3_teams
@@ -348,3 +350,43 @@ def test_an_odd_kit_in_goal_is_still_the_keeper_when_no_official_is_named() -> N
     tracks.append(kitted(81, (0.02, 0.97, 0.01)))
     mean_x[81] = 19.0
     assert assign(tracks, mean_x)[81] == "gkHome"
+
+
+def test_a_match_names_its_sides_by_kit_not_by_the_end_they_attack() -> None:
+    """After half time the teams change ends, and the positional rule names the other team
+    `home`. With the match's kits stored, red stays home wherever it plays (D99)."""
+    tracks, mean_x = _in_goal(np.random.default_rng(7))
+    # Second half: red now plays from the right, blue from the left, and the keeper at the
+    # right-hand goal is red's.
+    mean_x = {tid: (105.0 - x) for tid, x in mean_x.items()}
+    positional = assign(tracks, mean_x)
+    assert positional[0] == "away" and positional[10] == "home"
+
+    stored = (np.array(RED, dtype=np.float64), np.array(BLUE, dtype=np.float64))
+    by_kit = assign(tracks, mean_x, stored=stored)
+    assert {by_kit[i] for i in range(10)} <= {"home", "unknown"}
+    assert by_kit[0] == "home" and by_kit[10] == "away"
+    # The keeper in red's goal is red's keeper, whichever end that goal is.
+    assert by_kit[80] == "gkHome"
+
+
+def test_kits_that_cannot_tell_the_sides_apart_leave_the_naming_positional() -> None:
+    """Stored kits both sides sit equally near -- a change of strip, or light that moves both --
+    say nothing, and a coin flip would be worse than the clip's own naming."""
+    red, blue = np.array(RED, dtype=np.float64), np.array(BLUE, dtype=np.float64)
+    grey = (red + blue) / 2
+    assert stage3_teams.named_by_kit((red, blue), (grey, grey)) is None
+    assert stage3_teams.named_by_kit((red, blue), (red, blue)) == 0
+    assert stage3_teams.named_by_kit((red, blue), (blue, red)) == 1
+
+    tracks, mean_x = _in_goal(np.random.default_rng(7))
+    assert assign(tracks, mean_x, stored=(grey, grey)) == assign(tracks, mean_x)
+
+
+def test_a_match_s_kits_survive_a_round_trip(tmp_path: Path) -> None:
+    sides = (np.array(RED, dtype=np.float64), np.array(BLUE, dtype=np.float64))
+    path = stage3_teams.write_kits(tmp_path / "kits.json", sides, "SNGS-060")
+    back = stage3_teams.read_kits(path)
+    assert back is not None
+    assert np.allclose(back[0], sides[0]) and np.allclose(back[1], sides[1])
+    assert stage3_teams.read_kits(tmp_path / "missing.json") is None

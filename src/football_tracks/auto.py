@@ -196,6 +196,9 @@ class Result:
     dropped_off_pitch: int
     unsolved_frames: int
     kits: dict[str, str] | None = None
+    # Each named side's kit signature, as `stage3_teams.side_signatures` measures it: what a
+    # match's kits.json is written from when this clip is its first.
+    signatures: tuple[Any, Any] | None = None
 
 
 def seed_paths(work: Path) -> list[Path]:
@@ -1117,6 +1120,7 @@ def build(
     appearance: dict[reid.Key, Any] | None = None,
     stitch: bool = True,
     pitch: Pitch = DEFAULT_PITCH,
+    kits: tuple[Any, Any] | None = None,
 ) -> Result:
     """Detections plus a camera model -> tracks in pitch metres.
 
@@ -1127,6 +1131,9 @@ def build(
 
     `appearance` is `reid`'s embeddings by detection. Without it the stitcher never spends its
     contact slack, and the tracks are what they were before appearance existed (D95).
+
+    `kits` is the match's stored (home, away) kit signatures, so `home` names the same team in
+    every clip of it rather than whichever side stands nearer x=0 (D99).
     """
     cache: dict[int, Any] = {}
 
@@ -1218,6 +1225,7 @@ def build(
         pitch,
         on_the_ball(ball, positions, fps),
         {tid: float(np.mean([s.y for s in ss])) for tid, ss in positions.items()},
+        kits,
     )
     positions, teams = _split_two_shirts(kept, positions, teams)
     # After the sides are named, because only `assign` knows which tracks hold a keeper.
@@ -1226,6 +1234,7 @@ def build(
     return Result(
         ball=ball,
         kits=stage3_teams.kit_colours(kept, teams),
+        signatures=stage3_teams.side_signatures(kept, teams),
         tracks=[
             Track(id=tid, team=teams.get(tid, "unknown"), number=None, samples=ss)
             for tid, ss in sorted(positions.items())

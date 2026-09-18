@@ -16,7 +16,15 @@ import cv2
 import typer
 
 from . import auto as auto_mod
-from . import calibration, soccernet, stage0_segment, stage1_propagate, stage1_register, tracks
+from . import (
+    calibration,
+    soccernet,
+    stage0_segment,
+    stage1_propagate,
+    stage1_register,
+    stage3_teams,
+    tracks,
+)
 from . import camera as camera_mod
 from . import detect as detect_mod
 from . import guide as guide_mod
@@ -82,6 +90,14 @@ def _game_of(clip: str, game: str | None) -> str:
             " --game <name>` on a clip of the same match first"
         )
     return named
+
+
+def _maybe_game(clip: str, game: str | None) -> str | None:
+    """The clip's match if anything names one, and None rather than an error if nothing does."""
+    try:
+        return _game_of(clip, game)
+    except typer.BadParameter:
+        return None
 
 
 def _name_game(clip: str, game: str) -> None:
@@ -929,6 +945,11 @@ def _pipeline(
             f"{clip} has neither SoccerNet labels nor {seed_path} - run `ft seed {clip}` first"
         )
 
+    # Which kit is `home` is the MATCH's to say once its first clip has said it, so every clip
+    # of it names the same team the same way whichever end they are attacking (D99).
+    match = _maybe_game(clip, game)
+    kits_path = game_dir(match, create=False) / stage3_teams.KITS_FILE if match else None
+    stored = stage3_teams.read_kits(kits_path) if kits_path is not None else None
     result = auto_mod.build(
         c.frames_dir,
         frames,
@@ -940,7 +961,15 @@ def _pipeline(
         appearance=appearance,
         stitch=stitch,
         pitch=pitch,
+        kits=stored,
     )
+    if kits_path is not None and stored is None and result.signatures is not None:
+        stage3_teams.write_kits(kits_path, result.signatures, clip)
+        colours = result.kits or {}
+        typer.echo(
+            f"{match}: kits recorded from {clip} - home wears"
+            f" {colours.get('home', 'the kit on the left here')} in every clip of it from now on"
+        )
 
     path = tracks.write(
         out / "tracks.json",

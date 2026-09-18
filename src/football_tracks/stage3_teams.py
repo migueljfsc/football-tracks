@@ -4,10 +4,15 @@ Two kits, told apart on the shirt signature the tracker already maintains. Writt
 rather than imported: the input is a dozen vectors, and sklearn is a large dependency to
 add for thirty lines.
 
-Which cluster is `home` is NOT decided by looking at the answer. It is decided by mean
-pitch x - the side whose players average nearer x=0 defends the left goal - which is
+Which cluster is `home` is NOT decided by looking at the answer. Within one clip it is decided
+by mean pitch x - the side whose players average nearer x=0 defends the left goal - which is
 SoccerNet's own left/right convention and is deterministic. Picking the labelling that
 happens to score best would be fitting to the yardstick.
+
+Across the clips of one MATCH that convention is not an identity: the teams change ends at half
+time, and a clip where one side is camped in the other half flips it outright. So where the
+match's kits are already known (`kits.json`, written by its first clip), each side is named by
+the stored kit it wears instead, and `home` is one team in every clip of the match (D99).
 
 A keeper wears neither kit, and left in the clustering they cost real accuracy: on
 SNGS-147 the two sides come out 83% right with keepers included and 93% without. So
@@ -17,7 +22,9 @@ things at once - a colour unlike either team, and standing near a goal.
 
 from __future__ import annotations
 
+import json
 from collections.abc import Callable
+from pathlib import Path
 
 import cv2
 import numpy as np
@@ -469,6 +476,60 @@ def _intersection_distance(a: Vec, b: Vec) -> float:
     return float(np.clip(1.0 - np.minimum(a, b).sum(), 0.0, 1.0))
 
 
+# How much better one naming of the two sides must fit the stored kits than the other before
+# the kits decide it, as a share of the worse fit. Two sides that measure about equally near
+# both stored kits are a clip the registry cannot speak for -- a change of kit, or light that
+# moves both -- and the clip keeps its own positional naming rather than a coin flip.
+REGISTRY_MARGIN = 0.8
+
+KITS_FILE = "kits.json"
+
+
+def named_by_kit(centres: tuple[Vec, Vec], stored: tuple[Vec, Vec]) -> int | None:
+    """Which of the two clusters wears the stored `home` kit, or None where the kits cannot say.
+
+    Both clusters are named at once -- the naming whose two distances sum smaller -- because a
+    side that is merely nearest `home` says nothing when the other side is nearer still.
+    """
+    (a, b), (home, away) = centres, stored
+    straight = float(np.linalg.norm(a - home) + np.linalg.norm(b - away))
+    crossed = float(np.linalg.norm(b - home) + np.linalg.norm(a - away))
+    if min(straight, crossed) > REGISTRY_MARGIN * max(straight, crossed):
+        return None
+    return 0 if straight < crossed else 1
+
+
+def side_signatures(tracks: list[Track], teams: dict[int, TeamLabel]) -> tuple[Vec, Vec] | None:
+    """Each named side's mean `side_mean`, in the space the split is made in: kits.json."""
+    sides: dict[str, list[Vec]] = {"home": [], "away": []}
+    for t in tracks:
+        side = teams.get(t.id)
+        if side in sides and t.side_mean is not None:
+            sides[side].append(t.side_mean)
+    if not (sides["home"] and sides["away"]):
+        return None
+    return (
+        np.mean(np.array(sides["home"], dtype=np.float64), axis=0),
+        np.mean(np.array(sides["away"], dtype=np.float64), axis=0),
+    )
+
+
+def write_kits(path: Path, sides: tuple[Vec, Vec], source: str) -> Path:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(
+        json.dumps({"from": source, "home": sides[0].tolist(), "away": sides[1].tolist()}, indent=2)
+        + "\n"
+    )
+    return path
+
+
+def read_kits(path: Path) -> tuple[Vec, Vec] | None:
+    if not path.exists():
+        return None
+    d = json.loads(path.read_text())
+    return (np.array(d["home"], dtype=np.float64), np.array(d["away"], dtype=np.float64))
+
+
 def side_centres(tracks: list[Track], teams: dict[int, TeamLabel]) -> tuple[Vec, Vec] | None:
     """The mean kit of each side, from the tracks the split was sure of."""
     kits: dict[str, list[Vec]] = {"home": [], "away": []}
@@ -491,6 +552,7 @@ def assign(
     pitch: Pitch = DEFAULT_PITCH,
     carried: set[int] | None = None,
     mean_y: dict[int, float] | None = None,
+    stored: tuple[Vec, Vec] | None = None,
 ) -> dict[int, TeamLabel]:
     """Track id -> team label.
 
@@ -509,6 +571,9 @@ def assign(
     `frames` is the frames each track holds a sample at, which is what tells a collapsed
     split from a real one. It is optional only so a caller with nothing but tracks still
     gets a labelling; the observations are a poorer answer once fragments are stitched.
+
+    `stored` is the match's (home, away) kit signatures. Given, they name the two sides
+    where they can tell them apart (`named_by_kit`); the split itself is unchanged.
     """
     usable = [t for t in tracks if t.side_mean is not None and t.id in mean_x]
     if len(usable) < 2:
@@ -598,6 +663,16 @@ def assign(
         xs = [mean_x[t.id] for t, lab in zip(outfield, labels, strict=True) if lab == k]
         sides[k] = float(np.mean(xs)) if xs else 0.0
     left = 0 if sides[0] <= sides[1] else 1
+    home_side = left
+    if stored is not None and bool(np.any(labels == 0)) and bool(np.any(labels == 1)):
+        shirts = np.array([t.side_mean for t in outfield], dtype=np.float64)
+        pair = (shirts[labels == 0].mean(axis=0), shirts[labels == 1].mean(axis=0))
+        named = named_by_kit(pair, stored)
+        if named is not None:
+            home_side = named
+    # Which goal the home side defends in THIS clip, which a keeper is named by: its players
+    # average nearer that goal. Without stored kits home is the left side by construction.
+    home_defends_left = sides[home_side] <= sides[1 - home_side]
 
     # Which tracks the split is actually sure of. Distance to its own side's kit against
     # distance to the other's, in the same colour space the cut was made in.
@@ -633,12 +708,13 @@ def assign(
     out: dict[int, TeamLabel] = {t.id: "unknown" for t in tracks}
     for i, (t, lab) in enumerate(zip(outfield, labels, strict=True)):
         if sure[i]:
-            out[t.id] = "home" if lab == left else "away"
+            out[t.id] = "home" if lab == home_side else "away"
     for t in usable:
         if t.id in referee:
             out[t.id] = "referee"
     for i, t in enumerate(usable):
         if keeper[i]:
-            # The keeper of the goal they are standing in, whichever side that is.
-            out[t.id] = "gkHome" if mean_x[t.id] <= pitch.halfway else "gkAway"
+            # The keeper of the goal they are standing in, whichever side defends it.
+            at_left = mean_x[t.id] <= pitch.halfway
+            out[t.id] = "gkHome" if at_left == home_defends_left else "gkAway"
     return out

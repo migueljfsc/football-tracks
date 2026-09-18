@@ -47,8 +47,8 @@ model sees him leave and come back, and position cannot say which team-mate came
 with the true teams). Every remaining join needs an identity signal -- a readable shirt number, or
 a re-id model trained on football -- and that is the next project on this front.
 
-**After that:** teams by kit per game, so `home` means the same side in every clip of a match
-and half time stops moving it.
+**Done since:** a match remembers its kits (D99), so `home` is one team in every clip of it and
+half time no longer swaps the names -- 2-11% agreement across half time before, 89-98% after.
 
 ## Where this stands — 6 September 2026
 

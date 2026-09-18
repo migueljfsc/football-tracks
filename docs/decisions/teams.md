@@ -596,3 +596,30 @@ more carefully than this can.
 
 Tracks, recall, precision, error, purity and teams are identical across the benchmark: this
 writes a field and decides nothing.
+
+**D99 -- across the clips of one match, `home` is a kit, not an end.** D21 names the side
+nearer x=0 `home`, which is right inside one clip and is SoccerNet's own left/right. It is not
+an identity: the teams change ends at half time, and a clip where one side is camped in the
+other half flips it outright. Measured with SoccerNet's side flipped in the second half as the
+team's identity, the share of each clip where `home` is the same team as in the match's first:
+
+    clip       half   before    with kits.json
+    SNGS-060    1       96%          96%
+    SNGS-066    1       92%          92%
+    SNGS-067    1       11%          89%    the positional rule flipped mid-half
+    SNGS-069    2        2%          98%    half time
+    SNGS-075    2        3%          97%
+    SNGS-100    1       92%          92%
+    SNGS-110    2        7%          93%    half time
+
+So a match remembers its kits. The first clip processed for a game writes each side's kit
+signature -- the `side_mean` the split is made on -- to `work/games/<game>/kits.json`, and
+every later clip names its two clusters by whichever stored kit each wears, both at once so a
+side merely nearest `home` cannot claim it when the other is nearer still. Where the two
+namings fit within `REGISTRY_MARGIN` of each other the stored kits cannot speak for the clip --
+a change of strip, or light that moves both -- and it keeps its positional naming. Keepers
+follow: the keeper in a goal belongs to whichever named side defends it in THIS clip.
+
+The split itself is untouched, so recall, precision, the team split and every board are
+identical; only the names move. The first clip decides, and deleting kits.json lets the next
+one decide again.
