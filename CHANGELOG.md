@@ -1,3 +1,9 @@
+## v0.32.0 (2026-09-18)
+
+### Feat
+
+- **run**: a clip of a match already seeded asks only where the lines are invisible
+
 ## v0.31.0 (2026-09-18)
 
 ### Feat
