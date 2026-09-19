@@ -465,3 +465,22 @@ two epochs of seeing them. Not built.
 -- and through the real pipeline it takes the eleven clips from 60.7% to 65.2%, wrong side 11.6%
 to 7.4%. On the three coach clips it moves timing and adds real events: Untitled_1 gains the
 keeper's save at the end of a shot the board used to leave loose, and no pass nobody played.
+
+**Where the rest of the possession error is, now that it can be seen.** With the ball bridged the
+eleven boards show the right side 65.2% of the time, and the largest remaining class is a carrier
+named where the truth board has the ball loose. Tracing every one of those scenes back to the
+files, against SoccerNet's own ball and players:
+
+    12   our ball is a real sighting, and more than 4 m from the real one
+     5   a real player was near, and the real ball swept PAST him (never within SNAP_M) --
+         ours came closer because it is 2-4 m off
+     5   our players are out by enough that one sits inside four metres of a ball nobody was near
+     3   the truth has no ball there either
+     4   no rule of ours explains it
+     1   bridged
+
+The carrier rule is therefore not the lever: it is the ball's POSITION, which is D101's ranking
+problem wearing another hat, and the players'. The same holds for the other direction -- of the
+scenes that show nobody where the truth names a carrier, five of seven are our ball sitting 5 to
+99 m from the nearest track of ours. Nothing here is bought by moving `CARRIER_RADIUS_M`,
+`HOLD_S` or `CARRY_S`, all three of which are already measured against ground truth.
