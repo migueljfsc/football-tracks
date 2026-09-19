@@ -460,5 +460,8 @@ softmax, used only where the detector abstains, was 93% right on game 11 and 57.
 benchmark. Three matches are three balls, three stadiums and three lights, and it overfits within
 two epochs of seeing them. Not built.
 
-Drawing the ball straight across gaps of up to two seconds is worth 4.5 points on its own, with no
-model, and it was held back because it was to be judged as a layer on the verifier.
+**Shipped instead: the ball drawn straight across gaps of up to two seconds** (`auto.bridge`,
+`BALL_BRIDGE_S`). No model -- the sightings either side are the ones the selector already trusts
+-- and through the real pipeline it takes the eleven clips from 60.7% to 65.2%, wrong side 11.6%
+to 7.4%. On the three coach clips it moves timing and adds real events: Untitled_1 gains the
+keeper's save at the end of a shot the board used to leave loose, and no pass nobody played.

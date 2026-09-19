@@ -6,6 +6,7 @@ import numpy as np
 
 from football_tracks import auto
 from football_tracks.detect import Sighting
+from football_tracks.tracks import Sample
 
 
 def _eye() -> np.ndarray:
@@ -139,3 +140,26 @@ def test_a_ball_placed_on_a_spot_survives_the_same_share() -> None:
     per.update({f: [Sighting(f=f, x=60.0 + f * 0.1, y=20.0, score=0.30)] for f in range(160, 750)})
     static = auto._painted_spots(per, dict.fromkeys(per, _eye()))
     assert auto._bin_of(105.0, 0.0) not in static
+
+
+def test_a_gap_between_two_sightings_is_drawn_as_the_line_between_them() -> None:
+    """A pass goes unseen in flight; the board needs it to leave the passer (D101)."""
+    ball = [Sample(f=10, x=20.0, y=30.0), Sample(f=14, x=28.0, y=34.0)]
+    out = auto.bridge(ball, max_gap=50)
+    assert [s.f for s in out] == [10, 11, 12, 13, 14]
+    assert (out[2].x, out[2].y) == (24.0, 32.0)
+
+
+def test_a_gap_longer_than_a_pass_is_left_empty() -> None:
+    """Past the limit the ball was more likely somewhere the camera was not."""
+    ball = [Sample(f=10, x=20.0, y=30.0), Sample(f=80, x=60.0, y=30.0)]
+    assert auto.bridge(ball, max_gap=50) == ball
+
+
+def test_bridging_adds_nothing_beyond_the_ends() -> None:
+    """A line needs both ends: no ball is invented before the first sighting or after the last."""
+    assert auto.bridge([], max_gap=50) == []
+    one = [Sample(f=5, x=1.0, y=2.0)]
+    assert auto.bridge(one, max_gap=50) == one
+    ball = [Sample(f=5, x=1.0, y=2.0), Sample(f=6, x=1.5, y=2.0)]
+    assert auto.bridge(ball, max_gap=50) == ball

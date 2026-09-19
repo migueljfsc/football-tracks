@@ -30,6 +30,7 @@ import json
 import math
 from collections.abc import Callable
 from dataclasses import dataclass
+from itertools import pairwise
 from pathlib import Path
 from typing import Any, Literal
 
@@ -1108,6 +1109,33 @@ def ball_path(
     return _smoothed({**best, **extra}, frames, smooth, pitch)
 
 
+# The longest stretch between two believed sightings that is drawn as a straight line (D101).
+#
+# The ball goes unseen exactly when it travels -- struck, blurred, small -- and a board with no
+# ball through a pass keeps it at the passer's feet. Filling those gaps took the share of the
+# eleven benchmark clips' time with the right side on the ball from 60.7% to 65.2%, against the
+# truth board frame by frame, and it needs no model: the sightings either side are already the
+# ones the selector trusts. Two seconds is a long pass; past it the gap is more likely a stretch
+# the ball spent somewhere the camera was not.
+BALL_BRIDGE_S = 2.0
+
+
+def bridge(ball: list[Sample], max_gap: int) -> list[Sample]:
+    """Each frame between two samples at most `max_gap` apart, on the line joining them.
+
+    Nothing is added before the first sample or after the last: a line needs both ends.
+    """
+    out: list[Sample] = []
+    for a, b in pairwise(ball):
+        out.append(a)
+        gap = b.f - a.f
+        if 1 < gap <= max_gap:
+            for f in range(a.f + 1, b.f):
+                t = (f - a.f) / gap
+                out.append(Sample(f=f, x=a.x + t * (b.x - a.x), y=a.y + t * (b.y - a.y)))
+    return out + ball[-1:]
+
+
 def build(
     frames_dir: Path,
     frames: list[int],
@@ -1217,7 +1245,7 @@ def build(
     kept = [t for t in raw if t.id in positions]
     # Computed before the sides are named, because who had the ball is one of the things
     # that decides them (D91).
-    ball = ball_path(balls or [], homs, frames, pitch=pitch)
+    ball = bridge(ball_path(balls or [], homs, frames, pitch=pitch), round(BALL_BRIDGE_S * fps))
     teams = assign(
         kept,
         mean_x,

@@ -147,4 +147,7 @@ Expect roughly half the squad to resolve. See D5.
 
 ### Not a stage — the ball
 
-Deferred to v1. See D4.
+Found for one question, who has it (D29). The tiled detector's candidates (D57), the most
+confident one a frame and none below 0.75 (D73), and drawn straight across the gaps of up to two
+seconds between the sightings it keeps (D101). Its position is not a position: a ball in the air
+projects metres from where it is (D66).

@@ -55,7 +55,7 @@ Frame by frame against the truth board, a board shows the right side on the ball
 time; with the candidate nearest the real ball chosen every frame, 72.6%. The candidates exist
 -- the tiled detector finds one within 20 px of the ball in 71-96% of frames -- and COCO's
 confidence ranks them badly. A verifier trained on three SoccerNet matches does not rank them
-better on a fourth. Drawing the ball straight across gaps of up to 2 s is +4.5 on its own.
+better on a fourth. Drawing the ball straight across gaps of up to 2 s ships, and is +4.5.
 
 **Done since:** a match remembers its kits (D99), so `home` is one team in every clip of it and
 half time no longer swaps the names -- 2-11% agreement across half time before, 89-98% after.
