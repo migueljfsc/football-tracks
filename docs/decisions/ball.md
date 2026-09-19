@@ -426,3 +426,39 @@ the score does not rank the candidates correctly. That needs a better ball MODEL
 trained on footballs rather than COCO's "sports ball", or a tracker that follows the object
 between sightings -- and it is the same size of project as jersey OCR (D32) or re-identification
 (the benchmark's crowded-scene note).
+
+**D101 -- the ball costs a board twelve points of possession, the candidates to recover them are
+already found, and a verifier trained on three matches does not pick them.** Possession is now
+scored frame by frame against the truth board (`pnpm board --truth`): the share of the window in
+which the board shows the right side on the ball, or the ball loose where it is loose. Over the
+eleven benchmark clips, same tracks, only the ball changed:
+
+    ball                                          possession right   wrong side   invented
+    as it ships (confidence >= 0.75)                   60.7%            11.6%       16.2%
+    SoccerNet's own ball                               69.1%             9.8%       16.5%
+    the candidate nearest the real ball, per frame     72.6%             6.8%       13.6%
+    as it ships, gaps up to 2 s drawn straight         65.2%             7.4%       16.8%
+
+A candidate within 20 px of the ball exists in 71-96% of annotated frames, and choosing it every
+time matches the annotated ball. So D75's reading holds and sharpens: the ball is not missing, it
+is mis-ranked, and a better ranking is worth twelve points. Scene by scene the same comparison
+said the opposite -- the annotated ball looked far better than perfect selection -- because a
+scene compared at its first frame judges event TIMING, and only the annotated ball shares the
+truth board's.
+
+**The ranking does not come from a verifier trained on SoccerNet.** A small CNN over each
+candidate's native-resolution crop, with the frames two either side for motion and the detector's
+score, trained on games 2, 3 and 5 and judged on game 11:
+
+    scored alone, per candidate      top pick 64% of findable frames against the detector's 56%,
+                                     and uncalibrated: at 0.95 one asserted ball in five is wrong
+    softmax over a frame's candidates,
+      plus "no ball", 58 clips       at 95% right, 33% of findable frames against the detector's 24%
+
+Neither reached the board. Scored alone it put the wrong ball down more often (51.6-54.2%); the
+softmax, used only where the detector abstains, was 93% right on game 11 and 57.5% on the
+benchmark. Three matches are three balls, three stadiums and three lights, and it overfits within
+two epochs of seeing them. Not built.
+
+Drawing the ball straight across gaps of up to two seconds is worth 4.5 points on its own, with no
+model, and it was held back because it was to be judged as a layer on the verifier.

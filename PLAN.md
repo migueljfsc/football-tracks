@@ -48,7 +48,14 @@ with the true teams). Every remaining join needs an identity signal, and the two
 short: a re-id network trained on football separates team-mates at 0.82 where the stitcher asks
 (D98), and one fine-tuned on a coach's own tags names his players about as often as the stitcher
 joins them right, in one match, and not at all across a change of shirt (D100). What is left is a
-readable number (D32), so this front is parked and the ball is next.
+readable number (D32), so this front is parked.
+
+**The ball is worth twelve points of possession, and they are a ranking problem** (D101).
+Frame by frame against the truth board, a board shows the right side on the ball 60.7% of the
+time; with the candidate nearest the real ball chosen every frame, 72.6%. The candidates exist
+-- the tiled detector finds one within 20 px of the ball in 71-96% of frames -- and COCO's
+confidence ranks them badly. A verifier trained on three SoccerNet matches does not rank them
+better on a fourth. Drawing the ball straight across gaps of up to 2 s is +4.5 on its own.
 
 **Done since:** a match remembers its kits (D99), so `home` is one team in every clip of it and
 half time no longer swaps the names -- 2-11% agreement across half time before, 89-98% after.

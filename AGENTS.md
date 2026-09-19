@@ -292,6 +292,10 @@ Each of these cost a day. Where one names a decision, the full account is in
   sibling repo: `pnpm board ../football-tracks/work/<clip>/tracks.json`, which runs the real
   importer and prints the roster, the window, the observed player-seconds, the travel and the
   curves. Do not write another throwaway script for it.
+- **Judge the ball by possession FRAME BY FRAME: `pnpm board ... --truth`** (D101). It reads the
+  `truth.json` beside each file and scores the share of the window with the right side on the
+  ball. Comparing two boards scene by scene judges event TIMING, and it made SoccerNet's own ball
+  look far better than choosing the right candidate every frame, which is the opposite of true.
 - **`ft reg-eval` is the registration number; `ft calib-eval` is not.** The first counts a frame
   with no homography as a miss, over every frame the ground truth can judge. The second scores
   only the frames a model already solved, which rewards refusing the hard ones (D67).
