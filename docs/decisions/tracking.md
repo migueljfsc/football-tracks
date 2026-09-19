@@ -694,3 +694,44 @@ The flip side is worth writing down. A network that has seen a side's players pi
 perfectly -- and a coach analyses his OWN team, in every clip, every week. A model fitted to one
 club's players would be the identity signal this stage lacks. What it would need that this
 repo does not have is labels for that club, which a coach correcting boards is making anyway.
+
+**D100 -- tagging a coach's own players names them within a match about as well as the stitcher
+joins them, and tags from earlier matches do not carry to the next.** D98 ended on a hope: a
+network that had seen a club's players picked them out, and a coach analyses one club every week.
+So the coach tags his players -- one click per player per clip, the shirt number typed -- and the
+fragments of a new clip are named against those tags, and same-named fragments joined. Simulated
+on SoccerNet from ground truth, scored on the pipeline's own fragments of eight benchmark clips,
+with a fragment's side taken from ground truth and a tag labelling a clean window: both favour
+the idea.
+
+Within one match, five clubs the network never saw, three clips tagged, fine-tuned on the tags:
+
+    look                        named   right   joins right/wrong   best-track coverage
+    stitcher alone                 --      --        --                  57.3%
+    football, gallery (d1/d2<=0.7) 54%     83%      45/7                 63.2%
+    fine-tuned on the tags         76%     81%      62/16                64.0%
+    ... every other clip tagged    85%     88%      76/17                65.9%
+
+Names are right about as often as the stitcher's own links (81%), so they can neither join
+fragments the stitcher refused nor be shown -- one shirt in five wrong is what D5 exists to
+prevent. The gain is a third of the 26 points D97 lost to splits, at the stitcher's precision.
+
+**Earlier matches do not help, and a kit change is why.** St. Gallen is in four SoccerNet
+matches, found by squad number (36, 44 and 50 recur together; unrelated sides share a median
+0.18 of their numbers). A network retrained without them, tagged four clips per earlier match in
+white, tested on a match in green:
+
+    tags                                       right   joins right/wrong   coverage (61.1% alone)
+    three clips of today's match               86-88%     83/2-83/4          70.4-70.7%
+    one to three earlier matches, none today   51-73%     poor               63-65%
+    trained on earlier, gallery from today         94%     71/2               68.9%
+
+A gallery from other matches does not name a player in another shirt. Training on them and naming
+against today's tags gives the one figure above 90%, and it cannot be credited to the earlier
+matches: the same untrained network against two draws of today's tags names 86% and 95% right, a
+spread as large as the gain. St. Gallen is also an easy side -- 86-88% within its own match
+against 81% for the five others -- which is most of what D98 read as the network having seen them.
+
+**Not built.** Identity from a coach's tags would need the look to survive a change of shirt,
+which is exactly what a network trained on team-mates in one kit does not learn, or a signal
+that is not the look at all -- the number itself, read (D32).

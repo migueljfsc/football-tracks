@@ -44,8 +44,11 @@ right goal from the wrong one -- a mirrored seed fits to 0.02 m at two landmarks
 team-mate's, and an appearance veto that won on the benchmark broke a coach clip's tackles. The
 biggest single share is a player out of shot while the camera looks elsewhere (~28%): the camera
 model sees him leave and come back, and position cannot say which team-mate came back (~70% right
-with the true teams). Every remaining join needs an identity signal -- a readable shirt number, or
-a re-id model trained on football -- and that is the next project on this front.
+with the true teams). Every remaining join needs an identity signal, and the two looks tried fall
+short: a re-id network trained on football separates team-mates at 0.82 where the stitcher asks
+(D98), and one fine-tuned on a coach's own tags names his players about as often as the stitcher
+joins them right, in one match, and not at all across a change of shirt (D100). What is left is a
+readable number (D32), so this front is parked and the ball is next.
 
 **Done since:** a match remembers its kits (D99), so `home` is one team in every clip of it and
 half time no longer swaps the names -- 2-11% agreement across half time before, 89-98% after.
