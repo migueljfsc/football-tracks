@@ -1,3 +1,9 @@
+## v0.37.0 (2026-09-19)
+
+### Feat
+
+- **ball**: draw the ball across gaps of up to two seconds between sightings
+
 ## v0.36.1 (2026-09-18)
 
 ### Fix
