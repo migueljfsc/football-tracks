@@ -1,3 +1,9 @@
+## v0.38.0 (2026-09-22)
+
+### Feat
+
+- **tracks**: settle a player's position over the samples around it
+
 ## v0.37.0 (2026-09-19)
 
 ### Feat
