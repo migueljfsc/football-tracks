@@ -11,6 +11,24 @@ This file is the current state and the next move. Everything durable lives in [`
 [the benchmark](docs/benchmark.md), and [the decisions](docs/decisions) — fifty of them, cited
 from source comments by number, and most recording something that was measured and abandoned.
 
+## The bar, met on a coach's clip — 22 September 2026
+
+**A coach checked two boards scene by scene against the footage and would correct both rather
+than draw them.** That is the v0 bar this file opens with. On `Untitled` he put the board at
+about 90% of the way there; the dot videos, with the positions settled (D103), *"read as
+football"*. Two Milan-Benfica clips, one of them never clicked -- the match camera (D96)
+registered it -- with the kit registry keeping the teams straight across them (D99).
+
+**What is left on those two boards is the ball's position.** Four scenes of his were still wrong
+after D86: a carrier at the start of `Untitled` and one a pass early, and on `Untitled_1` a heavy
+pass and the flight of a shot credited to players. Every one traces to the ball being two to four
+metres from where it was. That is D101's ranking problem, with a measured ceiling of twelve
+points of possession and no model yet that reaches it -- and the next thing worth building, if
+anything is.
+
+**Two clips of one match is not a benchmark.** The claim is that the bar is reachable, not that
+it is reached everywhere: nottingham, a seeded clip from another match, is unreviewed.
+
 ## One camera for a match — 18 September 2026
 
 **A clip of a match already seeded needs no clicks.** A broadcast camera stays on its gantry,
@@ -317,7 +335,7 @@ both of the coach's defenders run with the play.
 | M1 | reprojected pitch lines sit on the real lines | **the binding constraint** (D67); anchoring the two sources together is built, measured and does not reach the board (D68) |
 | M2 | tracks survive 10s with few enough id switches to count | **partly**; stitching ships, purity 57-86% and stuck (D61) |
 | M3 | teams cluster cleanly | **done** (D63); 85% of fielded players on the right side |
-| M4 | **the top-down dot video looks like football** | `ft render` exists; never judged by eye |
+| M4 | **the top-down dot video looks like football** | **done**, judged by a coach on two clips once the positions were settled (D103) |
 | M5 | numbers resolve for ~40% of tracks, matching the label ceiling | **abandoned** (D32) |
 | M6 | Pitchboard's `src/import/` turns `tracks.json` into a `BoardDoc` | **done**; all eleven clips make a board |
 
