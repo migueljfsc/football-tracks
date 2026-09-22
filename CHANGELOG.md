@@ -1,3 +1,9 @@
+## v0.38.1 (2026-09-22)
+
+### Refactor
+
+- remove the registration modes and tools the match camera made obsolete
+
 ## v0.38.0 (2026-09-22)
 
 ### Feat
