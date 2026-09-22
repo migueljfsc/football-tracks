@@ -57,6 +57,12 @@ time; with the candidate nearest the real ball chosen every frame, 72.6%. The ca
 confidence ranks them badly. A verifier trained on three SoccerNet matches does not rank them
 better on a fourth. Drawing the ball straight across gaps of up to 2 s ships, and is +4.5.
 
+**A coach read every scene of two clips against the video, and two importer rules were wrong**
+(Pitchboard's D86): a dribbler could not take the ball off whoever was nearest when he started,
+and a shot off the post was credited to the goalkeeper standing 2.99 m from where it bent. His
+other note was the dot video -- *"very twitchy"* -- which is two wobbles per position and is
+now averaged out (D103): reversals 23% -> 4%, possession right 64.4% -> 67.2%.
+
 **Done since:** a match remembers its kits (D99), so `home` is one team in every clip of it and
 half time no longer swaps the names -- 2-11% agreement across half time before, 89-98% after.
 

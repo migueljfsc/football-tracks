@@ -6,6 +6,7 @@ import json
 from pathlib import Path
 from typing import Any
 
+from football_tracks import auto
 from football_tracks.tracks import Sample
 
 
@@ -86,3 +87,32 @@ def test_a_clip_named_for_a_match_stays_named_for_it(tmp_path: Path, monkeypatch
     # A clip with no clip.json at all -- a SoccerNet one -- is left alone.
     cli._name_game("nowhere", "milan-benfica")
     assert not (tmp_path / "nowhere").exists()
+
+
+def test_a_still_player_stops_twitching() -> None:
+    """Two wobbles land on every position -- the camera's aim and the detector's box -- and
+    a coach reads them off the dot video as *"the player dots are very twitchy"*."""
+    jitter = [0.3, -0.3, 0.3, -0.3, 0.3, -0.3, 0.3]
+    samples = [Sample(f=f, x=50.0 + j, y=34.0) for f, j in enumerate(jitter, start=1)]
+    out = auto.settle(samples, window=2)
+    assert [s.f for s in out] == [s.f for s in samples]
+    assert max(abs(s.x - 50.0) for s in out[2:-2]) < 0.15
+
+
+def test_a_run_arrives_where_it_was_going() -> None:
+    """The window is centred, so a constant speed is not delayed and not shortened."""
+    samples = [Sample(f=f, x=float(f), y=34.0) for f in range(1, 12)]
+    out = auto.settle(samples, window=2)
+    assert [round(s.x, 6) for s in out[2:-2]] == [float(f) for f in range(3, 10)]
+
+
+def test_a_sample_with_no_neighbours_is_left_alone() -> None:
+    """A gap is not filled and its edges are not dragged across it (D8)."""
+    samples = [
+        Sample(f=1, x=10.0, y=34.0),
+        Sample(f=2, x=10.0, y=34.0),
+        Sample(f=99, x=60.0, y=34.0),
+    ]
+    out = auto.settle(samples, window=2)
+    assert out[-1].x == 60.0
+    assert [s.f for s in out] == [1, 2, 99]

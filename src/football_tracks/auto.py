@@ -28,6 +28,7 @@ from __future__ import annotations
 
 import json
 import math
+from bisect import bisect_left, bisect_right
 from collections.abc import Callable
 from dataclasses import dataclass
 from itertools import pairwise
@@ -1120,6 +1121,41 @@ def ball_path(
 BALL_BRIDGE_S = 2.0
 
 
+# How far either side of a sample a player's position is averaged over, in seconds.
+#
+# Two independent wobbles land on every position: the camera's aim is fitted per frame, and the
+# detector's box moves a few pixels on a player who is standing still. Neither is motion, and
+# together they are what a coach sees as *"the player dots are very twitchy"* on the dot video.
+#
+# In SECONDS because clips arrive at 25 to 49 fps and the noise is per frame. Short enough that
+# it cannot invent or delay a run: the window is CENTRED, so a player moving at any constant
+# speed comes out where he was, and only his acceleration is softened. Nothing is filled in --
+# a sample with no neighbour inside the window is left exactly where it was, which is what keeps
+# the gaps D8 insists on (a player nobody saw for twenty frames still has no position for them).
+SETTLE_S = 0.12
+
+
+def settle(samples: list[Sample], window: int) -> list[Sample]:
+    """Each position averaged with the samples within `window` frames of it, and nothing else."""
+    if window <= 0 or len(samples) < 3:
+        return samples
+    frames = [s.f for s in samples]
+    out: list[Sample] = []
+    for s in samples:
+        lo = bisect_left(frames, s.f - window)
+        hi = bisect_right(frames, s.f + window)
+        near = samples[lo:hi]
+        out.append(
+            Sample(
+                f=s.f,
+                x=float(np.mean([n.x for n in near])),
+                y=float(np.mean([n.y for n in near])),
+                conf=s.conf,
+            )
+        )
+    return out
+
+
 def bridge(ball: list[Sample], max_gap: int) -> list[Sample]:
     """Each frame between two samples at most `max_gap` apart, on the line joining them.
 
@@ -1258,6 +1294,8 @@ def build(
     positions, teams = _split_two_shirts(kept, positions, teams)
     # After the sides are named, because only `assign` knows which tracks hold a keeper.
     positions = stage2_stitch.merge(positions, stage2_stitch.keepers(positions, teams, fps, pitch))
+    # Last, so every judgement above is made on what was measured and only the FILE is settled.
+    positions = {tid: settle(ss, round(SETTLE_S * fps)) for tid, ss in positions.items()}
 
     return Result(
         ball=ball,

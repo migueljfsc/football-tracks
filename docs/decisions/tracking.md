@@ -735,3 +735,32 @@ against 81% for the five others -- which is most of what D98 read as the network
 **Not built.** Identity from a coach's tags would need the look to survive a change of shirt,
 which is exactly what a network trained on team-mates in one kit does not learn, or a signal
 that is not the look at all -- the number itself, read (D32).
+
+**D103 -- a position is measured twice over and wobbles both times, and averaging the samples
+that exist settles it without moving anybody.** A coach watching the dot video: *"it does look
+like football, although the player dots are very twitchy"*. Two independent wobbles reach every
+position -- the camera's aim is fitted per frame, and the detector's box breathes a few pixels on
+a player standing still -- and neither is motion. It shows up as REVERSALS: consecutive steps
+that turn by more than a right angle, which no running player does. 23% of all steps on the
+benchmark.
+
+`settle` averages each sample with those within `SETTLE_S` (0.12 s) either side of it, in seconds
+because clips arrive between 25 and 49 fps. The window is centred, so a constant speed comes out
+unchanged -- only acceleration is softened -- and nothing is interpolated: a sample with no
+neighbour inside the window is left exactly where it was, so the gaps D8 insists on stay gaps. It
+runs last, after the sides are named and the keepers joined, so every judgement upstream is still
+made on what was measured and only the FILE is settled.
+
+    on the eleven benchmark clips      before   after
+    reversals between samples           23.3%    4.4%
+    median step                        0.194 m  0.170 m
+    recall at 2 m                       67.3%   67.5%
+    median position error               0.46 m   0.45 m
+    board, possession right             64.4%   67.2%
+    board, invented carriers            15.2%   12.7%
+    board, travel                       65.5 m   65.8 m
+
+Accuracy improves rather than paying for it: the noise it removes was error. The board gains 2.8
+points of possession because a steadier position flips the carrier rules less often, which is
+more than the 0.8 D86 spent. On the coach's own clips reversals go 30.8% to 22.0%, and on the
+clip he was watching, 20.1% to 2.7%.
