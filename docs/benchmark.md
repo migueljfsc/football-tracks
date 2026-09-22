@@ -4,10 +4,45 @@ What this is measured on, how, and what the numbers mean. Nothing in this repo i
 without a measurement, and several things that measured well are recorded as failures because
 they did not survive the board.
 
-### The three clips this is scored on
+## The eleven clips
 
-`SNGS-147`, `SNGS-116`, `SNGS-121` — held out by match, never by clip (116 and 121 are both
-game 7, so a clip-level split would leak). `--holdout-games "7,8"` is what keeps them out.
+Eleven SoccerNet GSR clips from five matches, each with every player, the ball and the pitch
+lines annotated on every frame:
+
+| match | clips |
+|---|---|
+| game 4 | SNGS-060, 066, 067, 069, 075 |
+| game 6 | SNGS-100, 110 |
+| game 7 | SNGS-116, 121 |
+| game 8 | SNGS-147 |
+| game 9 | SNGS-151 |
+
+**Held out by match, never by clip.** Anything trained -- the segmenter, the re-id, the camera
+of a match -- is fitted without the clip it is scored on, and the segmenter without the MATCH
+(`--holdout-games`), because two clips of one match share a stadium, a camera and two kits. A
+match's camera is fitted from its OTHER clips (`ft camera <others> --game sngs-4 --truth`), so a
+benchmark clip is never registered by a camera that saw it. Game 8 has one clip and no camera;
+it runs on a simulated seed.
+
+## The numbers today, and which to believe
+
+    players within 2 m of the truth            97.7%     ft reg-eval --mode camera   (D96)
+    recall / precision                    82.9% / 95.9%  ft bench --mode camera      (D96)
+    a player's best single track holds           59%     ft score, best-track coverage (D97)
+    board shows the right side on the ball      67.2%    pnpm board --truth          (D103)
+
+**The board decides** (D36). Seven per-frame wins failed to reach it, so a change is judged by
+`pnpm board` in the sibling repo, and the ball by `--truth`, which scores possession frame by
+frame against the truth board: scene by scene judges event TIMING, and once got a result exactly
+backwards (D101).
+
+**Registration is scored over ALL frames** (`ft reg-eval`, D67), a frame with no camera counted
+as a miss -- scoring only the frames a model solved rewards refusing the hard ones -- and judged
+WHERE THE PLAYERS ARE rather than at probe points (D70).
+
+**Two files at different `--interval-s` cannot be compared.** `ft score` counts samples, so a
+file on a 0.1 s grid scores a fraction of the recall of the same pipeline at 0; `ft bench` holds
+it at 0.
 
 ## What SoccerNet turned out to be
 
@@ -58,7 +93,7 @@ and that is *human annotators with the whole clip in front of them*. Stage 5's O
 beat it and should not be measured as if it could. It also confirms the estimate this plan
 started with: expect roughly half the squad, and generic tokens for the rest.
 
-### The ground-truth path is complete
+## The ground-truth path
 
 Three commands, and between them they close invariant 3 and D12 for this stage:
 
@@ -74,7 +109,7 @@ the harness measures what it claims. Scoring a deliberately degraded copy (12% o
 dropped, 0.6 m of gaussian noise) returns 87.2% recall, 0.70 m median error and 110
 switches — the numbers the noise implies.
 
-### What fragmentation turned out to be
+## What fragmentation turned out to be
 
 A raw track count overstates it. On the Rio Ave clip, 50 tracks sounds like a dozen players
 shattered — but 13 of them cover more than half the clip, which is about how many players are
@@ -83,6 +118,12 @@ bad (2 tracks over half the clip, 69 under a tenth); over 7 seconds it is not.
 
 The stage is worth measuring by how much of a player's life its best track covers, not by how
 many tracks exist.
+
+## Before the match camera
+
+Measured while registration was the binding constraint, and kept because the findings still
+hold even where the numbers do not. The segmenter-only and hybrid modes in these tables were
+removed once one camera per match beat both (D96).
 
 ### Do the constants hold on clips they were not tuned on?
 
@@ -126,9 +167,8 @@ is simply absent and no colour could have helped.
 
 ### How much of a clip is registered, and how well
 
-`ft calib-eval` scores the frames a model solved. `ft reg-eval` scores the CLIP: every frame the
-ground truth can judge, with an unsolved one counted as a miss. The two answer different
-questions and the second is the one a board asks (D67). Share of judged frames whose camera
+`ft reg-eval` scores the CLIP: every frame the ground truth can judge, with an unsolved one
+counted as a miss -- the question a board asks (D67). Share of judged frames whose camera
 model lands within one, two and five metres of the annotated one:
 
 | clip | judged | seed | segmenter | hybrid |
@@ -193,7 +233,7 @@ What that does not yet mean: 52 tracks for about a dozen people is heavy fragmen
 team split is unproven here, and there are no shirt numbers. The camera is solved; the rest
 of the pipeline is where the remaining error is.
 
-### Getting the training data back
+## Getting the training data back
 
 GSR-2025 comes down with `ft fetch`. SN-Calibration-2023 has no command yet — it was fetched
 with this, which is worth turning into one if it is ever needed twice:

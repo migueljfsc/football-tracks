@@ -896,6 +896,7 @@ BALL_BRIDGE_S = 2.0
 # speed comes out where he was, and only his acceleration is softened. Nothing is filled in --
 # a sample with no neighbour inside the window is left exactly where it was, which is what keeps
 # the gaps D8 insists on (a player nobody saw for twenty frames still has no position for them).
+# Reversals between samples 23% -> 4% on the benchmark, and possession right 64.4% -> 67.2% (D103).
 SETTLE_S = 0.12
 
 

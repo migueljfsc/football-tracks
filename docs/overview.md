@@ -26,32 +26,37 @@ failing, and it means every stage here is scored against the same format the pro
 
 ## What works
 
-Every one of the eleven benchmark clips produces a full board — 18 to 21 players of 22, scenes
-marking possession changes and real movement, curved runs, and the ball as a carrier.
+**A coach would correct its boards rather than draw them** -- two Milan-Benfica clips, read
+scene by scene against the footage, one of them put at about 90%. The dot videos read as
+football. One of the two was never clicked: a match is registered by one camera (D96), and a
+clip after the first needs no clicks where the pitch lines can be read.
+
+On the eleven SoccerNet benchmark clips, 97.7% of players land within 2 m of the truth, recall
+is 82.9% at 95.9% precision, and the board shows the right side on the ball 67.2% of the time.
 
 ## What does not
 
 **Aerial play is invisible.** A ground homography assumes the ball is on the grass, so a ball in
-flight projects metres from where it is — 8% to 26% of SoccerNet's OWN ball annotations land
-off the pitch entirely for this reason. Lofted passes, clearances and headers cannot be drawn
-from this data, and no selector or scene rule recovers them (see `decisions/ball.md`, D66).
+flight projects metres from where it is -- 8% to 26% of SoccerNet's OWN ball annotations land
+off the pitch for this reason (D66).
 
-**Registration drifts on some clips.** Seeding propagates one human fit through every frame, so
-coverage is total and error accumulates: on the worst benchmark clip a fifth of tracked players
-end up somewhere nobody is. The learned alternative is three to four times cleaner and silent
-wherever the pitch markings are too few (D67).
+**The ball's position is often metres out**, and it is where every remaining possession error
+on the coach's boards comes from. The candidates to fix it are already found; ranking them is
+worth twelve points of possession and has not been done (D101).
 
-**Identity does not survive crowds.** Purity runs 57% to 86%, and seven attempts on it have
-failed (D61). The one thing that ever moved it was fixing stage 1, not the tracker. A person
-re-identification network now decides one narrow case -- which fragment continues a player
-lost in a tackle -- and moves purity by a point at most; association itself still has no
-appearance (D95).
+**A player is several tracks.** The best single track holds 59% of a player's time on screen
+(D97): he leaves the picture while the camera looks elsewhere and comes back as someone new, and
+no appearance model tried can say which team-mate came back (D98, D100). A shirt number could;
+the reader built so far names 8% of tracks (D102).
+
+**It has been judged on one match.** Whether the bar holds on other broadcasters and on the kit
+it is meant for is what [PLAN.md](../PLAN.md) asks first.
 
 ## How to read the docs
 
 - [`pipeline.md`](./pipeline.md) — what each stage does
 - [`benchmark.md`](./benchmark.md) — what it is measured on and how
-- [`decisions/`](./decisions) — why each choice was made, and every attempt that failed
+- [`decisions/`](./decisions/README.md) — why each choice was made, and every attempt that failed
 - [`../PLAN.md`](../PLAN.md) — where it stands today and what to do next
 
 The decisions are the most useful thing here. Most of them record something that was measured

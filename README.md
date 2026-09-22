@@ -2,109 +2,87 @@
 
 Broadcast football clip in, player tracks in pitch metres out.
 
-The output is `tracks.json` — every player's position per frame on a 105 × 68 pitch, with a
-team and, where it can be read, a shirt number. [Pitchboard](../pitchboard) imports that file
-and turns it into a board, so a coach corrects a play instead of drawing one.
+The output is `tracks.json` — every player's position per frame on the pitch, with a team and,
+where it can be read, a shirt number. [Pitchboard](../pitchboard) imports that file and turns it
+into a board, so a coach corrects a play instead of drawing one.
 
 This repo knows nothing about Pitchboard's schema, and Pitchboard knows nothing about video.
 They meet at `schema/tracks.schema.json`.
 
-**Read [PLAN.md](PLAN.md).** It has the stages, what each one has to prove before the next is
-worth starting, and the decisions behind the shape of all this. Its first section, *Where this
-stands*, is what is happening right now and what to do next — start there.
+**Where it stands, and what to do next: [PLAN.md](PLAN.md).** What each stage does:
+[`docs/pipeline.md`](docs/pipeline.md). Why -- and every attempt that failed:
+[`docs/decisions/`](docs/decisions/README.md).
 
-## Running it
+## A coach's clip
 
 ```sh
-uv sync --extra data                 # stage 0 plus the SoccerNet fetcher
+uv sync --extra vision
 
-uv run ft clips --split test         # 49 clips, downloads nothing
-uv run ft fetch SNGS-147             # one clip, ~150MB out of an 8.85GB split
-uv run ft truth SNGS-147             # ground truth -> work/SNGS-147/truth.json
-uv run ft render work/SNGS-147/truth.json          # top-down mp4 of coloured dots
-uv run ft render work/SNGS-147/truth.json --still 220
-uv run ft score work/SNGS-147/tracks.json          # diff a prediction against the truth
+# The first clip of a match: extract, set the pitch size, click landmarks on a few frames.
+# The clicks also fit where the match's camera stands.
+uv run ft run ~/Downloads/clip.mov --game milan-benfica
 
-uv run ft calibrate SNGS-147         # stage 1: fit per frame, and measure the error
-uv run ft calibrate SNGS-147 --carry 0     # solver only, no propagation across gaps
-uv run ft calibrate SNGS-147 --frame 288   # the overlay - do lines land on lines?
-uv run ft calibrate SNGS-147 --video
+# Every other clip of the same match: no clicks where the pitch lines can be read (D96).
+uv run ft run ~/Downloads/clip_2.mov --game milan-benfica
 
-uv run ft detect SNGS-147            # stage 2a: find people, cached
-uv run ft reid SNGS-147              # stage 2c: how each player looks, cached
-uv run ft auto SNGS-147 --mode seed  # the whole pipeline from ONE seeded frame
-uv run ft score work/SNGS-147/tracks.json
-
-# YOUR OWN broadcast clip, which has no annotations
-uv run ft run my_goal.mov            # every step below, in order, asking what it needs
-uv run ft run my_goal                # the same, picking a clip up where it was left
-
-# ...which is these, and they remain if a stage has to be redone on its own
-uv run ft frames my_goal.mov         # -> data/clips/my_goal/img1/, bars removed
-uv run ft pitch my_goal --length 100 --width 64   # BEFORE seeding, or landmarks lie (D89)
-uv run ft seed my_goal               # click pitch landmarks on frame 1
-uv run ft calibrate my_goal --frame 1      # check: do lines land on lines?
-uv run ft detect my_goal
-uv run ft reid my_goal
-uv run ft auto my_goal --mode seed         # -> work/my_goal/tracks.json
-uv run ft render work/my_goal/tracks.json  # the top-down proof
-
-uv run ft segment data/clips/foo.mp4 # stage 0, for arbitrary broadcast footage
+# Then, in ../pitchboard: the board a coach will see, in one line.
+pnpm board ../football-tracks/work/clip_2/tracks.json --scenes
 ```
 
-Stage 1's detector — a segmenter that names every pitch marking, so a frame is registered with
-no seed and nothing carried (D36). In training; see *Where this stands*.
+`ft run` asks for what it needs and picks a clip up where it was left. The same steps one at a
+time, for when a stage has to be redone on its own:
+
+```sh
+uv run ft frames clip.mov                       # -> data/clips/clip/img1/, bars removed
+uv run ft pitch clip --length 105 --width 68    # BEFORE seeding, or landmarks lie (D89)
+uv run ft seed clip                             # click landmarks on a frame
+uv run ft camera clip --game milan-benfica      # fit the match's camera from the seeds
+uv run ft detect clip                           # people and ball candidates, cached
+uv run ft reid clip                             # how each player looks, cached
+uv run ft auto clip --mode camera --game milan-benfica   # -> work/clip/tracks.json
+uv run ft render work/clip/tracks.json          # the top-down dot video
+```
+
+A clip is about ten minutes of compute on a laptop, most of it detection.
+
+## The benchmark
+
+Eleven SoccerNet GSR clips with ground truth for every player, the ball and the pitch lines.
+
+```sh
+uv sync --extra data --extra vision
+uv run ft fetch SNGS-147                 # one clip, ~150 MB by range request
+uv run ft truth SNGS-147                 # ground truth -> work/SNGS-147/truth.json
+uv run ft detect SNGS-147 && uv run ft reid SNGS-147
+uv run ft bench --mode camera            # every clip end to end, one table
+uv run ft reg-eval SNGS-147 --mode camera   # registration, over ALL frames (D67)
+uv run ft score work/SNGS-147/tracks.json   # a prediction against the truth
+
+# in ../pitchboard: possession frame by frame against the truth board (D101)
+pnpm board ../football-tracks/work/SNGS-*/tracks.json --truth
+```
+
+`--mode camera` needs the match's camera, fitted from its OTHER clips so a benchmark clip is
+never judged by a camera that saw it: `uv run ft camera <other clips> --game sngs-4 --truth`.
+`--mode seed` simulates one click on the best frame; `--mode truth` holds registration fixed so
+the score is tracking and teams alone.
+
+Ground truth is `truth.json` and a prediction is `tracks.json` — same format from the same
+writer, two names, so a stage cannot overwrite what it is about to be measured against (D14).
+Artefacts land in `work/<clip>/` and are all reproducible, so `make clean` is always safe.
+
+## The pitch-line segmenter
+
+The match camera reads its lines from a segmenter trained on SoccerNet (D36). The weights are
+never committed (`work/calib/segmenter.pt`); to train them again:
 
 ```sh
 uv run ft calib-train --stride 10 --epochs 6 --batch 6 --holdout-games "7,8"
-uv run ft calib-train --resume               # continue from work/calib/segmenter.pt
-uv run ft calib-eval SNGS-147 --stride 25    # median error per frame, against ground truth
 ```
 
-The held-out games are the benchmark clips' own matches, and they are held out **by match**,
-never by clip: SNGS-116 and SNGS-121 are both game 7, so a clip-level split would put the same
-stadium, camera and kit on both sides of it.
-
-`ft truth` produces a real tracks file with no CV in the loop. It is the yardstick every
-stage is scored against, and it is what Pitchboard's importer is built against today.
-Ground truth is `truth.json` and a prediction is `tracks.json` — same format, two names, so
-a stage cannot overwrite what it is about to be measured against.
-
-Artefacts land in `work/<clip>/`, one directory per clip. Everything in there is reproducible
-from the clip plus a stage, so `make clean` is always safe.
-
-Stages after 0 need heavier dependencies, installed when that stage is built:
-
-```sh
-uv sync --extra vision   # detection, tracking, pitch keypoints
-uv sync --extra ocr      # shirt numbers
-```
-
-## Status
-
-| stage | | |
-|---|---|---|
-| — | SoccerNet fetch, ground truth, render, score | **done** |
-| 0 | segment — find the tactical camera | built, unproven |
-| 1 | registration — pixels to metres | solver done; seed works. Learned detector at 0.67 m vs a 0.5 m bar (D36) |
-| 2 | detect and track | RT-DETR; purity 86% at 7s, but 60% in a crowded box |
-| 2c | appearance — two men in one tackle | OSNet-AIN; a join across a contact only where both ends look alike (D95) |
-| 3 | teams | 87% of samples on the right side; keepers found |
-| 4 | project — **the proof** | working |
-| 5 | shirt numbers | **tried; does not work** — 1 right, 4 wrong of 9 (D32) |
-| — | the ball's holder | 99% right within 4m; declines when it is in flight |
-
-From one seeded frame, a 7-second clip comes out at 97% recall, 0.80 m median error and
-86% identity purity. Past ~7s the carried homography drifts and recall halves.
-
-SoccerNet clips are single-camera and already trimmed, so they enter at stage 1 — stage 0
-is for arbitrary broadcast footage (D10).
-
-**It runs end to end on real broadcast TV.** On a sport.tv recording of a Rio Ave goal —
-screen-captured, pillarboxed, night match, faint markings, no annotations of any kind —
-one seeded frame produces a top-down reconstruction of the play. Objectively: every
-detected pitch marking projects onto the pitch, with a median of **0.11 m** from the real
-line it belongs to, and 78% inside half a metre.
+Held out by MATCH, never by clip: SNGS-116 and SNGS-121 are both game 7, so a clip-level split
+puts the same stadium, camera and kit on both sides of it. SN-Calibration-2023 is added if it
+has been fetched into `data/calib2023`; D36 found it did not help.
 
 ## Requirements
 

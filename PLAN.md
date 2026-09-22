@@ -6,370 +6,131 @@ play instead of the coach drawing it by hand.
 **Target for v0 is 70%** — good enough that a coach corrects the board instead of drawing it
 from nothing. A comparison, not an absolute. This is a proof, not a product.
 
-This file is the current state and the next move. Everything durable lives in [`docs/`](docs):
-[what and why](docs/overview.md), [the pipeline](docs/pipeline.md),
-[the benchmark](docs/benchmark.md), and [the decisions](docs/decisions) — fifty of them, cited
-from source comments by number, and most recording something that was measured and abandoned.
+This file is the current state and the next move, and nothing else. What the pipeline is lives
+in [`docs/`](docs); why every piece of it is the way it is -- and every attempt that failed --
+is in [the decisions](docs/decisions/README.md), indexed by what became of each one. The history
+this file used to carry is there and in git.
 
-## The bar, met on a coach's clip — 22 September 2026
+## Where it stands — 22 September 2026
 
-**A coach checked two boards scene by scene against the footage and would correct both rather
-than draw them.** That is the v0 bar this file opens with. On `Untitled` he put the board at
-about 90% of the way there; the dot videos, with the positions settled (D103), *"read as
-football"*. Two Milan-Benfica clips, one of them never clicked -- the match camera (D96)
-registered it -- with the kit registry keeping the teams straight across them (D99).
+**The bar is met on a coach's own clips.** He read two Milan-Benfica boards scene by scene
+against the footage and would correct both rather than draw them; he put one at about 90% of
+the way there, and the dot videos *"read as football"*. One of the two was never clicked: the
+match camera registered it from the other's seeds.
 
-**What is left on those two boards is the ball's position.** Four scenes of his were still wrong
-after D86: a carrier at the start of `Untitled` and one a pass early, and on `Untitled_1` a heavy
-pass and the flight of a shot credited to players. Every one traces to the ball being two to four
-metres from where it was. That is D101's ranking problem, with a measured ceiling of twelve
-points of possession and no model yet that reaches it -- and the next thing worth building, if
-anything is.
+**What ships**, end to end on one command (`ft run <clip> --game <match>`):
 
-**Two clips of one match is not a benchmark.** The claim is that the bar is reachable, not that
-it is reached everywhere: nottingham, a seeded clip from another match, is unreviewed.
+- **Registration: one camera per match** (D96). The first clip of a match is seeded by clicking
+  landmarks; that fits where the broadcast camera stands, and every later clip is read as three
+  numbers a frame -- pan, tilt, zoom -- from the learned pitch lines, with no clicks at all.
+- **Detection and tracking**: RT-DETR (D28), association in stabilised pixels (D22), a stitcher
+  that joins fragments where appearance agrees (D94, D95), positions averaged over the samples
+  around them (D103).
+- **Teams**: the kit's axis of greatest variance (D31), declining a side it cannot settle (D72),
+  and a match that remembers its kits so `home` is one team in every clip (D99).
+- **The ball**: the most confident of the tiled detector's candidates (D57, D73), bridged across
+  gaps of up to two seconds (D101) -- used for one question, who has it (D29).
 
-## One camera for a match — 18 September 2026
+On the eleven SoccerNet benchmark clips, each registered by a camera that never saw it:
 
-**A clip of a match already seeded needs no clicks.** A broadcast camera stays on its gantry,
-so a position fitted from one clip's seeds registers every other clip of that match: `ft camera
-<clip> --game <name>` writes it once, and `ft auto <other clip> --mode camera` aims it at each
-frame from the segmenter's lines (D96).
+    players within 2 m of the truth            97.7%     (D96)
+    recall / precision                    82.9% / 95.9%  (D96)
+    a player's best single track holds           59%     of his time on screen (D97)
+    board shows the right side on the ball      67.2%    frame by frame (D103)
 
-Measured on two Milan-Benfica clips. Five seeds agree on (52.5, 103.6), 14.8 m up, and leaving
-any one of them out moves it by 0.3 m. On the second clip, never clicked, three numbers a frame
-beat a free homography on the segmenter's own pixels -- 0.55 m median against 0.90, and p90
-3.45 m against 9.74 -- while solving 653 of 793 frames, the whole tactical-camera stretch
-unbroken. A free fit cannot be stopped from answering 18 m wrong on a frame it likes; a
-rotation of a camera above the ground cannot fold a pitch or drift out of shape.
+A clip takes about ten minutes on this laptop, most of it the tiled ball pass in detection.
 
-`ft run <clip> --game <name>` does the whole of it: the camera registers what it can, the blind
-stretches are offered one at a time, and a first clip's clicks fit the camera for the next.
+## What limits it now
 
-**Measured on the benchmark, it is the biggest registration win this repo has had.** Each
-SoccerNet match's camera fitted from its other clips, every benchmark clip scored with a camera
-that never saw it: players within 2 m 72.7% -> 97.7%, none of 2,040 thrown off the pitch, and
-through the pipeline recall 61.7% -> 82.9% and precision 76.1% -> 95.9% (D96). The board gains
-less -- 2% more watched player-seconds, 50 -> 60 passes, no scene empty -- because registration
-is no longer what limits it.
+Two ceilings are measured, and both are identity rather than geometry.
 
-**A seed still costs four landmarks, not two.** Three numbers need two, but two cannot tell the
-right goal from the wrong one -- a mirrored seed fits to 0.02 m at two landmarks and misses by
-1.63 m at four (D88, D96). So the saving is a clip that needs no seeds, not a cheaper seed.
+**The ball's position is worth twelve points of possession** (D101). With the candidate nearest
+the real ball chosen every frame, possession-right goes from 60.7% to 72.6%; the candidates
+exist in 71-96% of frames and COCO's confidence ranks them badly. It is also every remaining
+error on the coach's two boards: a carrier named a pass early, a heavy pass credited to a man
+who never received it, the flight of a shot handed to players. A verifier trained on three
+SoccerNet matches did not rank them better on a fourth.
 
-**Fragmentation is now the loss, and it is 26 points** (D97): a player's tracks together hold
-85% of his life on the camera runs and the best one 59%. Appearance cannot tell his pieces from a
-team-mate's, and an appearance veto that won on the benchmark broke a coach clip's tackles. The
-biggest single share is a player out of shot while the camera looks elsewhere (~28%): the camera
-model sees him leave and come back, and position cannot say which team-mate came back (~70% right
-with the true teams). Every remaining join needs an identity signal, and the two looks tried fall
-short: a re-id network trained on football separates team-mates at 0.82 where the stitcher asks
-(D98), and one fine-tuned on a coach's own tags names his players about as often as the stitcher
-joins them right, in one match, and not at all across a change of shirt (D100). What is left is a
-readable number (D32), so this front is parked.
+**Fragmentation costs 26 points** (D97): a player's tracks together hold 85% of his time on
+screen and the best one 59%. The biggest share is a player leaving the picture while the camera
+looks elsewhere and coming back as a new track. Position cannot say which team-mate came back,
+and no appearance model tried can either (D97, D98, D100). A readable shirt number can: a
+reader pretrained on drawn numbers names 8% of tracks with none wrong (D102) -- right, and far
+too few to join anything.
 
-**The ball is worth twelve points of possession, and they are a ranking problem** (D101).
-Frame by frame against the truth board, a board shows the right side on the ball 60.7% of the
-time; with the candidate nearest the real ball chosen every frame, 72.6%. The candidates exist
--- the tiled detector finds one within 20 px of the ball in 71-96% of frames -- and COCO's
-confidence ranks them badly. A verifier trained on three SoccerNet matches does not rank them
-better on a fourth. Drawing the ball straight across gaps of up to 2 s ships, and is +4.5.
+**What is not known**: whether the bar holds outside one match. Nottingham, from another match
+and another broadcaster, is unreviewed, and no Sporting clip -- the team this is for -- has been
+run. Sporting's green-and-white hoops on green grass are the kit the pipeline already refuses to
+paint (D92).
 
-**A coach read every scene of two clips against the video, and two importer rules were wrong**
-(Pitchboard's D86): a dribbler could not take the ball off whoever was nearest when he started,
-and a shot off the post was credited to the goalkeeper standing 2.99 m from where it bent. His
-other note was the dot video -- *"very twitchy"* -- which is two wobbles per position and is
-now averaged out (D103): reversals 23% -> 4%, possession right 64.4% -> 67.2%.
+## Paths forward
 
-**Done since:** a match remembers its kits (D99), so `home` is one team in every clip of it and
-half time no longer swaps the names -- 2-11% agreement across half time before, 89-98% after.
+Ordered by what each would tell or buy against what it costs. None is started.
 
-## Where this stands — 6 September 2026
+1. **Run it where it will be used.** Two or three Sporting clips, and the nottingham review
+   sheet. An hour of the coach's time and some compute, and it is the only way to know whether
+   90% is a property of the pipeline or of one match. Everything below is worth more or less
+   depending on what it finds.
 
-**Every one of the eleven benchmark clips produces a full board.** `ft auto --mode seed` is
-what ships, and through Pitchboard's importer it gives 18-21 players of 22, a handful of
-scenes marking possession changes and real movement, and windows of 3 to 29 seconds. 225
-fielded players across the eleven, 190 of them on the right side.
+2. **Draw an unseen player as unseen** (Pitchboard). The coach's other note was two players
+   *"static, but always visible to the camera"* -- fragments of players the tracker lost, drawn
+   standing where they were last seen. The importer already knows which positions a sighting
+   stands behind; showing the rest faded rather than solid makes the board honest about it at no
+   cost to anything measured. Small, and it answers a complaint directly.
 
-**A coach has now looked at the boards, and the verdict is the useful thing here.** They read
-as football; the curved runs are right; wrong teams are annoying rather than fatal. What is
-wrong is that passes and players go MISSING -- a centre back and the pass to him absent from
-SNGS-151, a clearance drawn as a player carrying the ball. Everything shipped on 5-6 September
-came out of watching a board beside its clip: the officials, the keeper, the taker of a
-restart, a ball handed to a player who was not on the pitch. Two of those were invisible to
-every metric in this repo.
+3. **Shirt numbers from real data** (D102). Drawn numbers got a small reader from 9% to useful at
+   the confident end; what it lacks is real legible crops at scale and a bigger input than 64 px.
+   SoccerNet publishes a jersey-number set of labelled tracklets -- its access terms need
+   checking first. A reader that names a third of tracks at D5's standard would join fragments
+   with certainty where it names both, and give the board real names. The largest lever on
+   fragmentation this repo has found.
 
-### The constraint is registration coverage, and it is not what five training runs measured
+4. **Keep the coach's corrections.** Every carrier he fixes and every two tokens he merges into
+   one player is a label nobody else has: on his club, his broadcaster, his camera. D98 and D100
+   both found that a model which has SEEN a side's players identifies them far better, and D101
+   that three matches are too few for the ball. Pitchboard exporting the corrections it already
+   holds is the way either gets more than three matches of data. Medium: a format, an export, and
+   a training step that reads it.
 
-Traced through the whole funnel on the clip a coach called bad:
+5. **The ball with more matches, or over time** (D101). The ranking a verifier learned on three
+   SoccerNet matches did not transfer; a verifier trained across many, or scoring candidate
+   TRACKLETS rather than single frames, is the untested half. Large and uncertain -- only after 4
+   has produced data, or if SoccerNet's own larger sets turn out to be usable.
 
-    stage                                   SNGS-151   SNGS-060
-    detector finds a visible player           96.7%      97.3%
-    survives tracking                         90%        100%
-    lands within 5 m of a real player         77.4%       95.9%
-    dropped off the pitch                      997          25
+6. **A match at a time.** Several clips of one match through `ft run` in one command, and a way
+   in Pitchboard to keep a match's boards together. Workflow, not accuracy; worth it once the
+   coach is importing weekly.
 
-**The detector is finished.** It finds 94-98% of visible players on every clip, measured in
-image space where no camera model is involved. Training a bigger one buys two to four points.
-
-**The loss is the camera model, and the two registrations fail in opposite directions.**
-
-    SNGS-151   seed        750 frames solved   p50 1.24 m   p90 8.08 m   >5 m 22.6%
-               segmenter   227 frames solved   p50 1.21 m   p90 4.06 m   >5 m  6.2%
-    SNGS-116   seed        750 frames solved   p50 0.74 m   p90 7.86 m   >5 m 12.7%
-               segmenter   594 frames solved   p50 0.56 m   p90 2.03 m   >5 m  3.1%
-
-Seeding propagates a single human fit through every frame, so its coverage is total and it
-drifts. The segmenter fits each frame on its own, so it is three to four times cleaner and
-silent wherever the markings are too few. Neither has both, and a board needs both: the
-segmenter's SNGS-151 board is 18 correct players over a six-second window against seed mode's
-20 over eighteen seconds (D67).
-
-**That is why the five runs "failed".** They were scored on `observed_error` -- accuracy on the
-frames the model could already solve -- while the binding constraint is how many frames it
-solves at all. The 0.5 m bar measured the wrong axis, and D62 already established that the
-frames the segmenter refuses are ones where ground-truth LINES cannot fit either, so no amount
-of training recovers them by fitting alone.
-
-### The four runs
-
-| run | resolution | trained on | SNGS-147 | SNGS-116 | SNGS-121 |
-|---|---|---|---|---|---|
-| 1 | 640×360 | 5 matches | 0.84 m | 3.76 m | 1.54 m |
-| 2 | 960×540 | 5 matches | 1.13 m | 3.20 m | 0.69 m |
-| 3 | 960×540 | 350 matches | 0.90 m | 5.19 m | 1.13 m |
-| 4 | 1280×720 | 5 matches | 0.67 m | 2.87 m | 0.67 m |
-| **5** | **1920×1080** | **5 matches** | **0.71 m** | **0.70 m** | **0.70 m** |
-| | | *bar* | *0.5 m* | *0.5 m* | *0.5 m* |
-
-Medians of `observed_error`. No run has yet cleared the bar.
-
-**The "100% solved" in that column means something narrower than it reads.** `calib-eval`
-scores only frames that carry ground-truth line annotations, sampled at `--stride 25`. Put
-every frame of a clip through the same fitter and run 4 solves 83% of SNGS-147, 81% of
-SNGS-116 and **51% of SNGS-121** — it refuses the rest rather than guessing, which is correct
-behaviour and a very different number. Any claim about the solve rate has to say which
-population it counted.
-
-Medians of `observed_error` against a bar set before any of them were trained. **No run cleared
-it, and D67 explains why that was the wrong question**: `observed_error` is conditioned on the
-frames a model already solves, so it rewards refusing the hard ones. The full account of the
-five runs is in [`docs/decisions/registration.md`](docs/decisions/registration.md) under D36 and
-D67; what they established is in [`docs/benchmark.md`](docs/benchmark.md).
-
-### Anchoring was built and measured, and it does not reach the board (D68)
-
-The move this section asked for — propagate, and re-anchor on segmenter fits — is
-`ft auto --mode hybrid`. Fits are winnowed (D62), refused if they contradict the seed's own
-chain, and then bled into it at a twentieth per frame rather than replacing it, because
-replacing moves every player at once: hard anchors put a 0.27-0.85 m step between adjacent
-frames and took SNGS-147 from 74.2% precision to 58.9%.
-
-**It registers what it promised and delivers no board.** On the two clips whose seed chain
-drifts it is a real gain — SNGS-147 goes from 62% to 86% of frames inside two metres, SNGS-116
-from 51% to 59% — and on the three where the seed is already better than the segmenter it can
-only lose. Through `pnpm board`, in observed player-seconds: 060 347 -> 348, 116 212 -> 212,
-147 38 -> 35, 151 179 -> 159, 121 303 -> 117. `--mode seed` still ships.
-
-**The constraint is therefore the segmenter itself**, not the plumbing around it. Its per-clip
-accuracy runs 0.35-1.3 m and nothing available at inference says which clip you are on — the
-near-seed disagreement between the two sources, the obvious candidate, does not separate them.
-
-**Two instruments came out of this and both are new.** `ft reg-eval` reports *registered within
-N metres as a share of ALL frames*, counting an unsolved frame as a miss — the number D67 said
-nobody had ever produced. `pnpm board` in the sibling repo runs a tracks file through the real
-importer and prints the roster, window, observed player-seconds, travel and curves; the table
-that decided six earlier changes was written by hand each time and thrown away.
-
-### What limits a board now is fragmentation, and it has a number
-
-How much of a real player's life the best SINGLE predicted track covers, on the shipping path,
-beside what the board makes of it:
-
-    clip       best-track coverage p50   real players on the board   window
-    SNGS-060            74%                       21                 29.2 s
-    SNGS-147            54%                       11                 11.6 s
-    SNGS-151            48%                       17                 17.8 s
-    SNGS-121            47%                       14                 20.2 s
-    SNGS-116            44%                       18                 21.6 s
-
-**The clip that makes the good board is the one whose tracks hold three quarters of a player;
-everywhere else half of each player's life is in some other fragment.** That is stage 2, and it
-caps what any window can field: the importer drops a track covering too little of the passage,
-so a player split in three arrives as nobody. Counting *real* players rather than shirts is what
-makes this visible -- a board fielding 21 shirts on SNGS-151 is 17 people.
-
-**SNGS-147's board was the importer, and that one is fixed.** Its 3.2-second board of nineteen
-shirts was eight real players seen for a second each: `MIN_COVERAGE` is a share of the window,
-so a shorter window inflates the roster and the chooser walked into it. Pitchboard now requires
-a player to be WATCHED for a second and a half, whatever share that is, and 147 comes out at
-11.6 seconds and eleven real players with ten of the eleven other boards unchanged to the byte.
-That was the last cheap board win; the rest is fragmentation.
-
-**Training for coverage was the plan, and the refusals killed it before a run started (D71).**
-Every frame the segmenter refuses shows one direction of paint and two or three markings -- and
-the ANNOTATION carries two or three as well. Those frames are underdetermined however well they
-are read, so no run on this data registers them. Coverage is available anyway by carrying, and
-it moves players-within-two-metres from 51% to 51% on SNGS-147: the model is not short of
-answers, the answers it has are not good enough. With full coverage a third of all boxes still
-land more than five metres out.
-
-**The segmenter is therefore finished as a line of work**, six runs in, and the ceiling on the
-whole idea was +17 points on one benchmark clip. What would register a two-marking frame is a
-model that needs no paint -- a camera regressed from the picture itself. Different architecture,
-real project, and not the next thing to do.
-
-**The evidence the runs did establish**, if it is ever picked up again:
-
-- **Resolution works.** Run 5 at native 1080p took SNGS-116 from 2.87 m to 0.70 m, and it was
-  the one clip four earlier configurations could not move.
-- **More matches do not.** Run 3 multiplied them by seventy and made two clips of three worse.
-- **A bigger backbone is untried.** DeepLabv3 on MobileNetV3 was chosen to train on a laptop.
-
-**Stage 2's continuation was the next lever and it has been pulled (D69).** The stitcher was
-refusing 55-64% of a player's own breaks on a half-second gap limit set against the wrong
-population, and reaching further on a speed limit admits 38 metres. A prediction gate -- where
-one fragment was going against where the next came from -- makes more joins and gets fewer of
-them wrong, and the eleven boards go from 1934 observed player-seconds to 2531, at a cost of
-two real players in seventy-seven.
-
-**What is left in this stage is small and now measured.** Join every fragment of a player
-perfectly and the median player's best track still holds only 47-67% of their life on four of
-five clips. The other half was never tracked, or landed more than two metres from where the
-player was -- and by match radius that second term dominates: SNGS-121 recalls 71.7% of samples
-at two metres and 92.3% at five, SNGS-147 70.1% and 82.1%.
-
-### The camera model is worth 17 points on one clip, 5 on two, and nothing measurable on two
-
-Measured where the players are rather than at probe points, which is the distinction D70 exists
-for -- the share of annotated boxes a camera model places within two metres of where SoccerNet
-says that player was:
-
-    clip       seed (ships)   a perfect fit   headroom
-    SNGS-147       73%             90%          17 points
-    SNGS-116       78%             83%           5
-    SNGS-060       94%             99%           5
-    SNGS-121       75%             48%          none: the annotation disagrees with itself
-    SNGS-151       57%             50%          none
-
-**A camera fitted from the ground-truth LINES puts the players further from the ground-truth
-POSITIONS than the shipping seed does on two clips of five.** Those clips cannot rank two
-fitters at all, and a recall difference measured on them may be the yardstick rather than the
-pipeline. It is also why every judgement made on `observed_error` was made on the wrong
-quantity: SNGS-147's hybrid gains 24 points at the probes and loses four at the players.
-
-So the camera lever is real, smaller than the recall table suggested, and concentrated where
-it can still be measured.
-
-**Not this:** another detector. Another segmenter run at all (D71) -- and certainly not one
-scored on `observed_error`. Another
-attempt on the tracker's colour -- identity purity has resisted seven (D61). Another pass at
-the ball -- its three faults are diagnosed and two are closed (D66). Another way of joining the
-seed to the segmenter -- that is D68, and the join is not what was missing.
-
-**Before any of it, one evening.** The stated bar for v0 is 70%: good enough that a coach
-corrects the board instead of drawing it. A coach has now seen four boards and the answer is
-"better, still not useful". Getting that judgement on a clip where registration is GOOD --
-SNGS-060 scores 95.9% of players within 5 m against SNGS-151's 77.4% -- would say whether this
-project is one fix away or several, and it costs nothing.
-
-### A coach watched the boards, and both complaints were true
-
-*"I don't want to invent plays"* and *"you mixed up who's team makes the pass"*. Both were
-measurable and neither had ever been measured.
-
-**Half of every board was a player standing where he was last seen** -- 43-63% of the drawn
-positions had a sighting behind them, and one scene of SNGS-067 was 18%. The importer chose
-passages by how long a track's SPAN reached across them, which a track with a two-second hole
-does completely. It now measures the samples, refuses a passage under 70% witnessed, refuses a
-scene under 65%, and trims the ends to where the players actually are. The boards are 58-82%
-real and much shorter: SNGS-067 goes from 25.2 seconds to 6.6.
-
-**One shirt in five was the wrong colour**, which is what "the wrong team made that pass" is.
-`assign` now declines a side the kit split is not sure of (D72): 30% fewer wrong-coloured
-samples across six clips, for 6% fewer correct ones and a smaller roster.
-
-**A third complaint, and it was one track holding two people.** *"It shows that the away team
-held possession but it is not true, a home player made a run on the left and passed it to the
-second post for the goal"*. The runner's track picked up an opponent after a six-frame gap, and a
-team is clustered on a whole track's kit, so the yellow runner reached the board in the other
-side's colour. A colour WEIGHT cannot prevent that — it is only consulted between candidates that
-exist — so kits that plainly disagree are now refused outright, in the tracker and in the
-stitcher (D78, D79). Team accuracy 59% -> 77% on SNGS-147 and 70% -> 78% on SNGS-116, recall,
-precision and position error unchanged, purity within a point either way.
-
-**What that clip still gets wrong is the ball, not the labels.** No sighting at all between
-frames 121 and 178 — the 1.8 s of the run — and where there is one, it lands 1.9 m from a
-defender and 3.8 m from the player who actually has it. Possession therefore reads as one team
-for the whole passage. That is D66 and D75, and the importer-side answer (a runner-up margin
-before naming a carrier) was measured and is worse.
-
-**What is left is the honest shape of the thing.** An honest board is 3 to 14 seconds because
-that is how long the tracker holds a roster, and it fields 12 to 21 fragments of a 22-player
-game. Board length is now an upstream problem: it is the fragmentation number in the table
-above, and nothing in the importer can buy it back.
-
-**A fifth complaint was fragmentation at the moment of contact (D94).** *"Players 9 and 5 are
-static in the penalty area"* and *"it shows a blue player still playing the ball while the GK
-gets it"*. Every break was a tackle or the keeper's dive. Keeper fragments are now joined as one
-role, mutual best is repeated, and the stitcher's kit veto reads the whole track: 998 fewer
-wrong-coloured samples on the eleven clips and 107 more observed player-seconds on fourteen
-boards, recall and error unchanged. The defenders are not fixed. Loosening the gate where boxes
-overlap joins somebody else 12 times in the 15 it can be judged on, and knowing which of two
-men a merged box belongs to is the open question.
-
-**Appearance answered it, and exposed an older fault on the way (D95).** `ft reid` embeds every
-detection with OSNet-AIN, and the stitcher spends its contact slack only where the clean crops
-either side of a tackle look like one man. Benched, it still cost the team split -- not through
-wrong joins, but because a joined fragment's shirt readings had always been left out of the side
-clustering, so every correct join moved the cut for everybody. Absorbing them is the bigger win:
-with appearance on top, 4,775 more correctly-sided samples and 2,379 fewer wrong ones across
-eleven clips, 65 more observed player-seconds on fourteen boards, recall and error unchanged, and
-both of the coach's defenders run with the play.
+**Not these** -- each is measured and closed: another detector (it finds 94-98% of visible
+players); another segmenter run (D71); appearance models for fragmentation (D97, D98, D100);
+the importer's carrier rules (the remaining invented carriers trace to the ball's position,
+D101); a ball verifier on three matches (D101); snapping to painted lines (D35).
 
 ## Milestones
 
-| # | done when | est. |
+| # | done when | |
 |---|---|---|
-| M0 | scaffold, stage 0, and the ground-truth path: `ft truth`, `ft render`, `ft score` | **done** |
-| M1 | reprojected pitch lines sit on the real lines | **the binding constraint** (D67); anchoring the two sources together is built, measured and does not reach the board (D68) |
-| M2 | tracks survive 10s with few enough id switches to count | **partly**; stitching ships, purity 57-86% and stuck (D61) |
-| M3 | teams cluster cleanly | **done** (D63); 85% of fielded players on the right side |
-| M4 | **the top-down dot video looks like football** | **done**, judged by a coach on two clips once the positions were settled (D103) |
-| M5 | numbers resolve for ~40% of tracks, matching the label ceiling | **abandoned** (D32) |
-| M6 | Pitchboard's `src/import/` turns `tracks.json` into a `BoardDoc` | **done**; all eleven clips make a board |
-
-**M6 no longer waits for anything.** `ft truth` emits a real, correct `tracks.json` from
-ground truth with no CV in the loop, so the TypeScript reduction is built against genuine
-30-second passages of play rather than hand-written fixtures — and its output can be looked
-at in Pitchboard while stage 1 is still failing.
-
-That also inverts how the CV is judged. Every later stage is scored against the same file
-in the same format, so "70%" becomes a diff against a known-good baseline rather than a
-feeling about a video.
+| M0 | scaffold and the ground-truth path: `ft truth`, `ft render`, `ft score` | **done** |
+| M1 | reprojected pitch lines sit on the real lines | **done** -- the match camera, 97.7% of players within 2 m (D96) |
+| M2 | tracks survive with few enough id switches to count | **partly** -- stitching ships; the best track holds 59% of a player (D97) |
+| M3 | teams cluster cleanly | **done** (D63, D99) |
+| M4 | the top-down dot video looks like football | **done** -- judged by a coach (D103) |
+| M5 | numbers resolve for a useful share of tracks | **open** -- 8% at no errors (D102) |
+| M6 | Pitchboard turns `tracks.json` into a board | **done** |
+| M7 | a coach corrects rather than draws | **done on two clips of one match** -- see *What is not known* |
 
 ## Non-goals
 
-Real-time. Multi-camera. Player identity across clips. Event detection (tackles, fouls).
-Ball height. Anything that requires a GPU bigger than the laptop. A web service — this runs
-locally, from a terminal, on files.
+Real-time. Multi-camera. Event detection (tackles, fouls). Ball height. Anything that needs a
+GPU bigger than the laptop. A web service -- this runs locally, from a terminal, on files.
+
+Player identity across clips stays a non-goal for opponents. For the coach's own side it is
+what path 4 would buy, and D100 is why it has to come from his labels rather than from a model.
 
 ## Open questions
 
-- How short is short enough for stage 2? Measure id switches against clip length rather than
-  guessing at 10s.
-- Does the segmenter cope with a half-pitch framing, or only wide shots? Every frame it has
-  been trained on is a wide tactical camera.
-- ~~Is the accuracy ceiling the *labels* rather than the model?~~ **MEASURED, and largely
-  yes.** Leave one marking out of a ground-truth frame, fit from the rest, and the held-out
-  marking's own annotated points land 0.318 m (SNGS-147), 0.348 m (SNGS-116) and 0.512 m
-  (SNGS-121) from where that fit says its line is. The annotation does not agree with ITSELF
-  to half a metre — on SNGS-121 its self-disagreement IS the bar. See D36.
-- **Why is SNGS-116 stuck?** 2.87–5.19 m across four configurations, immovable while the other
-  two clips halved. Nothing has looked at which frames fail.
-- Does 1920×1080 keep the gain going, or is 1280×720 where resolution saturates? 121 barely
-  moved between 960 and 1280 (0.69 → 0.67) while 147 and 116 did, which reads like different
-  clips hitting the ceiling at different points.
-- Is diversity worth revisiting at 1280×720 or above? Run 3 tested it only at 960×540, and
-  tested it badly — confounded with a dataset change. A diverse set captured at 1080p would
-  be a real test; SN-Calibration-2023 cannot be one, because it is 960×540.
+- Does the match camera hold on a lower broadcast camera, or on a club's own fixed wide camera?
+  The second would remove most pans, and with them most of fragmentation's largest share.
+- How does Sporting's kit split? The side question reads hue, and theirs is struck with the
+  grass (D87, D92).
+- Can SoccerNet's jersey-number and tracking sets be used under the same terms as GSR?

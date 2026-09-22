@@ -379,6 +379,8 @@ same -- so the table was produced by a bespoke sweep rather than by these two co
 it should not be read as a baseline these commands reproduce. The snap-on against snap-off
 comparison is internally consistent and is the one that decided the default.
 
+*Removed from the code on 22 September 2026 -- `refine.py` and `--snap` -- once the match camera (D96) made per-frame correction of a carried chain unnecessary. The measurement above is why it was never on.*
+
 **D36 — the camera model is learned, because the missing thing was never the paint but
 the NAME of it.** `refine.line_pixels` finds markings to a median of 0.00 m under a correct
 homography. What it cannot do is say which marking a white pixel belongs to: it infers that
@@ -911,6 +913,8 @@ finds 96.7% of visible players on SNGS-151 and 97.3% on SNGS-060 -- the clip tha
 best board and the one that produces the worst. Whatever separates those two boards, it is not
 detection.
 
+*The segmenter-only mode (`--mode segmenter`) was removed from the code on 22 September 2026: the match camera (D96) reads the same segmenter's lines as three numbers and beats a free fit on every clip it was measured on. The segmenter itself stays.*
+
 **D68 — the two registrations were joined, and the join makes no board better.** D67 asked for
 one thing: segmenter accuracy at seed coverage. `--mode hybrid` is it. The segmenter's fits are
 winnowed (D62), then refused if they sit further than five metres from where the seed's own
@@ -978,6 +982,8 @@ carried nothing whatever was asked for, and asking for a carry was impossible. A
 `schema/tracks.schema.json` never declared `source.intervalS`, which the writer has emitted and
 Pitchboard has read for eleven releases: every shipped file was invalid against its own
 contract, because `test_contract.py` checked the top level and the tracks and never `source`.
+
+*`--mode hybrid` was removed from the code on 22 September 2026, with `anchored`, `anchor_chain` and `winnow`. The match camera (D96) is what finally gave a board both coverage and accuracy.*
 
 **D70 — a camera model is judged where the PLAYERS are, and on two clips the ground truth
 cannot judge it at all.** D68 left a contradiction: the hybrid registered far more of SNGS-147

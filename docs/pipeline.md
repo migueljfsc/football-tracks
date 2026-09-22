@@ -38,62 +38,46 @@ to-frame motion. The main tactical camera is long, very green, and moves smoothl
 - *Check:* the reported segment boundaries match where the cuts are.
 - *Difficulty:* low. This will not be what fails.
 
-### Stage 1 — registration — **the solver works; the detector is being trained**
+### Stage 1 — registration — **one camera per match** (D96)
 
-Per-frame 3 × 3 matrix mapping image pixels to pitch metres. Broadcast pans and zooms, so
-this is solved per frame, not once.
+Per-frame 3 × 3 matrix mapping image pixels to pitch metres. Broadcast pans and zooms, so this
+is a matrix per frame -- but a broadcast camera does not MOVE: it stands on a gantry and turns.
+So a whole match is registered as one camera position plus three numbers a frame, pan, tilt and
+zoom, and that is what ships.
 
-The stage splits into a solver (named lines → homography) and a detector (frame → named
-lines). **The solver is built and measured.** The detector is a learned segmenter, `calib.py`,
-which solves 100% of frames from the picture alone but has not yet hit the accuracy bar — four
-training runs in, the best sits at 0.67 m against a 0.5 m bar, and D36 is the whole account of
-it. Nothing else in the module
-changes when it lands: `calibration.homography` takes named polylines and does not care who
-found them.
+- **The first clip of a match is seeded.** `ft seed` asks for landmarks clicked on a few frames
+  (four per frame at least, because two cannot tell one goal from the other, D88). Those fits
+  are carried across the frames between them by tracking the grass (D18), which covers the clip
+  and drifts, and they fit where the match's camera stands: `ft camera`.
+- **Every later clip is read, not clicked.** A learned segmenter (`calib.py`, D36) names every
+  pitch marking in the frame; `camera.aim` turns them into that frame's pan, tilt and zoom.
+  Frames with nothing readable are spanned between the aims either side, and only where a
+  stretch is blind does `ft run` ask for a click. Three numbers cannot fold a pitch or drift out
+  of shape, which is what beat every free per-frame fit (D67, D68, both removed).
 
-Until it does, a clip is registered from a human seed (`ft seed`), which works and is measured
-below. Joining the two — the segmenter's fits as anchors, the seed carried across the frames it
-refuses — is built as `ft auto --mode hybrid`, registers more of two clips of five within two
-metres, and reaches no board (D68). It is off for the same reason `--snap` is.
-
-Measured on SNGS-147, feeding it the ground-truth lines. `carry` is how many frames a
-homography may be propagated across gaps the solver cannot fill:
-
-| carry | coverage | median | p90 | p99 |
-|---|---|---|---|---|
-| off | 606/750 (80.8%) | 0.67 m | 2.65 m | 12.14 m |
-| 50 (default) | 710/750 (94.7%) | 0.83 m | 2.23 m | 10.94 m |
-| uncapped | 750/750 (**100%**) | 0.90 m | 2.27 m | 10.36 m |
-
-Carrying buys coverage for a quarter of a metre at the median, and it *improves* both
-tails — a carried homography beats the marginal five-line fit that produced them.
-
-That is the **ceiling** for the whole pipeline. It is measured by pushing ground-truth
-bounding boxes through the fitted homography and comparing with the position SoccerNet
-recorded for that same box, which holds detection and tracking fixed so the number is the
-camera model's alone. No detector gets a position closer than this.
+On the eleven benchmark clips, each aimed by a camera fitted from its match's OTHER clips,
+97.7% of players land within 2 m of where SoccerNet puts them, against 72.7% from one seed.
 
 - *Check:* **reproject the pitch model back onto the video** (`ft calibrate --frame N`, or
-  `--video`). Lines land on lines or they do not. Nothing else in this repo is as easy to
-  verify or as easy to get subtly wrong — and it is what caught D16.
-- *Difficulty:* the highest of any stage. The solver took the time; the detector is a model
-  download and an adapter.
+  `--video`). Lines land on lines or they do not. It is what caught D16, D34 and D88.
+- *Difficulty:* the highest of any stage, and now the most finished.
 
 ### Stage 2 — detect and track `detections.json`
 
 Person detector per frame, then a tracker to string detections into tracks with stable ids.
 
-The detection is solved and boring. **Identity persistence is the stage that decides whether
-this works at all.** Trackers switch ids whenever two players cross, and one switch turns two
-runs into two teleports — an error the reduction downstream cannot recover from because it
-looks exactly like a fast run.
+RT-DETR finds 94-98% of visible players (D28); the tiled pass that also finds the ball is
+most of a clip's compute. Association runs in STABILISED pixels, so a wobble in stage 1 cannot
+break a track (D22), and refuses kits that plainly disagree (D78).
 
-Mitigations, in order of cheapness: keep clips short (5–10s, fewer crossings), feed team
-colour into the association cost, feed a resolved shirt number in as a re-id feature once
-stage 5 exists.
+**Identity is where the loss is now.** A track breaks where players touch and where the camera
+looks away, and a stitcher joins the pieces afterwards: a fragment's best continuation that is
+also chosen back (D53, D69), across a contact only where both ends look like one man (D94, D95),
+and two tracks taking turns on one man are merged (D90). What is left is 26 points: a player's
+tracks together hold 85% of his time on screen and the best one 59% (D97).
 
-- *Check:* boxes and ids overlaid on the video. Count the switches over 10s by eye.
-- *Difficulty:* medium, and the risk is concentrated here.
+- *Check:* boxes and ids overlaid on the video, and `ft score`'s best-track coverage.
+- *Difficulty:* the remaining risk is concentrated here.
 
 ### Stage 2c — appearance `appearance.npz`
 
@@ -111,16 +95,21 @@ against a pinned SHA-256 before every load and loaded `weights_only`, and are ne
 
 ### Stage 3 — teams `teams.json`
 
-Cluster torso crops by colour: two outfield kits, two keepers, referees. Referees are dropped;
-keepers are kept and tagged, because Pitchboard wants eleven a side.
+Split the tracks into two kits on the axis of greatest variance, not by k-means (D31), with
+keepers and officials held out of the split (D64). A side the kit does not settle is `unknown`
+rather than a coin flip (D72), except for a track the ball went through (D91). Within a clip
+`home` is the side defending the left; across a match it is a KIT, remembered in
+`work/games/<match>/kits.json`, so half time does not swap the names (D99).
 
-- *Check:* crops grouped by assigned cluster, in a contact sheet. Obvious at a glance.
-- *Difficulty:* low.
+- *Check:* crops grouped by assigned side, in a contact sheet, and the board's colours.
+- *Difficulty:* low, except for a kit struck with the grass (D92).
 
 ### Stage 4 — project `tracks.json`
 
-Apply stage 1's per-frame homography to stage 2's tracks. Positions become metres. Clamp to
-the pitch, drop tracks that spend most of their life outside it (crowd, dugout, cameraman).
+Apply stage 1's per-frame homography to stage 2's tracks. Positions become metres. A position
+off the pitch is dropped, never clamped (D13), and anyone standing off it was dropped before
+tracking (D27). Last, each position is averaged with the samples within 0.12 s of it, which
+removes the camera's and the detector's per-frame wobble without filling any gap (D103).
 
 **This is the proof.** Render the result as a top-down video of coloured dots. If the dots
 move like a football team, the hard part is done and everything after is engineering. If they
@@ -130,20 +119,19 @@ how you find out which.
 - *Check:* the top-down dot video.
 - *Difficulty:* low in itself; it is the integration test for everything before it.
 
-### Stage 5 — numbers — **tried, and it does not work** (D32)
+### Stage 5 — numbers — **a reader exists; it is not wired in** (D32, D102)
 
-Best-effort shirt numbers. A player at broadcast 1080p is ~100 px tall and the number ~20 px,
-so per-frame OCR is close to useless.
+Best-effort shirt numbers, voted per track and never read per frame (D5): a `null` number is an
+answer, and a guessed one attaches a run to the wrong player where nothing downstream can see it.
 
-**Vote per track, never per frame.** A 6-second track yields ~150 torso crops. Upscale, OCR
-all of them, take a confidence-weighted mode, and require a margin over the runner-up. A 15%
-per-frame hit rate still resolves a number confidently. Players who never turn towards the
-camera resolve to nothing, and that is the correct answer — they import as generic tokens.
-Expect roughly half the squad to resolve. See D5.
+A general-purpose OCR fails on this footage and fails confidently (D32). The numbers are there
+-- across one track at broadcast size, ten crops in sixteen show one clearly -- and a small
+reader pretrained on drawn numbers and fine-tuned on SoccerNet names 8% of benchmark tracks with
+none wrong (D102). That is a board name, and too few to join fragments with. More real data is
+[PLAN.md](../PLAN.md)'s path 3.
 
-- *Check:* resolved number against the crop that voted for it.
-- *Difficulty:* medium; the failure mode is silence rather than a wrong answer, which is what
-  makes it safe to ship at 70%.
+- *Check:* resolved number against the crops that voted for it.
+- *Difficulty:* medium; the failure mode has to stay silence rather than a wrong answer.
 
 ### Not a stage — the ball
 

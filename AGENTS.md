@@ -1,8 +1,9 @@
 # football-tracks — broadcast clip to player tracks
 
 Working conventions for this repo. Where it stands and what to do next is [`PLAN.md`](PLAN.md);
-what it is and how it works is [`docs/`](docs), and the reasoning behind every choice — fifty
-numbered decisions, cited from source comments — is [`docs/decisions/`](docs/decisions).
+what it is and how it works is [`docs/`](docs), and the reasoning behind every choice — 86
+numbered decisions, cited from source comments — is indexed in
+[`docs/decisions/README.md`](docs/decisions/README.md) by what became of each one.
 
 ## Mission
 
@@ -43,7 +44,6 @@ src/football_tracks/
   calibration.py            named pitch lines -> a homography
   calib.py                  the LEARNED detector — frame -> named lines, no seed (D36)
   camera.py                 one camera for a whole MATCH, and each frame's aim (D96)
-  refine.py                 snap a homography onto the painted lines. Off by default (D35)
   stage1_register.py        fit per frame, and measure what it costs
   stage1_propagate.py       carry a homography across gaps by tracking the grass
   video.py                  a recording -> the numbered-JPEG layout, bars removed
@@ -63,7 +63,7 @@ src/football_tracks/
   cli.py                    one command per stage
 tests/                      the pure helpers only
 data/clips/                 source video, never committed
-data/calib2023/             SN-Calibration-2023, training data for the segmenter only
+data/calib2023/             SN-Calibration-2023, optional segmenter training data (D36)
 work/<clip>/                every stage's artefacts, all reproducible
 work/games/<game>/          what a MATCH knows and a clip does not: camera.json, kits.json
 work/calib/                 segmenter weights and training logs. Gitignored — see below
@@ -82,7 +82,7 @@ work/calib/                 segmenter weights and training logs. Gitignored — 
 ## Known traps
 
 Each of these cost a day. Where one names a decision, the full account is in
-[`docs/decisions/`](docs/decisions).
+[`docs/decisions/`](docs/decisions/README.md).
 
 ### The contract
 
@@ -104,8 +104,7 @@ Each of these cost a day. Where one names a decision, the full account is in
   before seeding; it lives beside the seed because it is human knowledge, not a derived file.
 - **`calibration.PITCH_LINES` stays on 105 x 68 on purpose**: it names SoccerNet's ground
   truth, which is their convention. So do the `s = float(PITCH_LENGTH)` conditioning scales,
-  where all that matters is that the pitch is roughly unit size. `refine` still assumes it and
-  is off by default (D35).
+  where all that matters is that the pitch is roughly unit size.
 - **A homography assumes z = 0.** Ball height is not recoverable from one camera, so a ball in
   flight lands metres from where it is — 8-26% of SoccerNet's own ball annotations project off
   the pitch for this reason. Aerial play cannot be drawn (D66).
@@ -130,9 +129,8 @@ Each of these cost a day. Where one names a decision, the full account is in
   walk forward and cover only the head of the clip backwards, so a second seed did nothing for
   the frames before it. Take the nearer chain instead of mixing and every track in the clip is
   cut at the frame where the choice flips -- board density 72% to 50% on the clip that found it.
-- **`--carry -1` is uncapped, `--carry 0` is none**, and until D68 the segmenter branch read the
-  first as the second — so every segmenter measurement in this repo carried nothing, whatever
-  was asked for. Carrying off a learned fit is `--mode hybrid`.
+- **`--carry -1` is uncapped, `--carry 0` is none.** A branch once read the first as the second,
+  and every measurement it made carried nothing whatever was asked for (D68).
 - **ONE refused motion pair costs every frame after it** (D86). `fill` cannot step over a
   missing link, so a pair that misses the inlier threshold by ones ends the chain for the rest
   of the clip -- 356 of 634 frames on the clip that found it. And the refusal is usually about
@@ -163,8 +161,9 @@ Each of these cost a day. Where one names a decision, the full account is in
   anchor, or -- with two -- the frame where the two chains disagree most, which is drift
   measured rather than counted. It also names the stretches with no homography at all.
 - **Replacing a carried homography with a fitted one moves every player at once.** A per-frame
-  anchor is a per-frame win and a per-track loss; correct a chain towards an anchor a twentieth
-  at a time (`anchor_chain`), never in one step (D68).
+  anchor is a per-frame win and a per-track loss (D68), which is why `fill` MIXES two chains
+  between anchors rather than switching at the midpoint (D80), and why the match camera spans a
+  blind stretch by aiming between the frames either side (D96).
 
 ### Tracking
 
@@ -296,9 +295,12 @@ Each of these cost a day. Where one names a decision, the full account is in
   `truth.json` beside each file and scores the share of the window with the right side on the
   ball. Comparing two boards scene by scene judges event TIMING, and it made SoccerNet's own ball
   look far better than choosing the right candidate every frame, which is the opposite of true.
-- **`ft reg-eval` is the registration number; `ft calib-eval` is not.** The first counts a frame
-  with no homography as a miss, over every frame the ground truth can judge. The second scores
-  only the frames a model already solved, which rewards refusing the hard ones (D67).
+- **`ft reg-eval` is the registration number.** It counts a frame with no homography as a miss,
+  over every frame the ground truth can judge. Scoring only the frames a model already solved
+  rewards refusing the hard ones, and five training runs were killed against that (D67).
+- **`ft bench` defaults to `--mode seed`, and a match ships on `--mode camera`.** Seed simulates
+  one click on a SoccerNet clip; camera aims each match's own camera, fitted from its other
+  clips (D96). A number from one is not a number for the other.
 - **Two tracks files written at different `--interval-s` cannot be compared.** `ft score` counts
   samples, so the one on a 0.1 s grid scores half the recall of the same pipeline at 0. Compare
   at `--interval-s 0`, which is what `ft bench` does.
@@ -335,9 +337,9 @@ Each of these cost a day. Where one names a decision, the full account is in
 - **`ft frames` clears the frames it is about to write, and drops what was cached from
   them.** Frames are numbered from one, so a shorter recording extracted over a longer one
   used to leave the tail of the old one behind and every stage read the two as one clip. The
-  same trap applies to everything in `cli.FROM_FRAMES` -- flow, detections, appearance, the
-  camera aims and the segmenter fits -- which are keyed by frame number
-  and were silently reused against different footage. `seed.json` is named rather than
+  same trap applies to everything in `cli.FROM_FRAMES` -- flow, detections, appearance and the
+  camera aims -- which are keyed by frame number and were silently reused against different
+  footage. `seed.json` is named rather than
   deleted: it is the only human work here.
 
 - **CI has base dependencies and no ffmpeg.** Verify against that, not against a laptop.
