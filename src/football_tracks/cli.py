@@ -29,7 +29,6 @@ from . import camera as camera_mod
 from . import detect as detect_mod
 from . import guide as guide_mod
 from . import overlay as overlay_mod
-from . import refine as refine_mod
 from . import reid as reid_mod
 from . import render as render_mod
 from . import score as score_mod
@@ -125,15 +124,8 @@ def _game_camera(clip: str, game: str | None) -> tuple[camera_mod.Camera, tuple[
 
 
 def _carry(mode: str, carry: int) -> int | None:
-    """`--carry` as the stages mean it: -1 is uncapped, 0 is none, N caps the chain.
-
-    The segmenter's default is none, because its claim is that every frame is fitted from
-    its own pixels and owes nothing to its neighbours. Carrying off a segmenter anchor is
-    a different mode with a different claim, and it is called `hybrid`.
-    """
-    if carry >= 0:
-        return carry
-    return 0 if mode == "segmenter" else None
+    """`--carry` as the stages mean it: -1 is uncapped, 0 is none, N caps the chain."""
+    return carry if carry >= 0 else None
 
 
 def _fps(root: Path, labels: dict[str, Any] | None) -> float:
@@ -362,61 +354,10 @@ def calib_train(
     calib.train(train_set, val_set, epochs=epochs, batch=batch, log=typer.echo, resume=resume)
 
 
-@app.command("calib-eval")
-def calib_eval(
-    clip: Annotated[str, typer.Argument(help="A clip with ground-truth pitch lines.")],
-    weights: Annotated[Path | None, typer.Option(help="Trained segmenter.")] = None,
-    stride: Annotated[int, typer.Option(help="Score every Nth frame.")] = 10,
-) -> None:
-    """Score a per-frame fit from the segmenter against the annotated one.
-
-    The question the whole idea turns on: can a homography be fitted from the picture
-    alone, with no seed and nothing carried? A good human seed is 0.15-0.3 m, so anything
-    worse than about half a metre is not worth replacing seeding with.
-    """
-    import numpy as np
-
-    from . import calib
-
-    c = soccernet.Clip(name=clip, root=CLIPS / clip)
-    if not c.labels_path.exists():
-        raise typer.BadParameter(f"{clip} has no ground-truth lines to score against")
-    truth = stage1_register.fit_all(c.labels())
-    net = calib.model(weights or calib.WEIGHTS).to(calib.device()).eval()
-
-    errors: list[float] = []
-    attempted = solved = 0
-    for f in sorted(truth)[::stride]:
-        want = truth[f]
-        if want is None:
-            continue
-        img = cv2.imread(str(c.frames_dir / f"{f:06d}.jpg"))
-        if img is None:
-            continue
-        attempted += 1
-        got = calib.fit_from_mask(calib.predict(net, img), img.shape[1], img.shape[0])
-        if got is None:
-            continue
-        solved += 1
-        errors.append(calibration.observed_error(want, got, img.shape))
-
-    if not errors:
-        typer.echo(f"{clip}: solved 0 of {attempted} frames")
-        return
-    e = np.array(errors)
-    typer.echo(
-        f"{clip}: solved {solved}/{attempted} ({solved / attempted:.0%})"
-        f"  median {np.median(e):.2f} m  p90 {np.percentile(e, 90):.2f} m"
-        f"  worst {e.max():.2f} m"
-    )
-
-
 @app.command("reg-eval")
 def reg_eval(
     clip: Annotated[str, typer.Argument(help="A clip with ground-truth pitch lines.")],
-    mode: Annotated[
-        str, typer.Option(help="'truth', 'seed', 'segmenter', 'hybrid' or 'camera'.")
-    ] = "seed",
+    mode: Annotated[str, typer.Option(help="'truth', 'seed' or 'camera'.")] = "seed",
     game: Annotated[
         str | None,
         typer.Option(help="`--mode camera`: the match. Defaults to SoccerNet's game id."),
@@ -426,16 +367,13 @@ def reg_eval(
     within: Annotated[
         str, typer.Option(help="Comma-separated metre thresholds to report shares at.")
     ] = "1,2,5",
-    max_residual: Annotated[
-        float, typer.Option(help="Segmenter mode: refuse a fit above this residual.")
-    ] = 0.0,
 ) -> None:
     """How much of a clip a registration solves, and how well, over ALL of it.
 
-    `ft calib-eval` scores the frames the segmenter already solves, which rewards
-    refusing the hard ones: a model that answers a tenth of a clip perfectly scores
-    better than one that answers all of it within a metre, and the second makes the
-    better board (D67). Five training runs were killed against that number.
+    Scoring only the frames a model already solves rewards refusing the hard ones: a model
+    that answers a tenth of a clip perfectly beats one that answers all of it within a metre,
+    and the second makes the better board (D67). Five training runs were killed against that
+    number before this replaced it.
 
     This one counts every frame the ground truth can judge. A frame with no homography
     is not skipped, it is a miss -- which is the whole difference, and the reason the
@@ -443,8 +381,8 @@ def reg_eval(
     """
     import numpy as np
 
-    if mode not in ("truth", "seed", "segmenter", "hybrid", "camera"):
-        raise typer.BadParameter("mode must be 'truth', 'seed', 'segmenter', 'hybrid' or 'camera'")
+    if mode not in ("truth", "seed", "camera"):
+        raise typer.BadParameter("mode must be 'truth', 'seed' or 'camera'")
     picked: auto_mod.Mode = cast("auto_mod.Mode", mode)
     # The match's camera, fitted from its OTHER clips -- `ft camera <clips> --truth` -- so
     # this clip's labels judge a camera that never saw them.
@@ -465,10 +403,7 @@ def reg_eval(
         picked,
         max_carry=_carry(mode, carry),
         motions=stage1_propagate.motions(c.frames_dir, frames, cache=out / "motions.json"),
-        max_residual_m=max_residual or None,
         weights=weights,
-        segmenter_cache=out / "segmenter.json",
-        size=(width, height),
         rig=rig,
         lens_at=lens_at,
         aims_cache=out / "aims.json",
@@ -523,9 +458,12 @@ def bench(
     interval_s: Annotated[
         float, typer.Option("--interval-s", help="Held at 0 so recall counts samples, not slots.")
     ] = 0.0,
-    snap: Annotated[bool, typer.Option(help="Re-anchor on the markings (D35).")] = False,
     mode: Annotated[
-        str, typer.Option(help="Registration to run every clip through. 'seed' is what ships.")
+        str,
+        typer.Option(
+            help="Registration to run every clip through: 'seed' simulates one click on frame"
+            " one, 'camera' aims each match's own camera (D96) and is what a match ships on."
+        ),
     ] = "seed",
 ) -> None:
     """Run every clip end to end and print one table.
@@ -559,7 +497,7 @@ def bench(
         out = work_dir(Path(name))
         pred_path = out / "tracks.json"
         try:
-            _pipeline(name, mode, -1, interval_s, snap)
+            _pipeline(name, mode, -1, interval_s)
         except Exception as exc:
             typer.echo(f"{name:<16} {'-':>6} {'-':>7} {'-':>7} {'-':>8} {'-':>7} {'-':>6}  {exc}")
             continue
@@ -848,8 +786,6 @@ def _pipeline(
     mode: str,
     carry: int,
     interval_s: float,
-    snap: bool,
-    max_residual: float = 0.0,
     stitch: bool = True,
     game: str | None = None,
 ) -> tuple[Path, auto_mod.Result]:
@@ -858,8 +794,8 @@ def _pipeline(
     Extracted so the benchmark runs the SAME pipeline the user runs, rather than a
     second copy of it that can drift away from it silently.
     """
-    if mode not in ("truth", "seed", "segmenter", "hybrid", "camera"):
-        raise typer.BadParameter("mode must be 'truth', 'seed', 'segmenter', 'hybrid' or 'camera'")
+    if mode not in ("truth", "seed", "camera"):
+        raise typer.BadParameter("mode must be 'truth', 'seed' or 'camera'")
     picked: auto_mod.Mode = cast("auto_mod.Mode", mode)
 
     c = soccernet.Clip(name=clip, root=CLIPS / clip)
@@ -906,10 +842,6 @@ def _pipeline(
             picked,
             max_carry=_carry(mode, carry),
             motions=motions,
-            snap=refine_mod.refine if snap else None,
-            max_residual_m=max_residual or None,
-            segmenter_cache=out / "segmenter.json",
-            size=_size(CLIPS / clip, labels),
         )
     elif seed_path.exists():
         # A real clip: one seeded frame is all the camera information there is.
@@ -918,28 +850,9 @@ def _pipeline(
             typer.echo(f"IGNORING {path.name}: {why}")
         if not usable:
             raise typer.BadParameter(f"{clip} has no usable seed")
-        if picked == "hybrid":
-            homs = auto_mod.anchored(
-                c.frames_dir,
-                auto_mod.segmenter_homographies(
-                    c.frames_dir,
-                    max_residual_m=max_residual or None,
-                    cache=out / "segmenter.json",
-                ),
-                {s.frame: seed_mod.homography(s) for s in usable},
-                motions=motions,
-                max_carry=_carry(mode, carry),
-                size=_size(CLIPS / clip, None),
-            )
-        else:
-            homs = auto_mod.from_seeds(
-                usable,
-                frames,
-                c.frames_dir,
-                max_carry=_carry(mode, carry),
-                motions=motions,
-                snap=refine_mod.refine if snap else None,
-            )
+        homs = auto_mod.from_seeds(
+            usable, frames, c.frames_dir, max_carry=_carry(mode, carry), motions=motions
+        )
     else:
         raise typer.BadParameter(
             f"{clip} has neither SoccerNet labels nor {seed_path} - run `ft seed {clip}` first"
@@ -994,10 +907,9 @@ def auto(
     mode: Annotated[
         str,
         typer.Option(
-            help="'truth' uses every frame's lines; 'seed' uses only frame one's;"
-            " 'segmenter' uses the learned ones and no annotations at all; 'hybrid'"
-            " anchors on the learned ones and carries the seed across the rest;"
-            " 'camera' aims the match's own camera at every frame and needs no clicks."
+            help="'truth' uses every frame's lines; 'seed' uses only frame one's, or the"
+            " clicked seeds of a real clip; 'camera' aims the match's own camera at every"
+            " frame and needs no clicks."
         ),
     ] = "seed",
     game: Annotated[
@@ -1013,20 +925,6 @@ def auto(
             " than the pipeline is accurate.",
         ),
     ] = tracks.DEFAULT_INTERVAL_S,
-    snap: Annotated[
-        bool,
-        typer.Option(
-            help="Re-anchor each carried homography on its own frame's markings."
-            " Improves the camera model and makes the tracks WORSE (D35); off by default."
-        ),
-    ] = False,
-    max_residual: Annotated[
-        float,
-        typer.Option(
-            help="Segmenter mode: refuse a frame whose fit disagrees with its own predicted"
-            " pixels by more than this many metres. 0 keeps every solvable frame."
-        ),
-    ] = 0.0,
     stitch: Annotated[
         bool,
         typer.Option(help="Join track fragments that are each other's best continuation."),
@@ -1036,19 +934,15 @@ def auto(
 
     `--mode truth` holds stage 1 fixed so the score is stages 2 and 3 alone.
     `--mode seed` throws away every line annotation but frame one's, which is what a
-    human clicking four corners once actually leaves you with.
-    `--mode segmenter` uses no annotations at all: every frame is registered from the
-    learned pitch lines, so there is nothing to seed and nothing to carry (D36).
-    `--mode hybrid` anchors on those same learned lines wherever they can be fitted and
-    carries between them, so the chain is reset before it drifts and the frames the
-    segmenter refuses are still covered (D67).
-    `--mode camera` reads those lines as three numbers -- pan, tilt and zoom -- off the
+    human clicking four corners once actually leaves you with -- and on a real clip,
+    carries the frames that were clicked.
+    `--mode camera` reads the learned pitch lines as three numbers -- pan, tilt and zoom -- off the
     position the match was shot from, which another clip's clicks already established. No
     seed on this clip, and nothing to carry (D96).
     """
     if game:
         _name_game(clip, game)
-    path, result = _pipeline(clip, mode, carry, interval_s, snap, max_residual, stitch, game)
+    path, result = _pipeline(clip, mode, carry, interval_s, stitch, game)
     typer.echo(
         f"mode {mode}: {result.detections} detections -> {result.raw_tracks} raw tracks"
         f" -> {len(result.tracks)} kept"
@@ -1541,10 +1435,8 @@ def run(
     mode: Annotated[
         str,
         typer.Option(
-            help="'seed' carries the clicked frames; 'segmenter' uses the learned lines and"
-            " no clicks; 'hybrid' anchors on the learned ones and carries the seed between;"
-            " 'camera' aims the match's own camera, which is chosen automatically when the"
-            " game has one."
+            help="'seed' carries the clicked frames; 'camera' aims the match's own camera,"
+            " which is chosen automatically when the game has one."
         ),
     ] = "seed",
     game: Annotated[
@@ -1588,8 +1480,8 @@ def run(
             " to extract, or the name of one already extracted"
         )
     # Checked here and not where `_pipeline` checks it, which is after the clicking.
-    if mode not in ("truth", "seed", "segmenter", "hybrid", "camera"):
-        raise typer.BadParameter("mode must be 'truth', 'seed', 'segmenter', 'hybrid' or 'camera'")
+    if mode not in ("truth", "seed", "camera"):
+        raise typer.BadParameter("mode must be 'truth', 'seed' or 'camera'")
 
     work = work_dir(Path(clip))
     missing = _missing_vision(work, fresh)
@@ -1667,15 +1559,9 @@ def run(
             " <a seeded clip of it> --game <name>` first"
         )
 
-    # The segmenter reads the picture and needs no clicks; `hybrid` carries a seed ACROSS the
-    # frames the segmenter refuses, so that one does want the loop.
     if annotated:
         steps.skip(
             "place the camera", "annotated: its own pitch lines register every frame", "annotated"
-        )
-    elif mode == "segmenter":
-        steps.skip(
-            "place the camera", "the segmenter reads the lines from the picture", "segmenter"
         )
     elif rig is not None:
         with steps.step("place the camera") as out:
@@ -1711,7 +1597,7 @@ def run(
 
     with steps.step("track") as out:
         _motions(frames_dir, numbers, work)
-        path, result = _pipeline(clip, mode, carry, interval_s, False, game=named or None)
+        path, result = _pipeline(clip, mode, carry, interval_s, game=named or None)
         _say(
             f"{result.detections} detections -> {result.raw_tracks} raw tracks"
             f" -> {len(result.tracks)} kept"
@@ -1746,15 +1632,14 @@ def run(
 
 # Everything cached from a clip's frames and keyed by frame NUMBER -- which a re-extraction
 # keeps and a trimmed recording shifts, so each of these would be reused against footage it
-# was never measured on. The camera aims and the segmenter fits are keyed by weights and
-# camera, not by the picture, and a trimmed clip re-extracted under its old name reads every
-# one of them a few hundred frames out.
+# was never measured on. The camera aims are keyed by weights and camera, not by the
+# picture, and a trimmed clip re-extracted under its old name reads every one of them a few
+# hundred frames out.
 FROM_FRAMES = (
     "motions.json",
     "detections.json",
     "appearance.npz",
     "aims.json",
-    "segmenter.json",
 )
 
 

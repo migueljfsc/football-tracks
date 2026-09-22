@@ -1,15 +1,14 @@
 """A learned pitch-line segmenter, and the camera model fitted from it.
 
-Why this exists, when `refine.py` already snaps a homography onto the paint: finding the
-paint was never the problem. `refine.line_pixels` locates it to a median of 0.00 m under a
-correct homography. What it cannot do is say WHICH marking a white pixel belongs to -- it
-infers that from the homography it is trying to correct, which is why it converges only
-from inside a two-metre capture radius and why it made the pipeline worse (D35).
+Finding the paint was never the problem: under a correct homography a white pixel is easy
+to locate. What cannot be inferred is WHICH marking it belongs to, and snapping a homography
+onto the paint by guessing that from the homography being corrected converged only from
+inside a two-metre capture radius and made the pipeline worse (D35).
 
 A segmenter answers exactly that question and nothing else. Given a pixel it names the
-marking, so correspondences stop being a guess and a homography can be fitted per frame
-from nothing at all: no seed, no carry, and therefore no drift. The three blockers on
-broadcast footage are one problem wearing three hats.
+marking, so correspondences stop being a guess. Fitting a free homography per frame from
+them was tried and lost to reading them as three numbers off the match's own camera
+(`camera.aim`, D96), which is where the segmenter's lines go now.
 
 Training data is SN-GSR-2025, which is broadcast footage with per-frame line annotations
 already in the format `calibration.lines_of` reads. It is used ONLY to train: at inference
@@ -300,10 +299,6 @@ def predict(net: Any, image: Any) -> npt.NDArray[np.uint8]:
     return np.asarray(logits.argmax(1)[0].cpu().numpy(), dtype=np.uint8)
 
 
-# A curve or its cutting line needs at least this many predicted pixels before the crossing
-# is believed. Lower than MIN_PIXELS would let a handful of stray pixels place an EXACT
-# correspondence, which is worth two equations and would drag the whole fit with it.
-CROSSING_PIXELS = 400
 # How near the line a curve pixel must be to count as touching it. A rasterised marking is
 # LINE_PX wide and the two labels compete for the pixels where they overlap, so the curve's
 # own pixels stop a line width short of the crossing rather than reaching it.
@@ -383,72 +378,6 @@ def _y_axis_in_image(pixels: dict[str, Any]) -> tuple[float, float] | None:
     return None if length < 1.0 else (dx / length, dy / length)
 
 
-# How far a computed crossing may sit from the nearest predicted pixel of the markings it
-# claims to join. A few pixels of slack for the fit itself; beyond that it is extrapolation.
-def _crossings(
-    mask: npt.NDArray[np.uint8], sx: float, sy: float
-) -> list[tuple[tuple[float, float], tuple[float, float]]]:
-    """Exact correspondences where a curve crosses the straight marking that cuts it.
-
-    This is what lets a MIDFIELD frame be solved at all. Such a frame has almost no straight
-    paint -- SNGS-121 spends 368 consecutive frames with four usable lines against a
-    MIN_LINES of five -- while the centre circle sits in the mask at 11,765 px, discarded
-    for not being a line. The crossing is not the circle: it is two exact spots (D36).
-    """
-    pixels: dict[str, Any] = {}
-    for name, index in INDEX.items():
-        ys, xs = np.nonzero(mask == index)
-        if len(xs) >= CROSSING_PIXELS:
-            pixels[name] = (xs, ys)
-
-    axis = _y_axis_in_image(pixels)
-    if axis is None:
-        return []
-
-    out: list[tuple[tuple[float, float], tuple[float, float]]] = []
-    for curve, cutter, low, high in calibration.CURVE_CROSSINGS:
-        if curve not in pixels or cutter not in pixels:
-            continue
-        lxs, lys = pixels[cutter]
-        # `.ravel()`: fitLine hands back a column of 1-element arrays, not four scalars.
-        vx, vy, x0, y0 = (
-            float(v)
-            for v in cv2.fitLine(
-                np.stack([lxs, lys], 1).astype(np.float32), cv2.DIST_L2, 0, 0.01, 0.01
-            ).ravel()
-        )
-        hits = _touching(pixels[curve], (vx, vy, x0, y0))
-        if len(hits) != 2:
-            continue
-        # Order them along increasing pitch y, then they name themselves.
-        hits.sort(key=lambda h: h[0] * axis[0] + h[1] * axis[1])
-        for (hx, hy), pitch in zip(hits, (low, high), strict=True):
-            out.append((((hx + 0.5) * sx, (hy + 0.5) * sy), pitch))
-    return out
-
-
-def _residual_m(h: Any, pairs: list[tuple[tuple[float, float], Any]]) -> float:
-    """How far the segmenter's own pixels land from the lines they claim, in metres.
-
-    A confidence estimate, and an in-sample one: the fit was chosen to minimise roughly
-    this, so a frame with few constraints can be confidently wrong and still score well.
-    That is why it GATES rather than selects — D35's lesson was that choosing between two
-    fitters on the quantity one of them minimises is rigged, and this chooses between
-    nothing. It only asks whether a fit disagrees with the evidence it was given.
-
-    Measured worth: rank correlation 0.618 against the true error, and keeping the best
-    half of frames by this takes the median error from 0.75 m to 0.56 m.
-    """
-    xy = np.array([p[0] for p in pairs], dtype=np.float64)
-    q = h @ np.vstack([xy.T, np.ones(len(xy))])
-    q = q[:2] / q[2]
-    lines = np.array([p[1] for p in pairs], dtype=np.float64)
-    d = np.abs(lines[:, 0] * q[0] + lines[:, 1] * q[1] + lines[:, 2]) / np.hypot(
-        lines[:, 0], lines[:, 1]
-    )
-    return float(np.median(d))
-
-
 def pairs_from_mask(
     mask: npt.NDArray[np.uint8], width: int, height: int
 ) -> list[tuple[tuple[float, float], tuple[float, float, float]]]:
@@ -505,51 +434,6 @@ def arcs_from_mask(
             for x, y in zip(xs, ys, strict=True)
         )
     return out
-
-
-def fit_from_mask(
-    mask: npt.NDArray[np.uint8],
-    width: int,
-    height: int,
-    max_residual_m: float | None = None,
-) -> Any:
-    """A homography from a predicted mask, fitted from nothing else.
-
-    This is the payoff. Every pixel arrives already named, so a correspondence is a fact
-    rather than an inference from the homography being solved -- which is what `refine`
-    could never have, and why it needed a nearly-correct answer before it could improve
-    one (D35).
-
-    DLT first because it needs no starting guess, then the geometric fit because a DLT
-    minimises an algebraic residual and is biased by how many pixels each marking happens
-    to contribute.
-    """
-    from . import refine
-
-    sx, sy = width / WIDTH, height / HEIGHT
-    pairs = pairs_from_mask(mask, width, height)
-    seen = {ln for _, ln in pairs}
-    across = sum(1 for a, b, _c in seen if abs(a) > abs(b))
-    # Both axes are still required outright: no number of crossings rescues a frame that
-    # can see only one direction of paint, and the gate below would happily let them try.
-    if min(across, len(seen) - across) < calibration.MIN_LINES_PER_AXIS:
-        return None
-
-    crossings = _crossings(mask, sx, sy)
-    # A crossing is a pair of EXACT spots, so it carries two equations where a marking
-    # carries one, and a midfield frame short of MIN_LINES is short by less than it looks.
-    if len(seen) + 2 * len(crossings) < calibration.MIN_LINES:
-        return None
-
-    first = calibration.fit(crossings, pairs, width, height)
-    if first is None:
-        return None
-    # Explicit None: `a or b` on an ndarray asks for its truth value and raises.
-    better = refine._geometric(first, pairs)
-    fitted = first if better is None else better
-    if max_residual_m is not None and _residual_m(fitted, pairs) > max_residual_m:
-        return None  # the fit disagrees with its own evidence; a gap is the honest answer
-    return fitted
 
 
 def train(

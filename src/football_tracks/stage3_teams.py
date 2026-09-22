@@ -213,17 +213,6 @@ def _crowding(
 KIT_MARGIN = 0.8
 
 
-# How far apart two sides' measured shirt colours have to be, in BGR, before a board is
-# told to use them.
-#
-# A kit colour is only worth carrying if it tells the two sides apart on sight, and the
-# average of a torso crop is a blunt instrument: floodlights, motion blur and a white
-# sleeve all pull it towards grey. Where the two answers come out close, the honest thing
-# is to say nothing and let the board keep its own two colours, which are at least
-# guaranteed to differ.
-KIT_TONE_APART = 60.0
-
-
 # How much of a side's signature must agree before its colour is worth writing down.
 #
 # Measured across five clips: every answer that came out right carries 0.56 to 0.83 in one
@@ -397,25 +386,6 @@ def kit_colours(tracks: list[Track], teams: dict[int, TeamLabel]) -> dict[str, s
 # restated at the saturation and brightness a kit actually has.
 KIT_SATURATION = 0.72
 KIT_VALUE = 0.82
-
-# Below this much saturation a shirt has no colour, only a brightness: white, grey, black.
-KIT_ACHROMATIC = 0.18
-
-
-def _hex(bgr: Vec) -> str:
-    pixel = np.array([[np.clip(bgr, 0, 255)]], dtype=np.uint8)
-    hue, sat, val = (int(v) for v in cv2.cvtColor(pixel, cv2.COLOR_BGR2HSV)[0, 0])
-    # A white, grey or black kit has no hue to keep -- what little it measures is noise,
-    # and lifting the saturation of noise paints the team a colour nobody is wearing. It
-    # gets a light or dark neutral instead, which is what it actually looks like.
-    if sat < KIT_ACHROMATIC * 255:
-        return "#e6e6e6" if val > 128 else "#2b2b2b"
-    lifted = np.array(
-        [[[hue, max(sat, round(KIT_SATURATION * 255)), max(val, round(KIT_VALUE * 255))]]],
-        dtype=np.uint8,
-    )
-    b, g, r = (int(v) for v in cv2.cvtColor(lifted, cv2.COLOR_HSV2BGR)[0, 0])
-    return f"#{r:02x}{g:02x}{b:02x}"
 
 
 # Fewest shirt readings a half must have before a split is believed. Below this a "half"

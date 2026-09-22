@@ -21,3 +21,6 @@ models/
 
 # SoccerNet credentials. Under NDA - never committed, never pasted into a transcript.
 .env
+
+# macOS
+.DS_Store

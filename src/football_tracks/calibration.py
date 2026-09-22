@@ -246,13 +246,6 @@ def _y_ruler(
     return axis, lx * axis[0] + ly * axis[1], ly_pitch, hx * axis[0] + hy * axis[1], hy_pitch
 
 
-def _y_axis_of(
-    lines: dict[str, list[dict[str, float]]], width: int, height: int
-) -> tuple[float, float] | None:
-    ruler = _y_ruler(lines, width, height)
-    return None if ruler is None else ruler[0]
-
-
 def curve_crossings(
     lines: dict[str, list[dict[str, float]]], width: int, height: int
 ) -> list[tuple[Point, Point]]:
