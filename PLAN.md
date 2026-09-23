@@ -72,11 +72,9 @@ Ordered by what each would tell or buy against what it costs. None is started.
    90% is a property of the pipeline or of one match. Everything below is worth more or less
    depending on what it finds.
 
-2. **Draw an unseen player as unseen** (Pitchboard). The coach's other note was two players
-   *"static, but always visible to the camera"* -- fragments of players the tracker lost, drawn
-   standing where they were last seen. The importer already knows which positions a sighting
-   stands behind; showing the rest faded rather than solid makes the board honest about it at no
-   cost to anything measured. Small, and it answers a complaint directly.
+2. ~~**Draw an unseen player as unseen**~~ **-- done** (Pitchboard's D87). A player with no
+   sighting near a scene is drawn faded, fades in as the play reaches him, and turns solid when
+   the coach drags him.
 
 3. **Shirt numbers from real data** (D102). Drawn numbers got a small reader from 9% to useful at
    the confident end; what it lacks is real legible crops at scale and a bigger input than 64 px.
@@ -85,12 +83,11 @@ Ordered by what each would tell or buy against what it costs. None is started.
    with certainty where it names both, and give the board real names. The largest lever on
    fragmentation this repo has found.
 
-4. **Keep the coach's corrections.** Every carrier he fixes and every two tokens he merges into
-   one player is a label nobody else has: on his club, his broadcaster, his camera. D98 and D100
-   both found that a model which has SEEN a side's players identifies them far better, and D101
-   that three matches are too few for the ball. Pitchboard exporting the corrections it already
-   holds is the way either gets more than three matches of data. Medium: a format, an export, and
-   a training step that reads it.
+4. ~~**Keep the coach's corrections.**~~ **-- the capture is done** (D104, Pitchboard's D88).
+   A board from video remembers what its importer said, a player can be moved to the other side,
+   and `ft learn <board.json>` turns what the coach changed into labels beside the clip:
+   carriers, numbers, positions, sides. What is left is USING them -- in 3 and 5 -- once enough
+   corrected boards exist to train on.
 
 5. **The ball with more matches, or over time** (D101). The ranking a verifier learned on three
    SoccerNet matches did not transfer; a verifier trained across many, or scoring candidate
@@ -129,8 +126,9 @@ what path 4 would buy, and D100 is why it has to come from his labels rather tha
 
 ## Open questions
 
-- Does the match camera hold on a lower broadcast camera, or on a club's own fixed wide camera?
-  The second would remove most pans, and with them most of fragmentation's largest share.
+- Does the match camera hold on a lower broadcast camera? The coach's footage is broadcast replays
+  and YouTube highlights only -- no club camera -- so pans stay, and so does fragmentation's
+  largest share.
 - How does Sporting's kit split? The side question reads hue, and theirs is struck with the
   grass (D87, D92).
 - Can SoccerNet's jersey-number and tracking sets be used under the same terms as GSR?

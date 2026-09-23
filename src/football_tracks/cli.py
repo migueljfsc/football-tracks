@@ -28,6 +28,7 @@ from . import (
 from . import camera as camera_mod
 from . import detect as detect_mod
 from . import guide as guide_mod
+from . import learn as learn_mod
 from . import overlay as overlay_mod
 from . import reid as reid_mod
 from . import render as render_mod
@@ -2036,6 +2037,48 @@ def seed(
     if _seed_one(clip, frame, check=check) is None:
         raise typer.Exit(1)
     typer.echo(f"now check it: ft calibrate {clip} --frame {frame}")
+
+
+@app.command()
+def learn(
+    board: Annotated[
+        Path, typer.Argument(help="A board exported from Pitchboard after correcting it.")
+    ],
+) -> None:
+    """Read a coach's corrections back off a board, as labels for the clip it came from (D104).
+
+    Pitchboard keeps what its importer said on every board it builds from video; this diffs
+    the board against that and keeps what changed -- a carrier, a shirt number, a dragged
+    player, a player moved to the other side, a player removed. They land beside the clip in
+    labels.json, keyed by video frame and track.
+    """
+    doc = json.loads(board.read_text())
+    origin = doc.get("origin")
+    if not origin:
+        raise typer.BadParameter(
+            f"{board} was not imported from video, or predates Pitchboard's origin record (D88)"
+        )
+    clip = origin["clip"]
+    out = work_dir(Path(clip), create=False)
+    tracks_path = out / "tracks.json"
+    if not tracks_path.exists():
+        raise typer.BadParameter(f"no {tracks_path} - is {clip} a clip of this repo?")
+    known = {int(t["id"]) for t in json.loads(tracks_path.read_text())["tracks"]}
+    labels = learn_mod.corrections(doc, known)
+    dest = out / learn_mod.LABELS_FILE
+    replaced = dest.exists()
+    dest.write_text(json.dumps(labels.to_json(), indent=2) + "\n")
+    typer.echo(
+        f"{clip}: {len(labels.carriers)} carriers, {len(labels.numbers)} numbers,"
+        f" {len(labels.positions)} positions, {len(labels.sides)} sides,"
+        f" {len(labels.removed)} removed"
+    )
+    if labels.unresolved:
+        typer.echo(
+            f"IGNORING tracks {labels.unresolved}: not in {tracks_path.name}, which has been"
+            " rebuilt since the board was imported"
+        )
+    typer.echo(f"{'replaced' if replaced else 'wrote'} {dest}")
 
 
 if __name__ == "__main__":

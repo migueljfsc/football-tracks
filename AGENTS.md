@@ -1,7 +1,7 @@
 # football-tracks — broadcast clip to player tracks
 
 Working conventions for this repo. Where it stands and what to do next is [`PLAN.md`](PLAN.md);
-what it is and how it works is [`docs/`](docs), and the reasoning behind every choice — 86
+what it is and how it works is [`docs/`](docs), and the reasoning behind every choice — 87
 numbered decisions, cited from source comments — is indexed in
 [`docs/decisions/README.md`](docs/decisions/README.md) by what became of each one.
 
@@ -60,6 +60,7 @@ src/football_tracks/
   pitch.py                  the markings in metres; `model()` is the one description
   render.py                 a tracks file -> a video of coloured dots
   score.py                  a prediction diffed against ground truth
+  learn.py                  a coach's corrections on a Pitchboard board -> labels (D104)
   cli.py                    one command per stage
 tests/                      the pure helpers only
 data/clips/                 source video, never committed
@@ -317,6 +318,9 @@ Each of these cost a day. Where one names a decision, the full account is in
 - **One variable per run.** Runs 1-3 each moved two and none can be read.
 - **Sweeping a constant on a clip where its failure does not occur measures nothing.**
 - **Validation loss does not predict `observed_error`.** Judge on the eval, never the loss.
+- **`labels.json` is only as good as the tracks it names** (D104). `ft learn` keys every label by
+  track id, and rerunning `ft auto` renumbers tracks -- so learn from a board BEFORE regenerating
+  its clip, and trust the `IGNORING tracks` line when it says the file has moved on.
 - **`ft truth` drops referees unless asked.** Any accuracy measured without `--referees` cannot
   see an official fielded as a player (D64).
 

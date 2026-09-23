@@ -101,6 +101,12 @@ The contract, the licences, and how anything here is measured. These are not up 
 | D60 | a stationary false positive is only distinguishable from a placed ball by WHERE it is standing | [ball](ball.md) |
 | D73 | the ball is asserted at 0.75, and the reason is the PASSES rather than the ball | [ball](ball.md) |
 
+## What ships — learning from the coach
+
+| | decision | file |
+|---|---|---|
+| D104 | a coach's corrections come back as labels, through the board he already exports | [project](project.md) |
+
 ## Superseded
 
 Right when written; replaced by the decision named.

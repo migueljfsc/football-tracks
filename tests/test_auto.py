@@ -54,6 +54,7 @@ def test_every_stage_has_its_command() -> None:
         "camera",
         "detect",
         "frames",
+        "learn",
         "pitch",
         "reg-eval".replace("-", "_"),
         "reid",

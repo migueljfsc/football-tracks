@@ -57,3 +57,33 @@ apart from an unread one, because they are not the same mistake — unread impor
 generic token and costs nothing, wrong attaches a run to the wrong player where no one
 downstream can see it (D5). A single "jersey accuracy" percentage would average the free
 error together with the expensive one.
+
+**D104 -- a coach's corrections come back as labels, through the board he already exports.** Every
+correction a coach makes to an imported board is data nobody else has: his club, his broadcaster,
+his camera. D98 and D100 found identity needs exactly that (a model that has SEEN a side's players
+names them far better), and D101 that three matches of ball annotations do not carry to a fourth.
+Until now it was thrown away, because nothing in a saved board said which token was which track
+or which scene was which frame.
+
+Pitchboard now keeps its importer's answers on the board (its D88): per scene the video frame,
+carrier and positions; per player the track, span, side and number. `ft learn <board.json>` diffs
+the exported board against them and writes `work/<clip>/labels.json`, five lists keyed by frame
+and track:
+
+    carriers    at this frame the ball was with this track, nobody, or a hand-placed player
+    numbers     this track wears this shirt number, every frame of it
+    positions   at this frame this track was really here (a drag over MOVED_M, 1 m)
+    sides       this track is on the other team
+    removed     this track was fielded and should not have been
+
+Only a CHANGE is a label: an untouched scene may be right or merely unexamined. A piece of a track
+Pitchboard split (`id * 1000 + n`) is mapped back to its track, and a track the file no longer has
+-- because `ft auto` was rerun since the import -- is reported, never guessed.
+
+Measured end to end on Untitled_1 in the browser: four corrections made through the editor --
+the ball given to another player, a number set, a player dragged, a player moved across --
+and `ft learn` returned exactly those four and nothing else.
+
+Nothing reads the labels yet. Numbers are for the reader (D102, PLAN's path 3); carriers for the
+ball's ranking (D101, path 5); positions and sides for measuring the pipeline on the coach's own
+clips, where there is no other ground truth.
