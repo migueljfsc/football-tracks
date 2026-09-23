@@ -1,3 +1,9 @@
+## v0.39.0 (2026-09-23)
+
+### Feat
+
+- **learn**: read a coach's corrections back off a Pitchboard board, as labels
+
 ## v0.38.1 (2026-09-22)
 
 ### Refactor
